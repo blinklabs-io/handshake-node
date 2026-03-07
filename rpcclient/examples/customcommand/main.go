@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/rpcclient"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/rpcclient"
 )
 
 // NameShowCmd defines the name_show JSON-RPC command.
@@ -76,9 +76,9 @@ func NameShow(c *rpcclient.Client, name string) (*NameShowResult, error) {
 
 func init() {
 	// No special flags for commands in this file.
-	flags := btcjson.UsageFlag(0)
+	flags := hnsjson.UsageFlag(0)
 
-	btcjson.MustRegisterCmd("name_show", (*NameShowCmd)(nil), flags)
+	hnsjson.MustRegisterCmd("name_show", (*NameShowCmd)(nil), flags)
 }
 
 func main() {

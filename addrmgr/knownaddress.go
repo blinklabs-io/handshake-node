@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // KnownAddress tracks information about a known network address that is used

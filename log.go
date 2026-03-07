@@ -10,18 +10,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/btcsuite/btcd/addrmgr"
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/blockchain/indexers"
-	"github.com/btcsuite/btcd/connmgr"
-	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/mempool"
-	"github.com/btcsuite/btcd/mining"
-	"github.com/btcsuite/btcd/mining/cpuminer"
-	"github.com/btcsuite/btcd/netsync"
-	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/v2transport"
+	"github.com/blinklabs-io/handshake-node/addrmgr"
+	"github.com/blinklabs-io/handshake-node/blockchain"
+	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
+	"github.com/blinklabs-io/handshake-node/connmgr"
+	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/mempool"
+	"github.com/blinklabs-io/handshake-node/mining"
+	"github.com/blinklabs-io/handshake-node/mining/cpuminer"
+	"github.com/blinklabs-io/handshake-node/netsync"
+	"github.com/blinklabs-io/handshake-node/peer"
+	"github.com/blinklabs-io/handshake-node/txscript"
 
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
@@ -59,7 +58,7 @@ var (
 	amgrLog = backendLog.Logger("AMGR")
 	cmgrLog = backendLog.Logger("CMGR")
 	bcdbLog = backendLog.Logger("BCDB")
-	btcdLog = backendLog.Logger("BTCD")
+	hnsLog = backendLog.Logger("HNSN")
 	chanLog = backendLog.Logger("CHAN")
 	discLog = backendLog.Logger("DISC")
 	indxLog = backendLog.Logger("INDX")
@@ -70,7 +69,6 @@ var (
 	srvrLog = backendLog.Logger("SRVR")
 	syncLog = backendLog.Logger("SYNC")
 	txmpLog = backendLog.Logger("TXMP")
-	v2trLog = backendLog.Logger(v2transport.Subsystem)
 )
 
 // Initialize package-global logger variables.
@@ -86,7 +84,6 @@ func init() {
 	txscript.UseLogger(scrpLog)
 	netsync.UseLogger(syncLog)
 	mempool.UseLogger(txmpLog)
-	v2transport.UseLogger(v2trLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -95,7 +92,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"AMGR":                amgrLog,
 	"CMGR":                cmgrLog,
 	"BCDB":                bcdbLog,
-	"BTCD":                btcdLog,
+	"HNSN":                hnsLog,
 	"CHAN":                chanLog,
 	"DISC":                discLog,
 	"INDX":                indxLog,
@@ -106,7 +103,6 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"SRVR":                srvrLog,
 	"SYNC":                syncLog,
 	"TXMP":                txmpLog,
-	v2transport.Subsystem: v2trLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and

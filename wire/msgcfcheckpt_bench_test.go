@@ -10,7 +10,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
 // BenchmarkMsgCFCheckptDecode benchmarks decoding of MsgCFCheckpt messages

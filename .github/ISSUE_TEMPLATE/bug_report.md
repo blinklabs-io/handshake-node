@@ -12,7 +12,7 @@ Describe your issue here.
 
 ### Your environment
 
-* version of `btcd`
+* version of `handshake-node`
 * which operating system (`uname -a` on *Nix)
 * any other relevant environment details
 

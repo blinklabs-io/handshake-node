@@ -6,7 +6,6 @@
 package peer
 
 import (
-	"bytes"
 	"container/list"
 	"errors"
 	"fmt"
@@ -18,11 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/v2transport"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/blockchain"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/go-socks/socks"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/decred/dcrd/lru"
@@ -465,8 +463,6 @@ type Peer struct {
 	verAckReceived       bool
 	witnessEnabled       bool
 	sendAddrV2           bool
-
-	V2Transport *v2transport.Peer
 
 	wireEncoding wire.MessageEncoding
 
@@ -1078,33 +1074,15 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 	wire.Message, []byte, error) {
 
 	var (
-		n         int
-		msg       wire.Message
-		buf       []byte
-		plaintext []byte
-		err       error
+		n   int
+		msg wire.Message
+		buf []byte
+		err error
 	)
 
-	if p.cfg.UsingV2Conn {
-		plaintext, err = p.V2Transport.V2ReceivePacket(nil)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		msg, buf, err = wire.ReadV2MessageN(
-			plaintext, p.ProtocolVersion(), encoding,
-		)
-		n = len(plaintext)
-	} else if partial {
-		n, msg, buf, err = wire.ReadPartialMessageWithEncodingN(
-			p.conn, p.ProtocolVersion(), p.cfg.ChainParams.Net, encoding,
-			p.V2Transport.ReceivedPrefix(),
-		)
-	} else {
-		n, msg, buf, err = wire.ReadMessageWithEncodingN(
-			p.conn, p.ProtocolVersion(), p.cfg.ChainParams.Net, encoding,
-		)
-	}
+	n, msg, buf, err = wire.ReadMessageWithEncodingN(
+		p.conn, p.ProtocolVersion(), p.cfg.ChainParams.Net, encoding,
+	)
 
 	atomic.AddUint64(&p.bytesReceived, uint64(n))
 	if p.cfg.Listeners.OnRead != nil {
@@ -1142,24 +1120,9 @@ func (p *Peer) writeMessage(msg wire.Message, enc wire.MessageEncoding) error {
 		return nil
 	}
 
-	var (
-		buf bytes.Buffer
-		n   int
-		err error
+	n, err := wire.WriteMessageWithEncodingN(
+		p.conn, msg, p.ProtocolVersion(), p.cfg.ChainParams.Net, enc,
 	)
-
-	if p.cfg.UsingV2Conn {
-		_, err = wire.WriteV2MessageN(&buf, msg, p.ProtocolVersion(), enc)
-		if err != nil {
-			return err
-		}
-
-		_, n, err = p.V2Transport.V2EncPacket(buf.Bytes(), nil, false)
-	} else {
-		n, err = wire.WriteMessageWithEncodingN(
-			p.conn, msg, p.ProtocolVersion(), p.cfg.ChainParams.Net, enc,
-		)
-	}
 
 	// Use closures to log expensive operations so they are only run when
 	// the logging level requires it.
@@ -1175,10 +1138,6 @@ func (p *Peer) writeMessage(msg wire.Message, enc wire.MessageEncoding) error {
 	log.Tracef("%v", newLogClosure(func() string {
 		return spew.Sdump(msg)
 	}))
-	log.Tracef("%v", newLogClosure(func() string {
-		return spew.Sdump(buf.Bytes())
-	}))
-
 	atomic.AddUint64(&p.bytesSent, uint64(n))
 	if p.cfg.Listeners.OnWrite != nil {
 		p.cfg.Listeners.OnWrite(p, n, msg, err)
@@ -2260,47 +2219,10 @@ func (p *Peer) waitToFinishNegotiation(pver uint32) error {
 //  4. We send our verack.
 //  5. Wait until sendaddrv2 or verack is received. Unknown messages are
 //     skipped as it could be wtxidrelay or a different message in the future
-//     that btcd does not implement but bitcoind does.
+//     that handshake-node does not implement but bitcoind does.
 //  6. If remote peer sent sendaddrv2 above, wait until receipt of verack.
 func (p *Peer) negotiateInboundProtocol() error {
-	// We may be anticipating a v2 connection, but if the initiating peer
-	// sends us a v1 version message, we need to note down that we've
-	// downgraded the connection internally.
-	downgradedConn := false
-
-	if p.cfg.UsingV2Conn {
-		garbageLen := rand.Intn(v2transport.MaxGarbageLen + 1)
-		err := p.V2Transport.RespondV2Handshake(
-			garbageLen,
-			v2transport.BitcoinNet(p.cfg.ChainParams.Net),
-		)
-		switch {
-		case errors.Is(err, v2transport.ErrUseV1Protocol):
-			log.Infof("Inbound v2 connection attempt from %s "+
-				"downgraded to v1 (peer sent v1 version "+
-				"message)", p.addr)
-
-			p.cfg.UsingV2Conn = false
-			downgradedConn = true
-
-		case err != nil:
-			return err
-
-		default:
-			err = p.V2Transport.CompleteHandshake(
-				false, nil,
-				v2transport.BitcoinNet(p.cfg.ChainParams.Net),
-			)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	// If the connection has been downgraded, then we need to parse the
-	// rest of the v1 version message properly. Otherwise, we read the
-	// entire version message off the wire.
-	if err := p.readRemoteVersionMsg(downgradedConn); err != nil {
+	if err := p.readRemoteVersionMsg(false); err != nil {
 		return err
 	}
 
@@ -2338,31 +2260,6 @@ func (p *Peer) negotiateInboundProtocol() error {
 //     in the inbound case.
 //  6. If sendaddrv2 was received, wait for receipt of verack.
 func (p *Peer) negotiateOutboundProtocol() error {
-	if p.cfg.UsingV2Conn {
-		// Note that it's possible that the v2 handshake fails because
-		// the peer does not support v2 connections. In this case, we
-		// should detect that and reconnect using a v1 connection. This
-		// is the logic that bitcoind uses.
-		garbageLen := rand.Intn(v2transport.MaxGarbageLen + 1)
-		err := p.V2Transport.InitiateV2Handshake(garbageLen)
-		if err != nil {
-			return err
-		}
-
-		err = p.V2Transport.CompleteHandshake(
-			true, nil,
-			v2transport.BitcoinNet(p.cfg.ChainParams.Net),
-		)
-		if errors.Is(err, v2transport.ErrShouldDowngradeToV1) {
-			log.Infof("Outbound v2 connection attempt to %s "+
-				"failed, will downgrade to v1 (peer does "+
-				"not support v2)", p.addr)
-			return err
-		} else if err != nil {
-			return err
-		}
-	}
-
 	if err := p.writeLocalVersionMsg(); err != nil {
 		return err
 	}
@@ -2437,10 +2334,6 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 	p.conn = conn
 	p.timeConnected = time.Now()
 
-	if p.cfg.UsingV2Conn {
-		p.V2Transport.UseReadWriter(conn)
-	}
-
 	if p.inbound {
 		p.addr = p.conn.RemoteAddr().String()
 
@@ -2483,12 +2376,8 @@ func (p *Peer) WaitForDisconnect() {
 //
 // This function is safe for concurrent access.
 func (p *Peer) ShouldDowngradeToV1() bool {
-	// If we weren't attempting a V2 connection with a V2 transport,
-	// or have no V2 transport instance, then no downgrade is indicated.
-	if !p.cfg.UsingV2Conn || p.V2Transport == nil {
-		return false
-	}
-	return p.V2Transport.ShouldDowngradeToV1()
+	// v2 transport (BIP324) has been removed; Handshake uses Brontide.
+	return false
 }
 
 // newPeerBase returns a new base bitcoin peer based on the inbound flag.  This
@@ -2530,12 +2419,8 @@ func newPeerBase(origCfg *Config, inbound bool) *Peer {
 		protocolVersion: cfg.ProtocolVersion,
 	}
 
-	if p.cfg.UsingV2Conn && p.Services()&wire.SFNodeP2PV2 == wire.SFNodeP2PV2 {
-		p.V2Transport = v2transport.NewPeer()
-	} else {
-		// TODO: Hack, change.
-		p.cfg.UsingV2Conn = false
-	}
+	// v2 transport (BIP324) has been removed; Handshake uses Brontide.
+	p.cfg.UsingV2Conn = false
 
 	return &p
 }

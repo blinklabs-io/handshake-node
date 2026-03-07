@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/integration/rpctest"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/integration/rpctest"
 	"github.com/stretchr/testify/require"
 )
 
-func getBlockFromString(t *testing.T, hexStr string) *btcutil.Block {
+func getBlockFromString(t *testing.T, hexStr string) *hnsutil.Block {
 	t.Helper()
 
 	serializedBlock, err := hex.DecodeString(hexStr)
@@ -20,7 +20,7 @@ func getBlockFromString(t *testing.T, hexStr string) *btcutil.Block {
 		t.Fatalf("couldn't decode hex string of %s", hexStr)
 	}
 
-	block, err := btcutil.NewBlockFromBytes(serializedBlock)
+	block, err := hnsutil.NewBlockFromBytes(serializedBlock)
 	if err != nil {
 		t.Fatalf("couldn't make a new block from bytes. "+
 			"Decoded hex string: %s", hexStr)
@@ -31,12 +31,12 @@ func getBlockFromString(t *testing.T, hexStr string) *btcutil.Block {
 
 // compareMultipleChainTips checks that all the expected chain tips are included in got chain tips and
 // verifies that the got chain tip matches the expected chain tip.
-func compareMultipleChainTips(t *testing.T, gotChainTips, expectedChainTips []*btcjson.GetChainTipsResult) error {
+func compareMultipleChainTips(t *testing.T, gotChainTips, expectedChainTips []*hnsjson.GetChainTipsResult) error {
 	if len(gotChainTips) != len(expectedChainTips) {
 		return fmt.Errorf("Expected %d chaintips but got %d", len(expectedChainTips), len(gotChainTips))
 	}
 
-	gotChainTipsMap := make(map[string]btcjson.GetChainTipsResult)
+	gotChainTipsMap := make(map[string]hnsjson.GetChainTipsResult)
 	for _, gotChainTip := range gotChainTips {
 		gotChainTipsMap[gotChainTip.Hash] = *gotChainTip
 	}
@@ -160,7 +160,7 @@ func TestGetChainTips(t *testing.T) {
 		t.Fatal(err)
 	}
 	// We expect a single genesis block.
-	expectedChainTips := []*btcjson.GetChainTipsResult{
+	expectedChainTips := []*hnsjson.GetChainTipsResult{
 		{
 			Height:    0,
 			Hash:      chaincfg.RegressionNetParams.GenesisHash.String(),
@@ -190,7 +190,7 @@ func TestGetChainTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedChainTips = []*btcjson.GetChainTipsResult{
+	expectedChainTips = []*hnsjson.GetChainTipsResult{
 		{
 			Height:    4,
 			Hash:      getBlockFromString(t, blockStrings[len(blockStrings)-1]).Hash().String(),
@@ -221,7 +221,7 @@ func TestGetChainTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedChainTips = []*btcjson.GetChainTipsResult{
+	expectedChainTips = []*hnsjson.GetChainTipsResult{
 		{
 			Height:    4,
 			Hash:      getBlockFromString(t, block4Hex).Hash().String(),
@@ -255,7 +255,7 @@ func TestGetChainTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedChainTips = []*btcjson.GetChainTipsResult{
+	expectedChainTips = []*hnsjson.GetChainTipsResult{
 		{
 			Height:    4,
 			Hash:      getBlockFromString(t, block4Hex).Hash().String(),
@@ -288,7 +288,7 @@ func TestGetChainTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedChainTips = []*btcjson.GetChainTipsResult{
+	expectedChainTips = []*hnsjson.GetChainTipsResult{
 		{
 			Height:    4,
 			Hash:      getBlockFromString(t, block4Hex).Hash().String(),
@@ -322,7 +322,7 @@ func TestGetChainTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedChainTips = []*btcjson.GetChainTipsResult{
+	expectedChainTips = []*hnsjson.GetChainTipsResult{
 		{
 			Height:    4,
 			Hash:      getBlockFromString(t, block4Hex).Hash().String(),

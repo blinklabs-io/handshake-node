@@ -5,7 +5,7 @@
 ###########################
 # Build binaries stage
 ###########################
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 ADD . /app
 WORKDIR /app
 # Arguments required to build binaries targetting the correct OS and CPU architectures
@@ -18,7 +18,7 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go install -v . ./cmd/...
 ###########################
 FROM alpine:3.15
 COPY --from=build /go/bin /bin
-# 8333  Mainnet Bitcoin peer-to-peer port
-# 8334  Mainet RPC port
+# 8333  Mainnet Handshake peer-to-peer port
+# 8334  Mainnet RPC port
 EXPOSE 8333 8334
-ENTRYPOINT ["btcd"]
+ENTRYPOINT ["handshake-node"]

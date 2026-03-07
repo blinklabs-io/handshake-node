@@ -5,11 +5,11 @@ import (
 	"math"
 	"runtime"
 
-	"github.com/btcsuite/btcd/blockchain/internal/workmath"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/blockchain/internal/workmath"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 var (
@@ -19,7 +19,7 @@ var (
 
 	// LowFee is a single satoshi and exists to make the test code more
 	// readable.
-	LowFee = btcutil.Amount(1)
+	LowFee = hnsutil.Amount(1)
 )
 
 // CreateSpendTx creates a transaction that spends from the provided spendable
@@ -27,7 +27,7 @@ var (
 // transaction ends up with a unique hash.  The script is a simple OP_TRUE
 // script which avoids the need to track addresses and signature scripts in the
 // tests.
-func CreateSpendTx(spend *SpendableOut, fee btcutil.Amount) *wire.MsgTx {
+func CreateSpendTx(spend *SpendableOut, fee hnsutil.Amount) *wire.MsgTx {
 	spendTx := wire.NewMsgTx(1)
 	spendTx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: spend.PrevOut,
@@ -107,7 +107,7 @@ func UniqueOpReturnScript() ([]byte, error) {
 // additional metadata such as the block its in and how much it pays.
 type SpendableOut struct {
 	PrevOut wire.OutPoint
-	Amount  btcutil.Amount
+	Amount  hnsutil.Amount
 }
 
 // MakeSpendableOutForTx returns a spendable output for the given transaction
@@ -118,7 +118,7 @@ func MakeSpendableOutForTx(tx *wire.MsgTx, txOutIndex uint32) SpendableOut {
 			Hash:  tx.TxHash(),
 			Index: txOutIndex,
 		},
-		Amount: btcutil.Amount(tx.TxOut[txOutIndex].Value),
+		Amount: hnsutil.Amount(tx.TxOut[txOutIndex].Value),
 	}
 }
 

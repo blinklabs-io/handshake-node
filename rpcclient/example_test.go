@@ -7,7 +7,7 @@ package rpcclient
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
 var connCfg = &ConnConfig{
@@ -42,18 +42,18 @@ func ExampleClient_ImportMulti() {
 	}
 	defer client.Shutdown()
 
-	requests := []btcjson.ImportMultiRequest{
+	requests := []hnsjson.ImportMultiRequest{
 		{
-			Descriptor: btcjson.String(
+			Descriptor: hnsjson.String(
 				"pkh([f34db33f/44'/0'/0']xpub6Cc939fyHvfB9pPLWd3bSyyQFvgKbwhidca49jGCM5Hz5ypEPGf9JVXB4NBuUfPgoHnMjN6oNgdC9KRqM11RZtL8QLW6rFKziNwHDYhZ6Kx/0/*)#ed7px9nu"),
-			Range:     &btcjson.DescriptorRange{Value: []int{0, 100}},
-			Timestamp: btcjson.TimestampOrNow{Value: 0}, // scan from genesis
-			WatchOnly: btcjson.Bool(true),
-			KeyPool:   btcjson.Bool(false),
-			Internal:  btcjson.Bool(false),
+			Range:     &hnsjson.DescriptorRange{Value: []int{0, 100}},
+			Timestamp: hnsjson.TimestampOrNow{Value: 0}, // scan from genesis
+			WatchOnly: hnsjson.Bool(true),
+			KeyPool:   hnsjson.Bool(false),
+			Internal:  hnsjson.Bool(false),
 		},
 	}
-	opts := &btcjson.ImportMultiOptions{Rescan: true}
+	opts := &hnsjson.ImportMultiOptions{Rescan: true}
 
 	resp, err := client.ImportMulti(requests, opts)
 	if err != nil {
@@ -73,7 +73,7 @@ func ExampleClient_DeriveAddresses() {
 
 	addrs, err := client.DeriveAddresses(
 		"pkh([f34db33f/44'/0'/0']xpub6Cc939fyHvfB9pPLWd3bSyyQFvgKbwhidca49jGCM5Hz5ypEPGf9JVXB4NBuUfPgoHnMjN6oNgdC9KRqM11RZtL8QLW6rFKziNwHDYhZ6Kx/0/*)#ed7px9nu",
-		&btcjson.DescriptorRange{Value: []int{0, 2}})
+		&hnsjson.DescriptorRange{Value: []int{0, 2}})
 	if err != nil {
 		panic(err)
 	}

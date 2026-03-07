@@ -10,9 +10,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/peer"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // mockRemotePeer creates a basic inbound peer listening on the simnet port for

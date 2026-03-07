@@ -6,7 +6,7 @@ package blockchain
 
 import (
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/blinklabs-io/handshake-node/txscript"
 )
 
 // -----------------------------------------------------------------------------

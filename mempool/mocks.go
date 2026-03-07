@@ -3,10 +3,10 @@ package mempool
 import (
 	"time"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -32,12 +32,12 @@ func (m *MockTxMempool) TxDescs() []*TxDesc {
 }
 
 // RawMempoolVerbose returns all the entries in the mempool as a fully
-// populated btcjson result.
-func (m *MockTxMempool) RawMempoolVerbose() map[string]*btcjson.
+// populated hnsjson result.
+func (m *MockTxMempool) RawMempoolVerbose() map[string]*hnsjson.
 	GetRawMempoolVerboseResult {
 
 	args := m.Called()
-	return args.Get(0).(map[string]*btcjson.GetRawMempoolVerboseResult)
+	return args.Get(0).(map[string]*hnsjson.GetRawMempoolVerboseResult)
 }
 
 // Count returns the number of transactions in the main pool. It does not
@@ -51,7 +51,7 @@ func (m *MockTxMempool) Count() int {
 // pool. This only fetches from the main transaction pool and does not include
 // orphans.
 func (m *MockTxMempool) FetchTransaction(
-	txHash *chainhash.Hash) (*btcutil.Tx, error) {
+	txHash *chainhash.Hash) (*hnsutil.Tx, error) {
 
 	args := m.Called(txHash)
 
@@ -59,7 +59,7 @@ func (m *MockTxMempool) FetchTransaction(
 		return nil, args.Error(1)
 	}
 
-	return args.Get(0).(*btcutil.Tx), args.Error(1)
+	return args.Get(0).(*hnsutil.Tx), args.Error(1)
 }
 
 // HaveTransaction returns whether or not the passed transaction already exists
@@ -73,7 +73,7 @@ func (m *MockTxMempool) HaveTransaction(hash *chainhash.Hash) bool {
 // free-standing transactions into the memory pool. It includes functionality
 // such as rejecting duplicate transactions, ensuring transactions follow all
 // rules, orphan transaction handling, and insertion into the memory pool.
-func (m *MockTxMempool) ProcessTransaction(tx *btcutil.Tx, allowOrphan,
+func (m *MockTxMempool) ProcessTransaction(tx *hnsutil.Tx, allowOrphan,
 	rateLimit bool, tag Tag) ([]*TxDesc, error) {
 
 	args := m.Called(tx, allowOrphan, rateLimit, tag)
@@ -89,7 +89,7 @@ func (m *MockTxMempool) ProcessTransaction(tx *btcutil.Tx, allowOrphan,
 // removeRedeemers flag is set, any transactions that redeem outputs from the
 // removed transaction will also be removed recursively from the mempool, as
 // they would otherwise become orphans.
-func (m *MockTxMempool) RemoveTransaction(tx *btcutil.Tx,
+func (m *MockTxMempool) RemoveTransaction(tx *hnsutil.Tx,
 	removeRedeemers bool) {
 
 	m.Called(tx, removeRedeemers)
@@ -100,7 +100,7 @@ func (m *MockTxMempool) RemoveTransaction(tx *btcutil.Tx,
 // transaction can be accepted to the mempool. If not, the specific error is
 // returned and the caller needs to take actions based on it.
 func (m *MockTxMempool) CheckMempoolAcceptance(
-	tx *btcutil.Tx) (*MempoolAcceptResult, error) {
+	tx *hnsutil.Tx) (*MempoolAcceptResult, error) {
 
 	args := m.Called(tx)
 
@@ -114,12 +114,12 @@ func (m *MockTxMempool) CheckMempoolAcceptance(
 // CheckSpend checks whether the passed outpoint is already spent by a
 // transaction in the mempool. If that's the case the spending transaction will
 // be returned, if not nil will be returned.
-func (m *MockTxMempool) CheckSpend(op wire.OutPoint) *btcutil.Tx {
+func (m *MockTxMempool) CheckSpend(op wire.OutPoint) *hnsutil.Tx {
 	args := m.Called(op)
 
 	if args.Get(0) == nil {
 		return nil
 	}
 
-	return args.Get(0).(*btcutil.Tx)
+	return args.Get(0).(*hnsutil.Tx)
 }

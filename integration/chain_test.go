@@ -6,13 +6,13 @@ package integration
 import (
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/integration/rpctest"
-	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/integration/rpctest"
+	"github.com/blinklabs-io/handshake-node/rpcclient"
+	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,8 +26,8 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 	t.Parallel()
 
 	// Boilerplate codetestDir to make a pruned node.
-	btcdCfg := []string{"--rejectnonstd", "--debuglevel=debug"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, btcdCfg, "")
+	hnsCfg := []string{"--rejectnonstd", "--debuglevel=debug"}
+	r, err := rpctest.New(&chaincfg.SimNetParams, nil, hnsCfg, "")
 	require.NoError(t, err)
 
 	// Setup the node.
@@ -48,7 +48,7 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 		name           string
 		outpoints      []wire.OutPoint
 		expectedErr    error
-		expectedResult []*btcjson.GetTxSpendingPrevOutResult
+		expectedResult []*hnsjson.GetTxSpendingPrevOutResult
 	}{
 		{
 			// When no outpoints are provided, the method should
@@ -65,7 +65,7 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 				opInMempool, opNotInMempool,
 			},
 			expectedErr: nil,
-			expectedResult: []*btcjson.GetTxSpendingPrevOutResult{
+			expectedResult: []*hnsjson.GetTxSpendingPrevOutResult{
 				{
 					Txid:         opInMempool.Hash.String(),
 					Vout:         opInMempool.Index,
@@ -106,7 +106,7 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 // createTxInMempool creates a tx and puts it in the mempool.
 func createTxInMempool(t *testing.T, r *rpctest.Harness) *wire.MsgTx {
 	// Create a fresh output for usage within the test below.
-	const outputValue = btcutil.SatoshiPerBitcoin
+	const outputValue = hnsutil.SatoshiPerBitcoin
 	outputKey, testOutput, testPkScript, err := makeTestOutput(
 		r, t, outputValue,
 	)

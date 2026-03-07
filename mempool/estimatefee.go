@@ -16,9 +16,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/mining"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/mining"
 )
 
 // TODO incorporate Alex Morcos' modifications to Gavin's initial model
@@ -75,18 +75,18 @@ func (rate SatoshiPerByte) ToBtcPerKb() BtcPerKilobyte {
 
 // Fee returns the fee for a transaction of a given size for
 // the given fee rate.
-func (rate SatoshiPerByte) Fee(size uint32) btcutil.Amount {
+func (rate SatoshiPerByte) Fee(size uint32) hnsutil.Amount {
 	// If our rate is the error value, return that.
 	if rate == SatoshiPerByte(-1) {
-		return btcutil.Amount(-1)
+		return hnsutil.Amount(-1)
 	}
 
-	return btcutil.Amount(float64(rate) * float64(size))
+	return hnsutil.Amount(float64(rate) * float64(size))
 }
 
 // NewSatoshiPerByte creates a SatoshiPerByte from an Amount and a
 // size in bytes.
-func NewSatoshiPerByte(fee btcutil.Amount, size uint32) SatoshiPerByte {
+func NewSatoshiPerByte(fee hnsutil.Amount, size uint32) SatoshiPerByte {
 	return SatoshiPerByte(float64(fee) / float64(size))
 }
 
@@ -212,7 +212,7 @@ func (ef *FeeEstimator) ObserveTransaction(t *TxDesc) {
 
 		ef.observed[hash] = &observedTransaction{
 			hash:     hash,
-			feeRate:  NewSatoshiPerByte(btcutil.Amount(t.Fee), size),
+			feeRate:  NewSatoshiPerByte(hnsutil.Amount(t.Fee), size),
 			observed: t.Height,
 			mined:    mining.UnminedHeight,
 		}
@@ -220,7 +220,7 @@ func (ef *FeeEstimator) ObserveTransaction(t *TxDesc) {
 }
 
 // RegisterBlock informs the fee estimator of a new block to take into account.
-func (ef *FeeEstimator) RegisterBlock(block *btcutil.Block) error {
+func (ef *FeeEstimator) RegisterBlock(block *hnsutil.Block) error {
 	ef.mtx.Lock()
 	defer ef.mtx.Unlock()
 
@@ -238,7 +238,7 @@ func (ef *FeeEstimator) RegisterBlock(block *btcutil.Block) error {
 	ef.numBlocksRegistered++
 
 	// Randomly order txs in block.
-	transactions := make(map[*btcutil.Tx]struct{})
+	transactions := make(map[*hnsutil.Tx]struct{})
 	for _, t := range block.Transactions() {
 		transactions[t] = struct{}{}
 	}
@@ -279,7 +279,7 @@ func (ef *FeeEstimator) RegisterBlock(block *btcutil.Block) error {
 		// Also check that blocksToConfirm is not negative as this causes
 		// the node to crash on reorgs.  A tx that was observed at height X
 		// might be included in heights less than X because of chain reorgs.
-		// Refer to github.com/btcsuite/btcd/issues/1660 for more information.
+		// Refer to github.com/blinklabs-io/handshake-node/issues/1660 for more information.
 		//
 		// TODO(kcalvinalvin) a better design that doesn't just skip over the
 		// transaction would result in a more accurate fee estimator.  Properly

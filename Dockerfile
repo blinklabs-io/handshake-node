@@ -1,18 +1,18 @@
-# This Dockerfile builds btcd from source and creates a small (55 MB) docker container based on alpine linux.
+# This Dockerfile builds handshake-node from source and creates a small (55 MB) docker container based on alpine linux.
 #
-# Clone this repository and run the following command to build and tag a fresh btcd amd64 container:
+# Clone this repository and run the following command to build and tag a fresh handshake-node amd64 container:
 #
-# docker build . -t yourregistry/btcd
+# docker build . -t yourregistry/handshake-node
 #
 # You can use the following command to build an arm64v8 container:
 #
-# docker build . -t yourregistry/btcd --build-arg ARCH=arm64v8
+# docker build . -t yourregistry/handshake-node --build-arg ARCH=arm64v8
 #
 # For more information how to use this docker image visit:
-# https://github.com/btcsuite/btcd/tree/master/docs
+# https://github.com/blinklabs-io/handshake-node/tree/master/docs
 #
-# 8333  Mainnet Bitcoin peer-to-peer port
-# 8334  Mainet RPC port
+# 12038  Mainnet Handshake peer-to-peer port
+# 12037  Mainnet RPC port
 
 ARG ARCH=amd64
 # using the SHA256 instead of tags
@@ -38,8 +38,8 @@ FROM $ARCH/alpine:3.21
 
 COPY --from=build-container /go/bin /bin
 
-VOLUME ["/root/.btcd"]
+VOLUME ["/root/.handshake-node"]
 
-EXPOSE 8333 8334
+EXPOSE 12038 12037
 
-ENTRYPOINT ["btcd"]
+ENTRYPOINT ["handshake-node"]

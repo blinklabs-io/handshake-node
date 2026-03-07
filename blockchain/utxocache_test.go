@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/database/ffldb"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 func TestMapSlice(t *testing.T) {
@@ -404,7 +404,7 @@ func TestUtxoCacheFlush(t *testing.T) {
 	chain, params, tearDown := utxoCacheTestChain("TestUtxoCacheFlush")
 	defer tearDown()
 	cache := chain.utxoCache
-	tip := btcutil.NewBlock(params.GenesisBlock)
+	tip := hnsutil.NewBlock(params.GenesisBlock)
 
 	// The chainSetup init triggers the consistency status write.
 	err := assertConsistencyState(chain, params.GenesisHash)
@@ -753,7 +753,7 @@ func TestFlushOnPrune(t *testing.T) {
 		// create a stale branch in the chain.
 		staleMsgBlock := blocks[1].MsgBlock().Copy()
 		staleMsgBlock.Header.Nonce = 0
-		staleBlock := btcutil.NewBlock(staleMsgBlock)
+		staleBlock := hnsutil.NewBlock(staleMsgBlock)
 
 		// Add the stale block here to create a chain view like so. The
 		// block will be the main chain at first but become stale as we
@@ -789,7 +789,7 @@ func TestFlushOnPrune(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		block, err := btcutil.NewBlockFromBytes(bytes)
+		block, err := hnsutil.NewBlockFromBytes(bytes)
 		if err != nil {
 			return fmt.Errorf("didn't find block %v. %v", blockHash, err)
 		}

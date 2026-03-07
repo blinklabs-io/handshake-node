@@ -6,7 +6,7 @@ package integration
 import (
 	"os"
 
-	"github.com/btcsuite/btcd/rpcclient"
+	"github.com/blinklabs-io/handshake-node/rpcclient"
 	"github.com/btcsuite/btclog"
 )
 

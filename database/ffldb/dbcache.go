@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/btcsuite/btcd/database/internal/treap"
+	"github.com/blinklabs-io/handshake-node/database/internal/treap"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/util"

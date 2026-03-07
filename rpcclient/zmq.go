@@ -3,7 +3,7 @@ package rpcclient
 import (
 	"encoding/json"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
 // FutureGetZmqNotificationsResult is a future promise to deliver the result of
@@ -12,12 +12,12 @@ type FutureGetZmqNotificationsResult chan *Response
 
 // Receive waits for the response promised by the future and returns the unmarshalled
 // response, or an error if the request was unsuccessful.
-func (r FutureGetZmqNotificationsResult) Receive() (btcjson.GetZmqNotificationResult, error) {
+func (r FutureGetZmqNotificationsResult) Receive() (hnsjson.GetZmqNotificationResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
 	}
-	var notifications btcjson.GetZmqNotificationResult
+	var notifications hnsjson.GetZmqNotificationResult
 	if err := json.Unmarshal(res, &notifications); err != nil {
 		return nil, err
 	}
@@ -30,10 +30,10 @@ func (r FutureGetZmqNotificationsResult) Receive() (btcjson.GetZmqNotificationRe
 //
 // See GetZmqNotifications for the blocking version and more details.
 func (c *Client) GetZmqNotificationsAsync() FutureGetZmqNotificationsResult {
-	return c.SendCmd(btcjson.NewGetZmqNotificationsCmd())
+	return c.SendCmd(hnsjson.NewGetZmqNotificationsCmd())
 }
 
 // GetZmqNotifications returns information about the active ZeroMQ notifications.
-func (c *Client) GetZmqNotifications() (btcjson.GetZmqNotificationResult, error) {
+func (c *Client) GetZmqNotifications() (hnsjson.GetZmqNotificationResult, error) {
 	return c.GetZmqNotificationsAsync().Receive()
 }

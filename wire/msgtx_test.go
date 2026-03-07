@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/require"
 )
@@ -887,7 +887,7 @@ func TestTxOutPointFromString(t *testing.T) {
 	}
 }
 
-// TestTxSuperfluousWitnessRecord ensures that btcd fails to parse a tx with
+// TestTxSuperfluousWitnessRecord ensures that handshake-node fails to parse a tx with
 // the witness marker flag set but without any actual witnesses.
 func TestTxSuperfluousWitnessRecord(t *testing.T) {
 	m := &MsgTx{}

@@ -7,7 +7,7 @@ package main
 import (
 	"log"
 
-	"github.com/btcsuite/btcd/rpcclient"
+	"github.com/blinklabs-io/handshake-node/rpcclient"
 )
 
 func main() {

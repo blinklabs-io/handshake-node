@@ -7,7 +7,7 @@ package rpcclient
 import (
 	"encoding/json"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
 // AddNodeCommand enumerates the available commands that the AddNode function
@@ -50,7 +50,7 @@ func (r FutureAddNodeResult) Receive() error {
 //
 // See AddNode for the blocking version and more details.
 func (c *Client) AddNodeAsync(host string, command AddNodeCommand) FutureAddNodeResult {
-	cmd := btcjson.NewAddNodeCmd(host, btcjson.AddNodeSubCmd(command))
+	cmd := hnsjson.NewAddNodeCmd(host, hnsjson.AddNodeSubCmd(command))
 	return c.SendCmd(cmd)
 }
 
@@ -79,9 +79,9 @@ func (r FutureNodeResult) Receive() error {
 // returned instance.
 //
 // See Node for the blocking version and more details.
-func (c *Client) NodeAsync(command btcjson.NodeSubCmd, host string,
+func (c *Client) NodeAsync(command hnsjson.NodeSubCmd, host string,
 	connectSubCmd *string) FutureNodeResult {
-	cmd := btcjson.NewNodeCmd(command, host, connectSubCmd)
+	cmd := hnsjson.NewNodeCmd(command, host, connectSubCmd)
 	return c.SendCmd(cmd)
 }
 
@@ -92,7 +92,7 @@ func (c *Client) NodeAsync(command btcjson.NodeSubCmd, host string,
 // The connectSubCmd should be set either "perm" or "temp", depending on
 // whether we are targeting a persistent or non-persistent peer. Passing nil
 // will cause the default value to be used, which currently is "temp".
-func (c *Client) Node(command btcjson.NodeSubCmd, host string,
+func (c *Client) Node(command hnsjson.NodeSubCmd, host string,
 	connectSubCmd *string) error {
 	return c.NodeAsync(command, host, connectSubCmd).Receive()
 }
@@ -103,14 +103,14 @@ type FutureGetAddedNodeInfoResult chan *Response
 
 // Receive waits for the Response promised by the future and returns information
 // about manually added (persistent) peers.
-func (r FutureGetAddedNodeInfoResult) Receive() ([]btcjson.GetAddedNodeInfoResult, error) {
+func (r FutureGetAddedNodeInfoResult) Receive() ([]hnsjson.GetAddedNodeInfoResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
 	}
 
 	// Unmarshal as an array of getaddednodeinfo result objects.
-	var nodeInfo []btcjson.GetAddedNodeInfoResult
+	var nodeInfo []hnsjson.GetAddedNodeInfoResult
 	err = json.Unmarshal(res, &nodeInfo)
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ func (r FutureGetAddedNodeInfoResult) Receive() ([]btcjson.GetAddedNodeInfoResul
 //
 // See GetAddedNodeInfo for the blocking version and more details.
 func (c *Client) GetAddedNodeInfoAsync(peer string) FutureGetAddedNodeInfoResult {
-	cmd := btcjson.NewGetAddedNodeInfoCmd(true, &peer)
+	cmd := hnsjson.NewGetAddedNodeInfoCmd(true, &peer)
 	return c.SendCmd(cmd)
 }
 
@@ -133,7 +133,7 @@ func (c *Client) GetAddedNodeInfoAsync(peer string) FutureGetAddedNodeInfoResult
 //
 // See GetAddedNodeInfoNoDNS to retrieve only a list of the added (persistent)
 // peers.
-func (c *Client) GetAddedNodeInfo(peer string) ([]btcjson.GetAddedNodeInfoResult, error) {
+func (c *Client) GetAddedNodeInfo(peer string) ([]hnsjson.GetAddedNodeInfoResult, error) {
 	return c.GetAddedNodeInfoAsync(peer).Receive()
 }
 
@@ -165,7 +165,7 @@ func (r FutureGetAddedNodeInfoNoDNSResult) Receive() ([]string, error) {
 //
 // See GetAddedNodeInfoNoDNS for the blocking version and more details.
 func (c *Client) GetAddedNodeInfoNoDNSAsync(peer string) FutureGetAddedNodeInfoNoDNSResult {
-	cmd := btcjson.NewGetAddedNodeInfoCmd(false, &peer)
+	cmd := hnsjson.NewGetAddedNodeInfoCmd(false, &peer)
 	return c.SendCmd(cmd)
 }
 
@@ -206,7 +206,7 @@ func (r FutureGetConnectionCountResult) Receive() (int64, error) {
 //
 // See GetConnectionCount for the blocking version and more details.
 func (c *Client) GetConnectionCountAsync() FutureGetConnectionCountResult {
-	cmd := btcjson.NewGetConnectionCountCmd()
+	cmd := hnsjson.NewGetConnectionCountCmd()
 	return c.SendCmd(cmd)
 }
 
@@ -232,7 +232,7 @@ func (r FuturePingResult) Receive() error {
 //
 // See Ping for the blocking version and more details.
 func (c *Client) PingAsync() FuturePingResult {
-	cmd := btcjson.NewPingCmd()
+	cmd := hnsjson.NewPingCmd()
 	return c.SendCmd(cmd)
 }
 
@@ -250,14 +250,14 @@ type FutureGetNetworkInfoResult chan *Response
 
 // Receive waits for the Response promised by the future and returns data about
 // the current network.
-func (r FutureGetNetworkInfoResult) Receive() (*btcjson.GetNetworkInfoResult, error) {
+func (r FutureGetNetworkInfoResult) Receive() (*hnsjson.GetNetworkInfoResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
 	}
 
 	// Unmarshal result as an array of getpeerinfo result objects.
-	var networkInfo btcjson.GetNetworkInfoResult
+	var networkInfo hnsjson.GetNetworkInfoResult
 	err = json.Unmarshal(res, &networkInfo)
 	if err != nil {
 		return nil, err
@@ -272,12 +272,12 @@ func (r FutureGetNetworkInfoResult) Receive() (*btcjson.GetNetworkInfoResult, er
 //
 // See GetNetworkInfo for the blocking version and more details.
 func (c *Client) GetNetworkInfoAsync() FutureGetNetworkInfoResult {
-	cmd := btcjson.NewGetNetworkInfoCmd()
+	cmd := hnsjson.NewGetNetworkInfoCmd()
 	return c.SendCmd(cmd)
 }
 
 // GetNetworkInfo returns data about the current network.
-func (c *Client) GetNetworkInfo() (*btcjson.GetNetworkInfoResult, error) {
+func (c *Client) GetNetworkInfo() (*hnsjson.GetNetworkInfoResult, error) {
 	return c.GetNetworkInfoAsync().Receive()
 }
 
@@ -287,14 +287,14 @@ type FutureGetNodeAddressesResult chan *Response
 
 // Receive waits for the Response promised by the future and returns data about
 // known node addresses.
-func (r FutureGetNodeAddressesResult) Receive() ([]btcjson.GetNodeAddressesResult, error) {
+func (r FutureGetNodeAddressesResult) Receive() ([]hnsjson.GetNodeAddressesResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
 	}
 
 	// Unmarshal result as an array of getnodeaddresses result objects.
-	var nodeAddresses []btcjson.GetNodeAddressesResult
+	var nodeAddresses []hnsjson.GetNodeAddressesResult
 	err = json.Unmarshal(res, &nodeAddresses)
 	if err != nil {
 		return nil, err
@@ -309,12 +309,12 @@ func (r FutureGetNodeAddressesResult) Receive() ([]btcjson.GetNodeAddressesResul
 //
 // See GetNodeAddresses for the blocking version and more details.
 func (c *Client) GetNodeAddressesAsync(count *int32) FutureGetNodeAddressesResult {
-	cmd := btcjson.NewGetNodeAddressesCmd(count)
+	cmd := hnsjson.NewGetNodeAddressesCmd(count)
 	return c.SendCmd(cmd)
 }
 
 // GetNodeAddresses returns data about known node addresses.
-func (c *Client) GetNodeAddresses(count *int32) ([]btcjson.GetNodeAddressesResult, error) {
+func (c *Client) GetNodeAddresses(count *int32) ([]hnsjson.GetNodeAddressesResult, error) {
 	return c.GetNodeAddressesAsync(count).Receive()
 }
 
@@ -324,14 +324,14 @@ type FutureGetPeerInfoResult chan *Response
 
 // Receive waits for the Response promised by the future and returns  data about
 // each connected network peer.
-func (r FutureGetPeerInfoResult) Receive() ([]btcjson.GetPeerInfoResult, error) {
+func (r FutureGetPeerInfoResult) Receive() ([]hnsjson.GetPeerInfoResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
 	}
 
 	// Unmarshal result as an array of getpeerinfo result objects.
-	var peerInfo []btcjson.GetPeerInfoResult
+	var peerInfo []hnsjson.GetPeerInfoResult
 	err = json.Unmarshal(res, &peerInfo)
 	if err != nil {
 		return nil, err
@@ -346,12 +346,12 @@ func (r FutureGetPeerInfoResult) Receive() ([]btcjson.GetPeerInfoResult, error) 
 //
 // See GetPeerInfo for the blocking version and more details.
 func (c *Client) GetPeerInfoAsync() FutureGetPeerInfoResult {
-	cmd := btcjson.NewGetPeerInfoCmd()
+	cmd := hnsjson.NewGetPeerInfoCmd()
 	return c.SendCmd(cmd)
 }
 
 // GetPeerInfo returns data about each connected network peer.
-func (c *Client) GetPeerInfo() ([]btcjson.GetPeerInfoResult, error) {
+func (c *Client) GetPeerInfo() ([]hnsjson.GetPeerInfoResult, error) {
 	return c.GetPeerInfoAsync().Receive()
 }
 
@@ -361,14 +361,14 @@ type FutureGetNetTotalsResult chan *Response
 
 // Receive waits for the Response promised by the future and returns network
 // traffic statistics.
-func (r FutureGetNetTotalsResult) Receive() (*btcjson.GetNetTotalsResult, error) {
+func (r FutureGetNetTotalsResult) Receive() (*hnsjson.GetNetTotalsResult, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
 	}
 
 	// Unmarshal result as a getnettotals result object.
-	var totals btcjson.GetNetTotalsResult
+	var totals hnsjson.GetNetTotalsResult
 	err = json.Unmarshal(res, &totals)
 	if err != nil {
 		return nil, err
@@ -383,11 +383,11 @@ func (r FutureGetNetTotalsResult) Receive() (*btcjson.GetNetTotalsResult, error)
 //
 // See GetNetTotals for the blocking version and more details.
 func (c *Client) GetNetTotalsAsync() FutureGetNetTotalsResult {
-	cmd := btcjson.NewGetNetTotalsCmd()
+	cmd := hnsjson.NewGetNetTotalsCmd()
 	return c.SendCmd(cmd)
 }
 
 // GetNetTotals returns network traffic statistics.
-func (c *Client) GetNetTotals() (*btcjson.GetNetTotalsResult, error) {
+func (c *Client) GetNetTotals() (*hnsjson.GetNetTotalsResult, error) {
 	return c.GetNetTotalsAsync().Receive()
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 

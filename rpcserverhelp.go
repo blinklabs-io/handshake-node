@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
 // helpDescsEnUS defines the English descriptions used for the help strings.
@@ -581,7 +581,7 @@ var helpDescsEnUS = map[string]string{
 	// SendRawTransactionCmd help.
 	"sendrawtransaction--synopsis":    "Submits the serialized, hex-encoded transaction to the local peer and relays it to the network.",
 	"sendrawtransaction-hextx":        "Serialized, hex-encoded signed transaction",
-	"sendrawtransaction-feesetting":   "Whether or not to allow insanely high fees in bitcoind < v0.19.0 or the max fee rate for bitcoind v0.19.0 and later (btcd does not yet implement this parameter, so it has no effect)",
+	"sendrawtransaction-feesetting":   "Whether or not to allow insanely high fees in bitcoind < v0.19.0 or the max fee rate for bitcoind v0.19.0 and later (handshake-node does not yet implement this parameter, so it has no effect)",
 	"sendrawtransaction--result0":     "The hash of the transaction",
 	"allowhighfeesormaxfeerate-value": "Either the boolean value for the allowhighfees parameter in bitcoind < v0.19.0 or the numerical value for the maxfeerate field in bitcoind v0.19.0 and later",
 
@@ -597,8 +597,8 @@ var helpDescsEnUS = map[string]string{
 	"signmessagewithprivkey--result0":  "The signature of the message encoded in base 64",
 
 	// StopCmd help.
-	"stop--synopsis": "Shutdown btcd.",
-	"stop--result0":  "The string 'btcd stopping.'",
+	"stop--synopsis": "Shutdown handshake-node.",
+	"stop--result0":  "The string 'handshake-node stopping.'",
 
 	// SubmitBlockOptions help.
 	"submitblockoptions-workid": "This parameter is currently ignored",
@@ -626,7 +626,7 @@ var helpDescsEnUS = map[string]string{
 	// VerifyChainCmd help.
 	"verifychain--synopsis": "Verifies the block chain database.\n" +
 		"The actual checks performed by the checklevel parameter are implementation specific.\n" +
-		"For btcd this is:\n" +
+		"For handshake-node this is:\n" +
 		"checklevel=0 - Look up each block and ensure it can be loaded from the database.\n" +
 		"checklevel=1 - Perform basic context-free sanity checks on each block.",
 	"verifychain-checklevel": "How thorough the block verification is",
@@ -673,7 +673,7 @@ var helpDescsEnUS = map[string]string{
 	"outpoint-index": "The index of the outpoint",
 
 	// NotifySpentCmd help.
-	"notifyspent--synopsis": "Send a redeemingtx notification when a transaction spending an outpoint appears in mempool (if relayed to this btcd instance) and when such a transaction first appears in a newly-attached block.",
+	"notifyspent--synopsis": "Send a redeemingtx notification when a transaction spending an outpoint appears in mempool (if relayed to this handshake-node instance) and when such a transaction first appears in a newly-attached block.",
 	"notifyspent-outpoints": "List of transaction outpoints to monitor.",
 
 	// StopNotifySpentCmd help.
@@ -763,20 +763,20 @@ var rpcResultTypes = map[string][]interface{}{
 	"addnode":                nil,
 	"createrawtransaction":   {(*string)(nil)},
 	"debuglevel":             {(*string)(nil), (*string)(nil)},
-	"decoderawtransaction":   {(*btcjson.TxRawDecodeResult)(nil)},
-	"decodescript":           {(*btcjson.DecodeScriptResult)(nil)},
+	"decoderawtransaction":   {(*hnsjson.TxRawDecodeResult)(nil)},
+	"decodescript":           {(*hnsjson.DecodeScriptResult)(nil)},
 	"estimatefee":            {(*float64)(nil)},
 	"generate":               {(*[]string)(nil)},
-	"getaddednodeinfo":       {(*[]string)(nil), (*[]btcjson.GetAddedNodeInfoResult)(nil)},
-	"getbestblock":           {(*btcjson.GetBestBlockResult)(nil)},
+	"getaddednodeinfo":       {(*[]string)(nil), (*[]hnsjson.GetAddedNodeInfoResult)(nil)},
+	"getbestblock":           {(*hnsjson.GetBestBlockResult)(nil)},
 	"getbestblockhash":       {(*string)(nil)},
-	"getblock":               {(*string)(nil), (*btcjson.GetBlockVerboseResult)(nil)},
+	"getblock":               {(*string)(nil), (*hnsjson.GetBlockVerboseResult)(nil)},
 	"getblockcount":          {(*int64)(nil)},
 	"getblockhash":           {(*string)(nil)},
-	"getblockheader":         {(*string)(nil), (*btcjson.GetBlockHeaderVerboseResult)(nil)},
-	"getblocktemplate":       {(*btcjson.GetBlockTemplateResult)(nil), (*string)(nil), nil},
-	"getblockchaininfo":      {(*btcjson.GetBlockChainInfoResult)(nil)},
-	"getchaintips":           {(*[]btcjson.GetChainTipsResult)(nil)},
+	"getblockheader":         {(*string)(nil), (*hnsjson.GetBlockHeaderVerboseResult)(nil)},
+	"getblocktemplate":       {(*hnsjson.GetBlockTemplateResult)(nil), (*string)(nil), nil},
+	"getblockchaininfo":      {(*hnsjson.GetBlockChainInfoResult)(nil)},
+	"getchaintips":           {(*[]hnsjson.GetChainTipsResult)(nil)},
 	"getcfilter":             {(*string)(nil)},
 	"getcfilterheader":       {(*string)(nil)},
 	"getconnectioncount":     {(*int32)(nil)},
@@ -785,38 +785,38 @@ var rpcResultTypes = map[string][]interface{}{
 	"getgenerate":            {(*bool)(nil)},
 	"gethashespersec":        {(*float64)(nil)},
 	"getheaders":             {(*[]string)(nil)},
-	"getinfo":                {(*btcjson.InfoChainResult)(nil)},
-	"getmempoolinfo":         {(*btcjson.GetMempoolInfoResult)(nil)},
-	"getmininginfo":          {(*btcjson.GetMiningInfoResult)(nil)},
-	"getnettotals":           {(*btcjson.GetNetTotalsResult)(nil)},
+	"getinfo":                {(*hnsjson.InfoChainResult)(nil)},
+	"getmempoolinfo":         {(*hnsjson.GetMempoolInfoResult)(nil)},
+	"getmininginfo":          {(*hnsjson.GetMiningInfoResult)(nil)},
+	"getnettotals":           {(*hnsjson.GetNetTotalsResult)(nil)},
 	"getnetworkhashps":       {(*float64)(nil)},
-	"getnodeaddresses":       {(*[]btcjson.GetNodeAddressesResult)(nil)},
-	"getpeerinfo":            {(*[]btcjson.GetPeerInfoResult)(nil)},
-	"getrawmempool":          {(*[]string)(nil), (*btcjson.GetRawMempoolVerboseResult)(nil)},
-	"getrawtransaction":      {(*string)(nil), (*btcjson.TxRawResult)(nil)},
-	"gettxout":               {(*btcjson.GetTxOutResult)(nil)},
+	"getnodeaddresses":       {(*[]hnsjson.GetNodeAddressesResult)(nil)},
+	"getpeerinfo":            {(*[]hnsjson.GetPeerInfoResult)(nil)},
+	"getrawmempool":          {(*[]string)(nil), (*hnsjson.GetRawMempoolVerboseResult)(nil)},
+	"getrawtransaction":      {(*string)(nil), (*hnsjson.TxRawResult)(nil)},
+	"gettxout":               {(*hnsjson.GetTxOutResult)(nil)},
 	"node":                   nil,
 	"help":                   {(*string)(nil), (*string)(nil)},
 	"invalidateblock":        nil,
 	"ping":                   nil,
 	"reconsiderblock":        nil,
-	"searchrawtransactions":  {(*string)(nil), (*[]btcjson.SearchRawTransactionsResult)(nil)},
+	"searchrawtransactions":  {(*string)(nil), (*[]hnsjson.SearchRawTransactionsResult)(nil)},
 	"sendrawtransaction":     {(*string)(nil)},
 	"setgenerate":            nil,
 	"signmessagewithprivkey": {(*string)(nil)},
 	"stop":                   {(*string)(nil)},
 	"submitblock":            {nil, (*string)(nil)},
 	"uptime":                 {(*int64)(nil)},
-	"validateaddress":        {(*btcjson.ValidateAddressChainResult)(nil)},
+	"validateaddress":        {(*hnsjson.ValidateAddressChainResult)(nil)},
 	"verifychain":            {(*bool)(nil)},
 	"verifymessage":          {(*bool)(nil)},
-	"version":                {(*map[string]btcjson.VersionResult)(nil)},
-	"testmempoolaccept":      {(*[]btcjson.TestMempoolAcceptResult)(nil)},
-	"gettxspendingprevout":   {(*[]btcjson.GetTxSpendingPrevOutResult)(nil)},
+	"version":                {(*map[string]hnsjson.VersionResult)(nil)},
+	"testmempoolaccept":      {(*[]hnsjson.TestMempoolAcceptResult)(nil)},
+	"gettxspendingprevout":   {(*[]hnsjson.GetTxSpendingPrevOutResult)(nil)},
 
 	// Websocket commands.
 	"loadtxfilter":              nil,
-	"session":                   {(*btcjson.SessionResult)(nil)},
+	"session":                   {(*hnsjson.SessionResult)(nil)},
 	"notifyblocks":              nil,
 	"stopnotifyblocks":          nil,
 	"notifynewtransactions":     nil,
@@ -826,7 +826,7 @@ var rpcResultTypes = map[string][]interface{}{
 	"notifyspent":               nil,
 	"stopnotifyspent":           nil,
 	"rescan":                    nil,
-	"rescanblocks":              {(*[]btcjson.RescannedBlock)(nil)},
+	"rescanblocks":              {(*[]hnsjson.RescannedBlock)(nil)},
 }
 
 // helpCacher provides a concurrent safe type that provides help and usage for
@@ -857,7 +857,7 @@ func (c *helpCacher) rpcMethodHelp(method string) (string, error) {
 	}
 
 	// Generate, cache, and return the help.
-	help, err := btcjson.GenerateHelp(method, helpDescsEnUS, resultTypes...)
+	help, err := hnsjson.GenerateHelp(method, helpDescsEnUS, resultTypes...)
 	if err != nil {
 		return "", err
 	}
@@ -880,7 +880,7 @@ func (c *helpCacher) rpcUsage(includeWebsockets bool) (string, error) {
 	// Generate a list of one-line usage for every command.
 	usageTexts := make([]string, 0, len(rpcHandlers))
 	for k := range rpcHandlers {
-		usage, err := btcjson.MethodUsageText(k)
+		usage, err := hnsjson.MethodUsageText(k)
 		if err != nil {
 			return "", err
 		}
@@ -890,7 +890,7 @@ func (c *helpCacher) rpcUsage(includeWebsockets bool) (string, error) {
 	// Include websockets commands if requested.
 	if includeWebsockets {
 		for k := range wsHandlers {
-			usage, err := btcjson.MethodUsageText(k)
+			usage, err := hnsjson.MethodUsageText(k)
 			if err != nil {
 				return "", err
 			}

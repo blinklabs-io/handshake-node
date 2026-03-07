@@ -8,15 +8,15 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 
 // TestMerkle tests the BuildMerkleTreeStore API.
 func TestMerkle(t *testing.T) {
-	block := btcutil.NewBlock(&Block100000)
+	block := hnsutil.NewBlock(&Block100000)
 	calcMerkleRoot := CalcMerkleRoot(block.Transactions(), false)
 	merkleStoreTree := BuildMerkleTreeStore(block.Transactions(), false)
 	merkleStoreRoot := merkleStoreTree[len(merkleStoreTree)-1]
@@ -38,10 +38,10 @@ func makeHashes(size int) []*chainhash.Hash {
 	return hashes
 }
 
-func makeTxs(size int) []*btcutil.Tx {
-	var txs = make([]*btcutil.Tx, size)
+func makeTxs(size int) []*hnsutil.Tx {
+	var txs = make([]*hnsutil.Tx, size)
 	for i := range txs {
-		tx := btcutil.NewTx(wire.NewMsgTx(2))
+		tx := hnsutil.NewTx(wire.NewMsgTx(2))
 		tx.Hash()
 		txs[i] = tx
 	}
@@ -90,7 +90,7 @@ func BenchmarkMerkle(b *testing.B) {
 	}
 }
 
-func benchmarkRollingMerkle(b *testing.B, txs []*btcutil.Tx) {
+func benchmarkRollingMerkle(b *testing.B, txs []*hnsutil.Tx) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
@@ -99,7 +99,7 @@ func benchmarkRollingMerkle(b *testing.B, txs []*btcutil.Tx) {
 	}
 }
 
-func benchmarkMerkle(b *testing.B, txs []*btcutil.Tx) {
+func benchmarkMerkle(b *testing.B, txs []*hnsutil.Tx) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
