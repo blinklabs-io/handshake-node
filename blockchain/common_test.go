@@ -14,14 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain/internal/testhelper"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/database"
-	_ "github.com/btcsuite/btcd/database/ffldb"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/database"
+	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 const (
@@ -60,8 +60,8 @@ func isSupportedDbType(dbType string) bool {
 
 // loadBlocks reads files containing bitcoin block data (gzipped but otherwise
 // in the format bitcoind writes) from disk and returns them as an array of
-// btcutil.Block.  This is largely borrowed from the test code in btcdb.
-func loadBlocks(filename string) (blocks []*btcutil.Block, err error) {
+// hnsutil.Block.  This is largely borrowed from the test code in btcdb.
+func loadBlocks(filename string) (blocks []*hnsutil.Block, err error) {
 	filename = filepath.Join("testdata/", filename)
 
 	var network = wire.MainNet
@@ -80,7 +80,7 @@ func loadBlocks(filename string) (blocks []*btcutil.Block, err error) {
 	}
 	defer fi.Close()
 
-	var block *btcutil.Block
+	var block *hnsutil.Block
 
 	err = nil
 	for height := int64(1); err == nil; height++ {
@@ -106,7 +106,7 @@ func loadBlocks(filename string) (blocks []*btcutil.Block, err error) {
 		// read block
 		dr.Read(rbytes)
 
-		block, err = btcutil.NewBlockFromBytes(rbytes)
+		block, err = hnsutil.NewBlockFromBytes(rbytes)
 		if err != nil {
 			return
 		}
@@ -401,8 +401,8 @@ func newFakeNode(parent *blockNode, blockVersion int32, bits uint32, timestamp t
 // addBlock adds a block to the blockchain that succeeds the previous block.
 // The blocks spends all the provided spendable outputs.  The new block and
 // the new spendable outputs created in the block are returned.
-func addBlock(chain *BlockChain, prev *btcutil.Block, spends []*testhelper.SpendableOut) (
-	*btcutil.Block, []*testhelper.SpendableOut, error) {
+func addBlock(chain *BlockChain, prev *hnsutil.Block, spends []*testhelper.SpendableOut) (
+	*hnsutil.Block, []*testhelper.SpendableOut, error) {
 
 	block, outs, err := newBlock(chain, prev, spends)
 	if err != nil {
@@ -424,9 +424,9 @@ func calcMerkleRoot(txns []*wire.MsgTx) chainhash.Hash {
 		return chainhash.Hash{}
 	}
 
-	utilTxns := make([]*btcutil.Tx, 0, len(txns))
+	utilTxns := make([]*hnsutil.Tx, 0, len(txns))
 	for _, tx := range txns {
-		utilTxns = append(utilTxns, btcutil.NewTx(tx))
+		utilTxns = append(utilTxns, hnsutil.NewTx(tx))
 	}
 	return CalcMerkleRoot(utilTxns, false)
 }
@@ -434,8 +434,8 @@ func calcMerkleRoot(txns []*wire.MsgTx) chainhash.Hash {
 // newBlock creates a block to the blockchain that succeeds the previous block.
 // The blocks spends all the provided spendable outputs.  The new block and the
 // newly spendable outputs created in the block are returned.
-func newBlock(chain *BlockChain, prev *btcutil.Block,
-	spends []*testhelper.SpendableOut) (*btcutil.Block, []*testhelper.SpendableOut, error) {
+func newBlock(chain *BlockChain, prev *hnsutil.Block,
+	spends []*testhelper.SpendableOut) (*hnsutil.Block, []*testhelper.SpendableOut, error) {
 
 	blockHeight := prev.Height() + 1
 	txns := make([]*wire.MsgTx, 0, 1+len(spends))
@@ -463,7 +463,7 @@ func newBlock(chain *BlockChain, prev *btcutil.Block,
 
 	// Create the block. The nonce will be solved in the below code in
 	// SolveBlock.
-	block := btcutil.NewBlock(&wire.MsgBlock{
+	block := hnsutil.NewBlock(&wire.MsgBlock{
 		Header: wire.BlockHeader{
 			Version:    1,
 			PrevBlock:  *prev.Hash(),

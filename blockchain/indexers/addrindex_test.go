@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // addrIndexBucket provides a mock address index database bucket by implementing

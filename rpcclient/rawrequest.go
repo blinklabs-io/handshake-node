@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
 // FutureRawResult is a future promise to deliver the result of a RawRequest RPC
@@ -40,11 +40,11 @@ func (c *Client) RawRequestAsync(method string, params []json.RawMessage) Future
 
 	// Create a raw JSON-RPC request using the provided method and params
 	// and marshal it.  This is done rather than using the SendCmd function
-	// since that relies on marshalling registered btcjson commands rather
+	// since that relies on marshalling registered hnsjson commands rather
 	// than custom commands.
 	id := c.NextID()
-	rawRequest := &btcjson.Request{
-		Jsonrpc: btcjson.RpcVersion1,
+	rawRequest := &hnsjson.Request{
+		Jsonrpc: hnsjson.RpcVersion1,
 		ID:      id,
 		Method:  method,
 		Params:  params,

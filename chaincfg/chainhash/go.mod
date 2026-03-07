@@ -1,3 +1,3 @@
-module github.com/btcsuite/btcd/chaincfg/chainhash
+module github.com/blinklabs-io/handshake-node/chaincfg/chainhash
 
 go 1.22

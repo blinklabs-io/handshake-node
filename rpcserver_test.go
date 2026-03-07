@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/mempool"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/mempool"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,17 +26,17 @@ func TestHandleTestMempoolAcceptFailDecode(t *testing.T) {
 	testCases := []struct {
 		name            string
 		txns            []string
-		expectedErrCode btcjson.RPCErrorCode
+		expectedErrCode hnsjson.RPCErrorCode
 	}{
 		{
 			name:            "hex decode fail",
 			txns:            []string{"invalid"},
-			expectedErrCode: btcjson.ErrRPCDecodeHexString,
+			expectedErrCode: hnsjson.ErrRPCDecodeHexString,
 		},
 		{
 			name:            "tx decode fail",
 			txns:            []string{"696e76616c6964"},
-			expectedErrCode: btcjson.ErrRPCDeserialization,
+			expectedErrCode: hnsjson.ErrRPCDeserialization,
 		},
 	}
 
@@ -47,7 +47,7 @@ func TestHandleTestMempoolAcceptFailDecode(t *testing.T) {
 			t.Parallel()
 
 			// Create a request that uses invalid raw txns.
-			cmd := btcjson.NewTestMempoolAcceptCmd(tc.txns, 0)
+			cmd := hnsjson.NewTestMempoolAcceptCmd(tc.txns, 0)
 
 			// Call the method under test.
 			closeChan := make(chan struct{})
@@ -57,7 +57,7 @@ func TestHandleTestMempoolAcceptFailDecode(t *testing.T) {
 
 			// Ensure the expected error is returned.
 			require.Error(err)
-			rpcErr, ok := err.(*btcjson.RPCError)
+			rpcErr, ok := err.(*hnsjson.RPCError)
 			require.True(ok)
 			require.Equal(tc.expectedErrCode, rpcErr.Code)
 
@@ -97,10 +97,10 @@ var (
 )
 
 // decodeTxHex decodes the given hex string into a transaction.
-func decodeTxHex(t *testing.T, txHex string) *btcutil.Tx {
+func decodeTxHex(t *testing.T, txHex string) *hnsutil.Tx {
 	rawBytes, err := hex.DecodeString(txHex)
 	require.NoError(t, err)
-	tx, err := btcutil.NewTxFromBytes(rawBytes)
+	tx, err := hnsutil.NewTxFromBytes(rawBytes)
 	require.NoError(t, err)
 
 	return tx
@@ -129,7 +129,7 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 
 	// Create a slice to hold the expected results. We will use three txns
 	// so we expect threeresults.
-	expectedResults := make([]*btcjson.TestMempoolAcceptResult, 3)
+	expectedResults := make([]*hnsjson.TestMempoolAcceptResult, 3)
 
 	// We now mock the first call to `CheckMempoolAcceptance` to return an
 	// error.
@@ -138,7 +138,7 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 
 	// Since the call failed, we expect the first result to give us the
 	// error.
-	expectedResults[0] = &btcjson.TestMempoolAcceptResult{
+	expectedResults[0] = &hnsjson.TestMempoolAcceptResult{
 		Txid:         tx1.Hash().String(),
 		Wtxid:        tx1.WitnessHash().String(),
 		Allowed:      false,
@@ -154,7 +154,7 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 	).Once()
 
 	// We expect the second result to give us the missing-inputs error.
-	expectedResults[1] = &btcjson.TestMempoolAcceptResult{
+	expectedResults[1] = &hnsjson.TestMempoolAcceptResult{
 		Txid:         tx2.Hash().String(),
 		Wtxid:        tx2.WitnessHash().String(),
 		Allowed:      false,
@@ -163,7 +163,7 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 
 	// We mock the third call to `CheckMempoolAcceptance` to return a
 	// result saying the tx allowed.
-	const feeSats = btcutil.Amount(1000)
+	const feeSats = hnsutil.Amount(1000)
 	mm.On("CheckMempoolAcceptance", tx3).Return(
 		&mempool.MempoolAcceptResult{
 			TxFee:  feeSats,
@@ -172,19 +172,19 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 	).Once()
 
 	// We expect the third result to give us the fee details.
-	expectedResults[2] = &btcjson.TestMempoolAcceptResult{
+	expectedResults[2] = &hnsjson.TestMempoolAcceptResult{
 		Txid:    tx3.Hash().String(),
 		Wtxid:   tx3.WitnessHash().String(),
 		Allowed: true,
 		Vsize:   100,
-		Fees: &btcjson.TestMempoolAcceptFees{
+		Fees: &hnsjson.TestMempoolAcceptFees{
 			Base:             feeSats.ToBTC(),
 			EffectiveFeeRate: feeSats.ToBTC() * 1e3 / 100,
 		},
 	}
 
 	// Create a mock request with default max fee rate of 0.1 BTC/KvB.
-	cmd := btcjson.NewTestMempoolAcceptCmd(
+	cmd := hnsjson.NewTestMempoolAcceptCmd(
 		[]string{txHex1, txHex2, txHex3}, 0.1,
 	)
 
@@ -214,15 +214,15 @@ func TestValidateFeeRate(t *testing.T) {
 		// We have 0.1BTC/kvB =
 		//   0.1 * 1e8 sats/kvB =
 		//   0.1 * 1e8 / 1e3 sats/vb = 0.1 * 1e5 sats/vb.
-		testFeeSats = btcutil.Amount(testFeeRate * 1e5 * testTxSize)
+		testFeeSats = hnsutil.Amount(testFeeRate * 1e5 * testTxSize)
 	)
 
 	testCases := []struct {
 		name         string
-		feeSats      btcutil.Amount
+		feeSats      hnsutil.Amount
 		txSize       int64
 		maxFeeRate   float64
-		expectedFees *btcjson.TestMempoolAcceptFees
+		expectedFees *hnsjson.TestMempoolAcceptFees
 		allowed      bool
 	}{
 		{
@@ -242,7 +242,7 @@ func TestValidateFeeRate(t *testing.T) {
 			feeSats:    testFeeSats,
 			txSize:     testTxSize,
 			maxFeeRate: testFeeRate,
-			expectedFees: &btcjson.TestMempoolAcceptFees{
+			expectedFees: &hnsjson.TestMempoolAcceptFees{
 				Base:             testFeeSats.ToBTC(),
 				EffectiveFeeRate: testFeeRate,
 			},
@@ -264,7 +264,7 @@ func TestValidateFeeRate(t *testing.T) {
 			name:    "fee rate below default max",
 			feeSats: testFeeSats,
 			txSize:  testTxSize,
-			expectedFees: &btcjson.TestMempoolAcceptFees{
+			expectedFees: &hnsjson.TestMempoolAcceptFees{
 				Base:             testFeeSats.ToBTC(),
 				EffectiveFeeRate: testFeeRate,
 			},
@@ -370,7 +370,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 
 			// We expect the third result to give us the fee
 			// details.
-			expected := &btcjson.TestMempoolAcceptResult{
+			expected := &hnsjson.TestMempoolAcceptResult{
 				Txid:    tx.Hash().String(),
 				Wtxid:   tx.WitnessHash().String(),
 				Allowed: tc.allowed,
@@ -378,7 +378,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 
 			if tc.allowed {
 				expected.Vsize = txSize
-				expected.Fees = &btcjson.TestMempoolAcceptFees{
+				expected.Fees = &hnsjson.TestMempoolAcceptFees{
 					Base:             feeSats / 1e8,
 					EffectiveFeeRate: feeRate,
 				}
@@ -387,7 +387,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 			}
 
 			// Create a mock request with specified max fee rate.
-			cmd := btcjson.NewTestMempoolAcceptCmd(
+			cmd := hnsjson.NewTestMempoolAcceptCmd(
 				[]string{txHex1}, tc.maxFeeRate,
 			)
 
@@ -398,7 +398,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 			require.NoError(err)
 
 			// Check the interface type.
-			results, ok := r.([]*btcjson.TestMempoolAcceptResult)
+			results, ok := r.([]*hnsjson.TestMempoolAcceptResult)
 			require.True(ok)
 
 			// Expect exactly one result.
@@ -432,8 +432,8 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 	// First, check the error case.
 	//
 	// Create a request that will cause an error.
-	cmd := &btcjson.GetTxSpendingPrevOutCmd{
-		Outputs: []*btcjson.GetTxSpendingPrevOutCmdOutput{
+	cmd := &hnsjson.GetTxSpendingPrevOutCmd{
+		Outputs: []*hnsjson.GetTxSpendingPrevOutCmdOutput{
 			{Txid: "invalid"},
 		},
 	}
@@ -455,7 +455,7 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 	opNotInMempool := wire.OutPoint{Hash: chainhash.Hash{2}, Index: 1}
 
 	// We only expect to see one output being found as spent in mempool.
-	expectedResults := []*btcjson.GetTxSpendingPrevOutResult{
+	expectedResults := []*hnsjson.GetTxSpendingPrevOutResult{
 		{
 			Txid:         opInMempool.Hash.String(),
 			Vout:         opInMempool.Index,
@@ -476,8 +476,8 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 	mm.On("CheckSpend", opNotInMempool).Return(nil).Once()
 
 	// Create a request with the above outputs.
-	cmd = &btcjson.GetTxSpendingPrevOutCmd{
-		Outputs: []*btcjson.GetTxSpendingPrevOutCmdOutput{
+	cmd = &hnsjson.GetTxSpendingPrevOutCmd{
+		Outputs: []*hnsjson.GetTxSpendingPrevOutCmdOutput{
 			{
 				Txid: opInMempool.Hash.String(),
 				Vout: opInMempool.Index,

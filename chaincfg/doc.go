@@ -25,8 +25,8 @@
 //	        "fmt"
 //	        "log"
 //
-//	        "github.com/btcsuite/btcd/btcutil"
-//	        "github.com/btcsuite/btcd/chaincfg"
+//	        "github.com/blinklabs-io/handshake-node/hnsutil"
+//	        "github.com/blinklabs-io/handshake-node/chaincfg"
 //	)
 //
 //	var testnet = flag.Bool("testnet", false, "operate on the testnet Bitcoin network")
@@ -46,7 +46,7 @@
 //
 //	        // Create and print new payment address, specific to the active network.
 //	        pubKeyHash := make([]byte, 20)
-//	        addr, err := btcutil.NewAddressPubKeyHash(pubKeyHash, chainParams)
+//	        addr, err := hnsutil.NewAddressPubKeyHash(pubKeyHash, chainParams)
 //	        if err != nil {
 //	                log.Fatal(err)
 //	        }

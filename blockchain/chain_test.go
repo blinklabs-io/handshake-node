@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain/internal/testhelper"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // TestHaveBlock tests the HaveBlock API to ensure proper functionality.
@@ -28,7 +28,7 @@ func TestHaveBlock(t *testing.T) {
 		"blk_3A.dat.bz2",
 	}
 
-	var blocks []*btcutil.Block
+	var blocks []*hnsutil.Block
 	for _, file := range testFiles {
 		blockTmp, err := loadBlocks(file)
 		if err != nil {
@@ -65,7 +65,7 @@ func TestHaveBlock(t *testing.T) {
 	}
 
 	// Insert an orphan block.
-	_, isOrphan, err := chain.ProcessBlock(btcutil.NewBlock(&Block100000),
+	_, isOrphan, err := chain.ProcessBlock(hnsutil.NewBlock(&Block100000),
 		BFNone)
 	if err != nil {
 		t.Errorf("Unable to process block: %v", err)
@@ -142,7 +142,7 @@ func TestCalcSequenceLock(t *testing.T) {
 	// Create a utxo view with a fake utxo for the inputs used in the
 	// transactions created below.  This utxo is added such that it has an
 	// age of 4 blocks.
-	targetTx := btcutil.NewTx(&wire.MsgTx{
+	targetTx := hnsutil.NewTx(&wire.MsgTx{
 		TxOut: []*wire.TxOut{{
 			PkScript: nil,
 			Value:    10,
@@ -190,7 +190,7 @@ func TestCalcSequenceLock(t *testing.T) {
 
 	// Adding a utxo with a height of 0x7fffffff indicates that the output
 	// is currently unmined.
-	utxoView.AddTxOuts(btcutil.NewTx(unConfTx), 0x7fffffff)
+	utxoView.AddTxOuts(hnsutil.NewTx(unConfTx), 0x7fffffff)
 
 	tests := []struct {
 		tx      *wire.MsgTx
@@ -425,7 +425,7 @@ func TestCalcSequenceLock(t *testing.T) {
 
 	t.Logf("Running %v SequenceLock tests", len(tests))
 	for i, test := range tests {
-		utilTx := btcutil.NewTx(test.tx)
+		utilTx := hnsutil.NewTx(test.tx)
 		seqLock, err := chain.CalcSequenceLock(utilTx, test.view, test.mempool)
 		if err != nil {
 			t.Fatalf("test #%d, unable to calc sequence lock: %v", i, err)
@@ -1341,7 +1341,7 @@ func randomSelect(input []*testhelper.SpendableOut) (
 // addBlocks generates new blocks and adds them to the chain.  The newly generated
 // blocks will spend from the spendable outputs passed in.  The returned hases are
 // the hashes of the newly generated blocks.
-func addBlocks(count int, chain *BlockChain, prevBlock *btcutil.Block,
+func addBlocks(count int, chain *BlockChain, prevBlock *hnsutil.Block,
 	allSpendableOutputs []*testhelper.SpendableOut) (
 	[]*chainhash.Hash, [][]*testhelper.SpendableOut, error) {
 
@@ -1383,7 +1383,7 @@ func TestInvalidateBlock(t *testing.T) {
 					"TestInvalidateBlock-one-branch-" +
 						"invalidate-once")
 				// Grab the tip of the chain.
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 
 				// Create a chain with 11 blocks.
 				_, _, err := addBlocks(11, chain, tip, []*testhelper.SpendableOut{})
@@ -1406,7 +1406,7 @@ func TestInvalidateBlock(t *testing.T) {
 			chainGen: func() (*BlockChain, []*chainhash.Hash, func()) {
 				chain, params, tearDown := utxoCacheTestChain("TestInvalidateBlock-invalidate-twice")
 				// Grab the tip of the chain.
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 
 				// Create a chain with 11 blocks.
 				_, spendableOuts, err := addBlocks(11, chain, tip, []*testhelper.SpendableOut{})
@@ -1452,7 +1452,7 @@ func TestInvalidateBlock(t *testing.T) {
 			name: "invalidate a side branch",
 			chainGen: func() (*BlockChain, []*chainhash.Hash, func()) {
 				chain, params, tearDown := utxoCacheTestChain("TestInvalidateBlock-invalidate-side-branch")
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 
 				// Grab the tip of the chain.
 				tip, err := chain.BlockByHash(&chain.bestChain.Tip().hash)
@@ -1634,7 +1634,7 @@ func TestReconsiderBlock(t *testing.T) {
 				chain, params, tearDown := utxoCacheTestChain("TestInvalidateBlock-one-branch-invalidate-once")
 
 				// Create a chain with 101 blocks.
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 				_, _, err := addBlocks(101, chain, tip, []*testhelper.SpendableOut{})
 				if err != nil {
 					t.Fatal(err)
@@ -1656,7 +1656,7 @@ func TestReconsiderBlock(t *testing.T) {
 				chain, params, tearDown := utxoCacheTestChain("TestReconsiderBlock-invalidate-with-side-branch")
 
 				// Create a chain with 101 blocks.
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 				_, spendableOuts, err := addBlocks(101, chain, tip, []*testhelper.SpendableOut{})
 				if err != nil {
 					t.Fatal(err)
@@ -1688,7 +1688,7 @@ func TestReconsiderBlock(t *testing.T) {
 				chain, params, tearDown := utxoCacheTestChain("TestReconsiderBlock-invalidate-a-side-branch")
 
 				// Create a chain with 101 blocks.
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 				_, spendableOuts, err := addBlocks(101, chain, tip, []*testhelper.SpendableOut{})
 				if err != nil {
 					t.Fatal(err)
@@ -1717,7 +1717,7 @@ func TestReconsiderBlock(t *testing.T) {
 			chainGen: func() (*BlockChain, []*chainhash.Hash, func()) {
 				chain, params, tearDown := utxoCacheTestChain("TestReconsiderBlock-reconsider-an-invalid-side-branch-higher")
 
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 				_, spendableOuts, err := addBlocks(6, chain, tip, []*testhelper.SpendableOut{})
 				if err != nil {
 					t.Fatal(err)
@@ -1751,7 +1751,7 @@ func TestReconsiderBlock(t *testing.T) {
 			chainGen: func() (*BlockChain, []*chainhash.Hash, func()) {
 				chain, params, tearDown := utxoCacheTestChain("TestReconsiderBlock-reconsider-an-invalid-side-branch-lower")
 
-				tip := btcutil.NewBlock(params.GenesisBlock)
+				tip := hnsutil.NewBlock(params.GenesisBlock)
 				_, spendableOuts, err := addBlocks(6, chain, tip, []*testhelper.SpendableOut{})
 				if err != nil {
 					t.Fatal(err)

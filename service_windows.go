@@ -16,23 +16,23 @@ import (
 )
 
 const (
-	// svcName is the name of btcd service.
-	svcName = "btcdsvc"
+	// svcName is the name of handshake-node service.
+	svcName = "handshakenodesvc"
 
 	// svcDisplayName is the service name that will be shown in the windows
 	// services list.  Not the svcName is the "real" name which is used
 	// to control the service.  This is only for display purposes.
-	svcDisplayName = "Btcd Service"
+	svcDisplayName = "Handshake Node Service"
 
 	// svcDesc is the description of the service.
-	svcDesc = "Downloads and stays synchronized with the bitcoin block " +
+	svcDesc = "Downloads and stays synchronized with the Handshake block " +
 		"chain and provides chain services to applications."
 )
 
 // elog is used to send messages to the Windows event log.
 var elog *eventlog.Log
 
-// logServiceStartOfDay logs information about btcd when the main server has
+// logServiceStartOfDay logs information about handshake-node when the main server has
 // been started to the Windows event log.
 func logServiceStartOfDay(srvr *server) {
 	var message string
@@ -44,27 +44,27 @@ func logServiceStartOfDay(srvr *server) {
 	elog.Info(1, message)
 }
 
-// btcdService houses the main service handler which handles all service
-// updates and launching btcdMain.
-type btcdService struct{}
+// hnsNodeService houses the main service handler which handles all service
+// updates and launching the main application function.
+type hnsNodeService struct{}
 
 // Execute is the main entry point the winsvc package calls when receiving
 // information from the Windows service control manager.  It launches the
-// long-running btcdMain (which is the real meat of btcd), handles service
+// long-running hnsMain (which is the real meat of handshake-node), handles
 // change requests, and notifies the service control manager of changes.
-func (s *btcdService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
+func (s *hnsNodeService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	// Service start is pending.
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	// Start btcdMain in a separate goroutine so the service can start
+	// Start hnsMain in a separate goroutine so the service can start
 	// quickly.  Shutdown (along with a potential error) is reported via
 	// doneChan.  serverChan is notified with the main server instance once
 	// it is started so it can be gracefully stopped.
 	doneChan := make(chan error)
 	serverChan := make(chan *server)
 	go func() {
-		err := btcdMain(serverChan)
+		err := hnsMain(serverChan)
 		doneChan <- err
 	}()
 
@@ -110,7 +110,7 @@ loop:
 	return false, 0
 }
 
-// installService attempts to install the btcd service.  Typically this should
+// installService attempts to install the handshake-node service.  Typically this should
 // be done by the msi installer, but it is provided here since it can be useful
 // for development.
 func installService() error {
@@ -159,7 +159,7 @@ func installService() error {
 	return eventlog.InstallAsEventCreate(svcName, eventsSupported)
 }
 
-// removeService attempts to uninstall the btcd service.  Typically this should
+// removeService attempts to uninstall the handshake-node service.  Typically this should
 // be done by the msi uninstaller, but it is provided here since it can be
 // useful for development.  Not the eventlog entry is intentionally not removed
 // since it would invalidate any existing event log messages.
@@ -182,7 +182,7 @@ func removeService() error {
 	return service.Delete()
 }
 
-// startService attempts to start the btcd service.
+// startService attempts to start the handshake-node service.
 func startService() error {
 	// Connect to the windows service manager.
 	serviceManager, err := mgr.Connect()
@@ -276,7 +276,7 @@ func performServiceCommand(command string) error {
 // running as a service) or launch in normal interactive mode.
 func serviceMain() (bool, error) {
 	// Don't run as a service if the user explicitly requested it. This is
-	// needed to run btcd on Windows in CI environments like Travis.
+	// needed to run handshake-node on Windows in CI environments like Travis.
 	// We can't use the config struct to access the value because that's not
 	// parsed yet. But we add the flag to the struct anyway so the parser
 	// won't complain about it later.
@@ -307,7 +307,7 @@ func serviceMain() (bool, error) {
 	}
 	defer elog.Close()
 
-	err = svc.Run(svcName, &btcdService{})
+	err = svc.Run(svcName, &hnsNodeService{})
 	if err != nil {
 		elog.Error(1, fmt.Sprintf("Service start failed: %v", err))
 		return true, err

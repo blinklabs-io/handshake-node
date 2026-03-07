@@ -25,10 +25,10 @@ var (
 	ErrInvalidAddressSize = fmt.Errorf("invalid address size")
 
 	// ErrSkippedNetworkID is returned when the cjdns, i2p, or unknown
-	// networks are encountered during decoding. btcd does not support i2p
-	// or cjdns addresses. In the case of an unknown networkID, this is so
-	// that a future BIP reserving a new networkID does not cause older
-	// addrv2-supporting btcd software to disconnect upon receiving the new
+	// networks are encountered during decoding. handshake-node does not
+	// support i2p or cjdns addresses. In the case of an unknown networkID,
+	// this is so that a future BIP reserving a new networkID does not cause
+	// older addrv2-supporting software to disconnect upon receiving the new
 	// addresses. This error can also be returned when an OnionCat-encoded
 	// torv2 address is received with the ipv6 networkID. This error
 	// signals to the caller to continue reading.

@@ -7,7 +7,7 @@ package workmath
 import (
 	"math/big"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
 var (

@@ -10,7 +10,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 

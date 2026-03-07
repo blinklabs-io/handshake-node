@@ -26,8 +26,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/btcsuite/go-socks/socks"
 	"github.com/btcsuite/websocket"
 )
@@ -276,10 +276,10 @@ func (c *Client) trackRegisteredNtfns(cmd interface{}) {
 	defer c.ntfnStateLock.Unlock()
 
 	switch bcmd := cmd.(type) {
-	case *btcjson.NotifyBlocksCmd:
+	case *hnsjson.NotifyBlocksCmd:
 		c.ntfnState.notifyBlocks = true
 
-	case *btcjson.NotifyNewTransactionsCmd:
+	case *hnsjson.NotifyNewTransactionsCmd:
 		if bcmd.Verbose != nil && *bcmd.Verbose {
 			c.ntfnState.notifyNewTxVerbose = true
 		} else {
@@ -287,12 +287,12 @@ func (c *Client) trackRegisteredNtfns(cmd interface{}) {
 
 		}
 
-	case *btcjson.NotifySpentCmd:
+	case *hnsjson.NotifySpentCmd:
 		for _, op := range bcmd.OutPoints {
 			c.ntfnState.notifySpent[op] = struct{}{}
 		}
 
-	case *btcjson.NotifyReceivedCmd:
+	case *hnsjson.NotifyReceivedCmd:
 		for _, addr := range bcmd.Addresses {
 			c.ntfnState.notifyReceived[addr] = struct{}{}
 		}
@@ -328,7 +328,7 @@ func (r FutureGetBulkResult) Receive() (BulkResult, error) {
 // from a bulk json rpc api
 type IndividualBulkResult struct {
 	Result interface{}       `json:"result"`
-	Error  *btcjson.RPCError `json:"error"`
+	Error  *hnsjson.RPCError `json:"error"`
 	Id     uint64            `json:"id"`
 }
 
@@ -355,7 +355,7 @@ type rawNotification struct {
 // to be valid (according to JSON-RPC 1.0 spec), ID may not be nil.
 type rawResponse struct {
 	Result json.RawMessage   `json:"result"`
-	Error  *btcjson.RPCError `json:"error"`
+	Error  *hnsjson.RPCError `json:"error"`
 }
 
 // Response is the raw bytes of a JSON-RPC result, or the error if the response
@@ -366,7 +366,7 @@ type Response struct {
 }
 
 // result checks whether the unmarshaled response contains a non-nil error,
-// returning an unmarshaled btcjson.RPCError (or an unmarshalling error) if so.
+// returning an unmarshaled hnsjson.RPCError (or an unmarshalling error) if so.
 // If the response is not an error, the raw bytes of the request are
 // returned for further unmashaling into specific result types.
 func (r rawResponse) result() (result []byte, err error) {
@@ -598,7 +598,7 @@ func (c *Client) reregisterNtfns() error {
 	// outpoints in one command if needed.
 	nslen := len(stateCopy.notifySpent)
 	if nslen > 0 {
-		outpoints := make([]btcjson.OutPoint, 0, nslen)
+		outpoints := make([]hnsjson.OutPoint, 0, nslen)
 		for op := range stateCopy.notifySpent {
 			outpoints = append(outpoints, op)
 		}
@@ -1013,19 +1013,19 @@ func (c *Client) sendRequest(jReq *jsonRequest) {
 // future.  It handles both websocket and HTTP POST mode depending on the
 // configuration of the client.
 func (c *Client) SendCmd(cmd interface{}) chan *Response {
-	rpcVersion := btcjson.RpcVersion1
+	rpcVersion := hnsjson.RpcVersion1
 	if c.batch {
-		rpcVersion = btcjson.RpcVersion2
+		rpcVersion = hnsjson.RpcVersion2
 	}
 	// Get the method associated with the command.
-	method, err := btcjson.CmdMethod(cmd)
+	method, err := hnsjson.CmdMethod(cmd)
 	if err != nil {
 		return newFutureError(err)
 	}
 
 	// Marshal the command.
 	id := c.NextID()
-	marshalledJSON, err := btcjson.MarshalCmd(rpcVersion, id, cmd)
+	marshalledJSON, err := hnsjson.MarshalCmd(rpcVersion, id, cmd)
 	if err != nil {
 		return newFutureError(err)
 	}
@@ -1559,7 +1559,7 @@ func New(config *ConnConfig, ntfnHandlers *NotificationHandlers) (*Client, error
 // Batch is a factory that creates a client able to interact with the server using
 // JSON-RPC 2.0. The client is capable of accepting an arbitrary number of requests
 // and having the server process the all at the same time. It's compatible with both
-// btcd and bitcoind
+// handshake-node and bitcoind
 func NewBatch(config *ConnConfig) (*Client, error) {
 	if !config.HTTPPostMode {
 		return nil, errors.New("http post mode is required to use batch client")
@@ -1656,8 +1656,8 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 
 	// Inspect the RPC error to ensure the method was not found, otherwise
 	// we actually ran into an error.
-	case *btcjson.RPCError:
-		if err.Code != btcjson.ErrRPCMethodNotFound.Code {
+	case *hnsjson.RPCError:
+		if err.Code != hnsjson.ErrRPCMethodNotFound.Code {
 			return nil, fmt.Errorf("unable to detect btcd version: "+
 				"%v", err)
 		}
@@ -1784,7 +1784,7 @@ func cutPrefix(s, prefix string) (after string, found bool) {
 }
 
 // ParseAddressString converts an address in string format to a net.Addr that is
-// compatible with btcd. UDP is not supported because btcd needs reliable
+// compatible with handshake-node. UDP is not supported because handshake-node needs reliable
 // connections.
 func ParseAddressString(strAddress string) (net.Addr, error) {
 	// Addresses can either be in unix://address, unixpacket://address URL

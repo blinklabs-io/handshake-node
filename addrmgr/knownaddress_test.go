@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/addrmgr"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/addrmgr"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 func TestChance(t *testing.T) {

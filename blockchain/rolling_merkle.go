@@ -3,8 +3,8 @@ package blockchain
 import (
 	"math/bits"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
 // rollingMerkleTreeStore calculates the merkle root by only allocating O(logN)
@@ -59,7 +59,7 @@ func (s *rollingMerkleTreeStore) add(add chainhash.Hash) {
 }
 
 // calcMerkleRoot returns the merkle root for the passed in transactions.
-func (s *rollingMerkleTreeStore) calcMerkleRoot(adds []*btcutil.Tx, witness bool) chainhash.Hash {
+func (s *rollingMerkleTreeStore) calcMerkleRoot(adds []*hnsutil.Tx, witness bool) chainhash.Hash {
 	for i := range adds {
 		// If we're computing a witness merkle root, instead of the
 		// regular txid, we use the modified wtxid which includes a

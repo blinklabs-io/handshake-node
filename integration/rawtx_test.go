@@ -7,13 +7,13 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/integration/rpctest"
-	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/integration/rpctest"
+	"github.com/blinklabs-io/handshake-node/rpcclient"
+	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,8 +27,8 @@ func TestTestMempoolAccept(t *testing.T) {
 	t.Parallel()
 
 	// Boilerplate codetestDir to make a pruned node.
-	btcdCfg := []string{"--rejectnonstd", "--debuglevel=debug"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, btcdCfg, "")
+	hnsCfg := []string{"--rejectnonstd", "--debuglevel=debug"}
+	r, err := rpctest.New(&chaincfg.SimNetParams, nil, hnsCfg, "")
 	require.NoError(t, err)
 
 	// Setup the node.
@@ -49,7 +49,7 @@ func TestTestMempoolAccept(t *testing.T) {
 		txns           []*wire.MsgTx
 		maxFeeRate     float64
 		expectedErr    error
-		expectedResult []*btcjson.TestMempoolAcceptResult
+		expectedResult []*hnsjson.TestMempoolAcceptResult
 	}{
 		{
 			// When too many txns are provided, the method should
@@ -85,7 +85,7 @@ func TestTestMempoolAccept(t *testing.T) {
 			name:       "orphan tx",
 			txns:       []*wire.MsgTx{invalidTx},
 			maxFeeRate: 0,
-			expectedResult: []*btcjson.TestMempoolAcceptResult{{
+			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
 				Txid:         invalidTx.TxHash().String(),
 				Wtxid:        invalidTx.TxHash().String(),
 				Allowed:      false,
@@ -99,7 +99,7 @@ func TestTestMempoolAccept(t *testing.T) {
 			name:       "valid tx but exceeds max fee rate",
 			txns:       []*wire.MsgTx{validTx},
 			maxFeeRate: 1e-5,
-			expectedResult: []*btcjson.TestMempoolAcceptResult{{
+			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
 				Txid:         validTx.TxHash().String(),
 				Wtxid:        validTx.TxHash().String(),
 				Allowed:      false,
@@ -112,13 +112,13 @@ func TestTestMempoolAccept(t *testing.T) {
 			// mempool accept result which says it's allowed.
 			name: "valid tx and sane fee rate",
 			txns: []*wire.MsgTx{validTx},
-			expectedResult: []*btcjson.TestMempoolAcceptResult{{
+			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
 				Txid:    validTx.TxHash().String(),
 				Wtxid:   validTx.TxHash().String(),
 				Allowed: true,
 				// TODO(yy): need to calculate the fees, atm
 				// there's no easy way.
-				// Fees: &btcjson.TestMempoolAcceptFees{},
+				// Fees: &hnsjson.TestMempoolAcceptFees{},
 			}},
 		},
 		{
@@ -126,7 +126,7 @@ func TestTestMempoolAccept(t *testing.T) {
 			// return the correct results for each of the txns.
 			name: "multiple txns",
 			txns: []*wire.MsgTx{invalidTx, validTx},
-			expectedResult: []*btcjson.TestMempoolAcceptResult{{
+			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
 				Txid:         invalidTx.TxHash().String(),
 				Wtxid:        invalidTx.TxHash().String(),
 				Allowed:      false,
@@ -196,7 +196,7 @@ func decodeHex(t *testing.T, txHex string) *wire.MsgTx {
 	serializedTx, err := hex.DecodeString(txHex)
 	require.NoError(t, err)
 
-	tx, err := btcutil.NewTxFromBytes(serializedTx)
+	tx, err := hnsutil.NewTxFromBytes(serializedTx)
 	require.NoError(t, err)
 
 	return tx.MsgTx()

@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest a new feature for `btcd`.
+about: Suggest a new feature for `handshake-node`.
 title: '[feature]: '
 labels: enhancement
 assignees: ''

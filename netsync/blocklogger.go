@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcutil"
+	"github.com/blinklabs-io/handshake-node/blockchain"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/btcsuite/btclog"
 )
 
@@ -43,7 +43,7 @@ func newBlockProgressLogger(progressMessage string, logger btclog.Logger) *block
 // LogBlockHeight logs a new block height as an information message to show
 // progress to the user. In order to prevent spam, it limits logging to one
 // message every 10 seconds with duration and totals included.
-func (b *blockProgressLogger) LogBlockHeight(block *btcutil.Block, chain *blockchain.BlockChain) {
+func (b *blockProgressLogger) LogBlockHeight(block *hnsutil.Block, chain *blockchain.BlockChain) {
 	b.Lock()
 	defer b.Unlock()
 

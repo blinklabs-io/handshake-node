@@ -17,14 +17,14 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/blockchain/internal/testhelper"
+	"github.com/blinklabs-io/handshake-node/blockchain"
+	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 const (
@@ -196,7 +196,7 @@ func makeTestGenerator(params *chaincfg.Params) (testGenerator, error) {
 // payToScriptHashScript returns a standard pay-to-script-hash for the provided
 // redeem script.
 func payToScriptHashScript(redeemScript []byte) []byte {
-	redeemScriptHash := btcutil.Hash160(redeemScript)
+	redeemScriptHash := hnsutil.Hash160(redeemScript)
 	script, err := txscript.NewScriptBuilder().
 		AddOp(txscript.OP_HASH160).AddData(redeemScriptHash).
 		AddOp(txscript.OP_EQUAL).Script()
@@ -235,16 +235,16 @@ func calcMerkleRoot(txns []*wire.MsgTx) chainhash.Hash {
 		return chainhash.Hash{}
 	}
 
-	utilTxns := make([]*btcutil.Tx, 0, len(txns))
+	utilTxns := make([]*hnsutil.Tx, 0, len(txns))
 	for _, tx := range txns {
-		utilTxns = append(utilTxns, btcutil.NewTx(tx))
+		utilTxns = append(utilTxns, hnsutil.NewTx(tx))
 	}
 	return blockchain.CalcMerkleRoot(utilTxns, false)
 }
 
 // additionalCoinbase returns a function that itself takes a block and
 // modifies it by adding the provided amount to coinbase subsidy.
-func additionalCoinbase(amount btcutil.Amount) func(*wire.MsgBlock) {
+func additionalCoinbase(amount hnsutil.Amount) func(*wire.MsgBlock) {
 	return func(b *wire.MsgBlock) {
 		// Increase the first proof-of-work coinbase subsidy by the
 		// provided amount.
@@ -257,7 +257,7 @@ func additionalCoinbase(amount btcutil.Amount) func(*wire.MsgBlock) {
 //
 // NOTE: The coinbase value is NOT updated to reflect the additional fee.  Use
 // 'additionalCoinbase' for that purpose.
-func additionalSpendFee(fee btcutil.Amount) func(*wire.MsgBlock) {
+func additionalSpendFee(fee hnsutil.Amount) func(*wire.MsgBlock) {
 	return func(b *wire.MsgBlock) {
 		// Increase the fee of the spending transaction by reducing the
 		// amount paid.
@@ -299,7 +299,7 @@ func additionalTx(tx *wire.MsgTx) func(*wire.MsgBlock) {
 // to ensure the transaction ends up with a unique hash.  The public key script
 // is a simple OP_TRUE script which avoids the need to track addresses and
 // signature scripts in the tests.  The signature script is nil.
-func createSpendTxForTx(tx *wire.MsgTx, fee btcutil.Amount) *wire.MsgTx {
+func createSpendTxForTx(tx *wire.MsgTx, fee hnsutil.Amount) *wire.MsgTx {
 	spend := testhelper.MakeSpendableOutForTx(tx, 0)
 	return testhelper.CreateSpendTx(&spend, fee)
 }
@@ -332,7 +332,7 @@ func (g *testGenerator) nextBlock(blockName string, spend *testhelper.SpendableO
 	if spend != nil {
 		// Create the transaction with a fee of 1 atom for the
 		// miner and increase the coinbase subsidy accordingly.
-		fee := btcutil.Amount(1)
+		fee := hnsutil.Amount(1)
 		coinbaseTx.TxOut[0].Value += int64(fee)
 
 		// Create a transaction that spends from the provided spendable
@@ -1832,7 +1832,7 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 		// each contain an OP_RETURN output.
 		//
 		// NOTE: The createSpendTx func adds the OP_RETURN output.
-		zeroFee := btcutil.Amount(0)
+		zeroFee := hnsutil.Amount(0)
 		for i := uint32(0); i < numAdditionalOutputs; i++ {
 			spend := testhelper.MakeSpendableOut(b, 1, i+2)
 			tx := testhelper.CreateSpendTx(&spend, zeroFee)

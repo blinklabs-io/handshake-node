@@ -1,6 +1,6 @@
 ============================================================================
-User visible changes for btcd
-  A full-node bitcoin implementation written in Go
+User visible changes for handshake-node
+  A Handshake full node implementation written in Go (forked from btcd)
 ============================================================================
 
 Changes in 0.22.0 (Tue Jun 01 2021)

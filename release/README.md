@@ -1,6 +1,6 @@
-# `btcd`'s Reproducible Build System
+# `handshake-node`'s Reproducible Build System
 
-This package contains the build script that the `btcd` project uses in order to
+This package contains the build script that the `handshake-node` project uses in order to
 build binaries for each new release. As of `go1.13`, with some new build flags,
 binaries are now reproducible, allowing developers to build the binary on
 distinct machines, and end up with a byte-for-byte identical binary.
@@ -46,13 +46,13 @@ After committing changes to the CHANGES file, the tagged release commit
 should be created.
 
 The tagged commit should be a commit that bumps version numbers in `version.go`
-and `cmd/btcctl/version.go`.
+and `cmd/hnsctl/version.go`.
 For example (taken from [f3ec130](https://github.com/btcsuite/btcd/commit/f3ec13030e4e828869954472cbc51ac36bee5c1d)):
 ```diff
-diff --git a/cmd/btcctl/version.go b/cmd/btcctl/version.go
+diff --git a/cmd/hnsctl/version.go b/cmd/hnsctl/version.go
 index 2195175c71..f65cacef7e 100644
---- a/cmd/btcctl/version.go
-+++ b/cmd/btcctl/version.go
+--- a/cmd/hnsctl/version.go
++++ b/cmd/hnsctl/version.go
 @@ -18,7 +18,7 @@ const semanticAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr
  const (
  	appMajor uint = 0
@@ -88,17 +88,17 @@ release binaries. However, on Windows, the only way to build the release
 binaries at the moment is by using the Windows Subsystem Linux. One can build
 the release binaries following these steps:
 
-1. `git clone https://github.com/btcsuite/btcd.git`
-2. `cd btcd`
+1. `git clone https://github.com/blinklabs-io/handshake-node.git`
+2. `cd handshake-node`
 3. `./release/release.sh <TAG> # <TAG> is the name of the next release/tag`
 
-This will then create a directory of the form `btcd-<TAG>` containing archives
+This will then create a directory of the form `handshake-node-<TAG>` containing archives
 of the release binaries for each supported operating system and architecture,
 and a manifest file containing the hash of each archive.
 
 ### Pushing a release (for maintainers)
 
-Now that the directory `btcd-<TAG>` is created, the manifest file needs to be
+Now that the directory `handshake-node-<TAG>` is created, the manifest file needs to be
 signed by a maintainer and the release files need to be published to GitHub.
 
 Sign the `manifest-<TAG>.txt` file like so:
@@ -118,7 +118,7 @@ Now that we've double-checked everything and have all of the necessary files,
 it's time to publish release files on GitHub.
 Follow [this documentation](https://docs.github.com/en/github/administering-a-repository/managing-releases-in-a-repository)
 to create a release using the GitHub UI, and make sure to write release notes
-which roughly follow the format of [previous release notes](https://github.com/btcsuite/btcd/releases/tag/v0.20.1-beta).
+which roughly follow the format of previous release notes.
 This is different from the [CHANGES](../CHANGES) file, which should be before the
 tagged commit in the git history.
 Much of the information in the release notes will be the same as the CHANGES
@@ -126,7 +126,7 @@ file.
 It's important to include the Go version used to produce the release files in
 the release notes, so users know the correct version of Go to use to reproduce
 and verify the build.
-When following the GitHub documentation, include every file in the `btcd-<TAG>`
+When following the GitHub documentation, include every file in the `handshake-node-<TAG>`
 directory.
 
 At this point, a signed commit and tag on that commit should be pushed to the main
@@ -169,13 +169,13 @@ and `go` (matching the same version used in the release):
    hashes as done above, and note them down.
 5. Ensure `go` is installed, matching the same version as noted in the release
    notes. 
-6. Obtain a copy of `btcd`'s source code with `git clone
-   https://github.com/btcsuite/btcd` and checkout the source code of the
+6. Obtain a copy of `handshake-node`'s source code with `git clone
+   https://github.com/blinklabs-io/handshake-node` and checkout the source code of the
    release with `git checkout <TAG>`.
 7. Proceed to verify the tag with `git verify-tag <TAG>` and compile the
    binaries from source for the intended operating system and architecture with
-   `BTCDBUILDSYS=OS-ARCH ./release/release.sh <TAG>`.
-8. Extract the archive found in the `btcd-<TAG>` directory created by the
-   release script and recompute the `SHA256` hash of the release binaries (btcd
-   and btcctl) with `shasum -a 256 <filename>`. These should match __exactly__
+   `HNSBUILDSYS=OS-ARCH ./release/release.sh <TAG>`.
+8. Extract the archive found in the `handshake-node-<TAG>` directory created by the
+   release script and recompute the `SHA256` hash of the release binaries (handshake-node
+   and hnsctl) with `shasum -a 256 <filename>`. These should match __exactly__
    as the ones noted above.

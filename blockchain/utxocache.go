@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // mapSlice is a slice of maps for utxo entries.  The slice of maps are needed to
@@ -373,7 +373,7 @@ func (s *utxoCache) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, isCoinBa
 // unspendable to the view.  When the view already has entries for any of the
 // outputs, they are simply marked unspent.  All fields will be updated for
 // existing entries since it's possible it has changed during a reorg.
-func (s *utxoCache) addTxOuts(tx *btcutil.Tx, blockHeight int32) error {
+func (s *utxoCache) addTxOuts(tx *hnsutil.Tx, blockHeight int32) error {
 	// Loop all of the transaction outputs and add those which are not
 	// provably unspendable.
 	isCoinBase := IsCoinBase(tx)
@@ -449,7 +449,7 @@ func (s *utxoCache) addTxIn(txIn *wire.TxIn, stxos *[]SpentTxOut) error {
 // utxo that is being spent by the input will be marked as spent and if the utxo
 // is fresh (meaning that the database on disk never saw it), it will be removed
 // from the cache.
-func (s *utxoCache) addTxIns(tx *btcutil.Tx, stxos *[]SpentTxOut) error {
+func (s *utxoCache) addTxIns(tx *hnsutil.Tx, stxos *[]SpentTxOut) error {
 	// Coinbase transactions don't have any inputs to spend.
 	if IsCoinBase(tx) {
 		return nil
@@ -471,7 +471,7 @@ func (s *utxoCache) addTxIns(tx *btcutil.Tx, stxos *[]SpentTxOut) error {
 // be updated to append an entry for each spent txout.  An error will be returned
 // if the cache and the database does not contain the required utxos.
 func (s *utxoCache) connectTransaction(
-	tx *btcutil.Tx, blockHeight int32, stxos *[]SpentTxOut) error {
+	tx *hnsutil.Tx, blockHeight int32, stxos *[]SpentTxOut) error {
 
 	err := s.addTxIns(tx, stxos)
 	if err != nil {
@@ -487,7 +487,7 @@ func (s *utxoCache) connectTransaction(
 // the transactions spend as spent, and setting the best hash for the view to
 // the passed block.  In addition, when the 'stxos' argument is not nil, it will
 // be updated to append an entry for each spent txout.
-func (s *utxoCache) connectTransactions(block *btcutil.Block, stxos *[]SpentTxOut) error {
+func (s *utxoCache) connectTransactions(block *hnsutil.Block, stxos *[]SpentTxOut) error {
 	for _, tx := range block.Transactions() {
 		err := s.connectTransaction(tx, block.Height(), stxos)
 		if err != nil {
@@ -680,7 +680,7 @@ func (b *BlockChain) InitConsistentState(tip *blockNode, interrupt <-chan struct
 	for e := attachNodes.Front(); e != nil; e = e.Next() {
 		node = e.Value.(*blockNode)
 
-		var block *btcutil.Block
+		var block *hnsutil.Block
 		err := s.db.View(func(dbTx database.Tx) error {
 			block, err = dbFetchBlockByNode(dbTx, node)
 			if err != nil {

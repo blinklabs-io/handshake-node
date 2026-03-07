@@ -5,8 +5,8 @@
 package main
 
 import (
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // activeNetParams is a pointer to the parameters specific to the
@@ -22,9 +22,10 @@ type params struct {
 
 // mainNetParams contains parameters specific to the main network
 // (wire.MainNet).  NOTE: The RPC port is intentionally different from the
-// reference implementation because btcd does not handle wallet requests.  The
-// separate wallet process listens on the well-known port and forwards requests
-// it does not handle on to btcd.  This approach allows the wallet process
+// reference implementation because handshake-node does not handle wallet
+// requests.  The separate wallet process listens on the well-known port and
+// forwards requests it does not handle on to handshake-node.  This approach
+// allows the wallet process
 // to emulate the full reference implementation RPC API.
 var mainNetParams = params{
 	Params:  &chaincfg.MainNetParams,
@@ -71,7 +72,7 @@ var sigNetParams = params{
 }
 
 // netName returns the name used when referring to a bitcoin network.  At the
-// time of writing, btcd currently places blocks for testnet version 3 in the
+// time of writing, handshake-node currently places blocks for testnet version 3 in the
 // data and log directory "testnet", which does not match the Name field of the
 // chaincfg parameters.  This function can be used to override this directory
 // name as "testnet" when the passed active network matches wire.TestNet3.

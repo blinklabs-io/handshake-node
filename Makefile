@@ -1,4 +1,4 @@
-PKG := github.com/btcsuite/btcd
+PKG := github.com/blinklabs-io/handshake-node
 
 LINT_PKG := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 GOIMPORTS_PKG := golang.org/x/tools/cmd/goimports
@@ -65,7 +65,7 @@ goimports:
 build:
 	@$(call print, "Building all binaries")
 	$(GOBUILD) $(PKG)
-	$(GOBUILD) $(PKG)/cmd/btcctl
+	$(GOBUILD) $(PKG)/cmd/hnsctl
 	$(GOBUILD) $(PKG)/cmd/gencerts
 	$(GOBUILD) $(PKG)/cmd/findcheckpoint
 	$(GOBUILD) $(PKG)/cmd/addblock
@@ -74,16 +74,16 @@ build:
 install:
 	@$(call print, "Installing all binaries")
 	$(GOINSTALL) $(PKG)
-	$(GOINSTALL) $(PKG)/cmd/btcctl
+	$(GOINSTALL) $(PKG)/cmd/hnsctl
 	$(GOINSTALL) $(PKG)/cmd/gencerts
 	$(GOINSTALL) $(PKG)/cmd/findcheckpoint
 	$(GOINSTALL) $(PKG)/cmd/addblock
 
-#? release-install: Install btcd and btcctl release binaries, place them in $GOBIN
+#? release-install: Install handshake-node and hnsctl release binaries, place them in $GOBIN
 release-install:
-	@$(call print, "Installing btcd and btcctl release binaries")
+	@$(call print, "Installing handshake-node and hnsctl release binaries")
 	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG)
-	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG)/cmd/btcctl
+	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG)/cmd/hnsctl
 
 # =======
 # TESTING
@@ -96,28 +96,23 @@ check: unit
 unit:
 	@$(call print, "Running unit tests.")
 	$(GOTEST_DEV) ./... -test.timeout=20m
-	cd btcec && $(GOTEST_DEV) ./... -test.timeout=20m
-	cd btcutil && $(GOTEST_DEV) ./... -test.timeout=20m
-	cd btcutil/psbt && $(GOTEST_DEV) ./... -test.timeout=20m
+	cd hnsutil && $(GOTEST_DEV) ./... -test.timeout=20m
+	cd hnsutil/psbt && $(GOTEST_DEV) ./... -test.timeout=20m
 
 #? unit-cover: Run unit coverage tests
 unit-cover:
 	@$(call print, "Running unit coverage tests.")
 	$(GOTEST) $(COVER_FLAGS) ./...
 
-	# We need to remove the /v2 pathing from the module to have it work
-	# nicely with the CI tool we use to render live code coverage.
-	cd btcec && $(GOTEST) $(COVER_FLAGS) ./... && sed -i.bak 's/v2\///g' coverage.txt
-	cd btcutil && $(GOTEST) $(COVER_FLAGS) ./...
-	cd btcutil/psbt && $(GOTEST) $(COVER_FLAGS) ./...
+	cd hnsutil && $(GOTEST) $(COVER_FLAGS) ./...
+	cd hnsutil/psbt && $(GOTEST) $(COVER_FLAGS) ./...
 
 #? unit-race: Run unit race tests
 unit-race:
 	@$(call print, "Running unit race tests.")
 	env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
-	cd btcec && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
-	cd btcutil && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
-	cd btcutil/psbt && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
+	cd hnsutil && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
+	cd hnsutil/psbt && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 
 # =========
 # UTILITIES
@@ -138,7 +133,7 @@ lint: $(LINT_BIN)
 #? clean: Clean source
 clean:
 	@$(call print, "Cleaning source.$(NC)")
-	rm -f coverage.txt btcec/coverage.txt btcutil/coverage.txt btcutil/psbt/coverage.txt
+	rm -f coverage.txt hnsutil/coverage.txt hnsutil/psbt/coverage.txt
 
 #? tidy-module: Run 'go mod tidy' for all modules
 tidy-module:
@@ -159,7 +154,7 @@ tidy-module:
 
 #? help: Get more info on make commands
 help: Makefile
-	@echo " Choose a command run in btcd:"
+	@echo " Choose a command run in handshake-node:"
 	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
 
 .PHONY: help

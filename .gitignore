@@ -37,9 +37,8 @@ _testmain.go
 profile.tmp
 profile.cov
 coverage.txt
-btcec/coverage.txt
-btcutil/coverage.txt
-btcutil/psbt/coverage.txt
+hnsutil/coverage.txt
+hnsutil/psbt/coverage.txt
 
 # vim
 *.swp
@@ -51,8 +50,8 @@ btcutil/psbt/coverage.txt
 
 # Binaries produced by "make build"
 /addblock
-/btcctl
-/btcd
+/hnsctl
+/handshake-node
 /findcheckpoint
 /gencerts
 

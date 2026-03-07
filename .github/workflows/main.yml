@@ -44,37 +44,28 @@ jobs:
         continue-on-error: true
         with:
           file: coverage.txt
-          flag-name: btcd
+          flag-name: handshake-node
           format: 'golang'
           parallel: true
 
-      - name: Send btcec
+      - name: Send hnsutil coverage
         uses: coverallsapp/github-action@v2
         continue-on-error: true
         with:
-          file: btcec/coverage.txt
-          flag-name: btcec
+          file: hnsutil/coverage.txt
+          flag-name: hnsutil
           format: 'golang'
           parallel: true
 
-      - name: Send btcutil coverage
+      - name: Send hnsutil coverage for psbt package
         uses: coverallsapp/github-action@v2
         continue-on-error: true
         with:
-          file: btcutil/coverage.txt
-          flag-name: btcutil
+          file: hnsutil/psbt/coverage.txt
+          flag-name: hnsutilpsbt
           format: 'golang'
           parallel: true
 
-      - name: Send btcutil coverage for psbt package
-        uses: coverallsapp/github-action@v2
-        continue-on-error: true
-        with:
-          file: btcutil/psbt/coverage.txt
-          flag-name: btcutilpsbt
-          format: 'golang'
-          parallel: true
-      
       - name: Notify coveralls all reports sent
         uses: coverallsapp/github-action@v2
         continue-on-error: true

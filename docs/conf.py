@@ -18,9 +18,9 @@ from recommonmark.transform import AutoStructify
 
 # -- Project information -----------------------------------------------------
 
-project = 'btcd'
-copyright = '2020, btcd'
-author = 'btcsuite developers'
+project = 'handshake-node'
+copyright = '2020, handshake-node'
+author = 'blinklabs-io developers'
 
 # The full version, including alpha/beta/rc tags
 release = 'beta'

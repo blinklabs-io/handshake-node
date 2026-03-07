@@ -9,7 +9,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 )
 
 // TestTxFeePrioHeap ensures the priority queue for transaction fees and
@@ -43,7 +43,7 @@ func TestTxFeePrioHeap(t *testing.T) {
 	prng := rand.New(rand.NewSource(randSeed))
 	for i := 0; i < 1000; i++ {
 		testItems = append(testItems, &txPrioItem{
-			feePerKB: int64(prng.Float64() * btcutil.SatoshiPerBitcoin),
+			feePerKB: int64(prng.Float64() * hnsutil.SatoshiPerBitcoin),
 			priority: prng.Float64() * 100,
 		})
 	}
