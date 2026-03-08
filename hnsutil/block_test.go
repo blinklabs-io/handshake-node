@@ -36,7 +36,7 @@ func TestBlock(t *testing.T) {
 	}
 
 	// Hash for block 100,000.
-	wantHashStr := "3ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506"
+	wantHashStr := "473e46d6fec6df29f473d4d167f253dd710424a07a3f99656789d26ccc44f50c"
 	wantHash, err := chainhash.NewHashFromStr(wantHashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -145,10 +145,10 @@ func TestBlock(t *testing.T) {
 
 	// Transaction offsets and length for the transaction in Block100000.
 	wantTxLocs := []wire.TxLoc{
-		{TxStart: 81, TxLen: 144},
-		{TxStart: 225, TxLen: 259},
-		{TxStart: 484, TxLen: 257},
-		{TxStart: 741, TxLen: 225},
+		{TxStart: 237, TxLen: 144},
+		{TxStart: 381, TxLen: 259},
+		{TxStart: 640, TxLen: 257},
+		{TxStart: 897, TxLen: 225},
 	}
 
 	// Ensure the transaction location information is accurate.
@@ -257,7 +257,9 @@ func TestBlockErrors(t *testing.T) {
 	}
 
 	// Truncate the block byte buffer to force errors.
-	shortBytes := block100000Bytes[:80]
+	// Use MaxBlockHeaderPayload (236) so the header is fully read but the
+	// transaction count read triggers io.EOF.
+	shortBytes := block100000Bytes[:wire.MaxBlockHeaderPayload]
 	_, err = hnsutil.NewBlockFromBytes(shortBytes)
 	if err != io.EOF {
 		t.Errorf("NewBlockFromBytes: did not get expected error - "+

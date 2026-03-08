@@ -1,4 +1,5 @@
 // Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2025-2026 Blink Labs Software
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -6,34 +7,100 @@ package wire
 
 import (
 	"bytes"
+	"encoding/hex"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
 )
 
-// TestBlockHeader tests the BlockHeader API.
+// hexToBytes decodes a hex string to bytes, panicking on error.
+func hexToBytes(s string) []byte {
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		panic("invalid hex in test: " + err.Error())
+	}
+	return b
+}
+
+// hexToHash decodes a hex string in raw wire byte order to a chainhash.Hash.
+// Handshake hashes are stored and displayed in raw byte order (not reversed
+// like Bitcoin's big-endian display convention).
+func hexToHash(s string) chainhash.Hash {
+	b := hexToBytes(s)
+	var h chainhash.Hash
+	copy(h[:], b)
+	return h
+}
+
+// Test vector 1: Handshake mainnet block ~271014.
+// First 236 bytes of raw block hex taken directly from cdnsd test vectors.
+var testVector1Bytes = hexToBytes(
+	// Wire order: Nonce(4) Time(8) PrevBlock(32) NameRoot(32) ExtraNonce(24)
+	// ReservedRoot(32) WitnessRoot(32) MerkleRoot(32) Version(4) Bits(4) Mask(32)
+	"c29fc32b" +
+		"a934ec6700000000" +
+		"0000000000000008fb98a534f78c6594b9c5581d6e7ca688efebca93e3567d98" +
+		"0b5cc7b8bb7632532df5d5adc0af9f2a830fcb72b2595cd7c4e34e6371465f17" +
+		"c907ca66957417a200000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000" +
+		"45779eb2591efda24b4e502cb186d6b7b3d786bb8b247180205b8e8edc70ec6c" +
+		"7daf23875654e512d4235898dfda96202d6a11f0314945c9835f60b8d14a64cc" +
+		"00000000" +
+		"70930919" +
+		"0000000000000000000000000000000000000000000000000000000000000000",
+)
+
+// Test vector 2: early Handshake mainnet block.
+// First 236 bytes of raw block hex taken directly from cdnsd test vectors.
+var testVector2Bytes = hexToBytes(
+	"e10afe1d" +
+		"0575465e00000000" +
+		"0000000000000660013cac2e01c211a6c1035f31395126c4ed9d6d0f9c8b01b9" +
+		"0000000000000000000000000000000000000000000000000000000000000000" +
+		"00001cb89fa82d7900000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000" +
+		"f154361b707effe251bea1832f6406808b6cbfe0e66545ac8bd24d34d48df318" +
+		"c55e70b65ad508c302b8de3b1801978d6c2c6a977a1fe092931f1233303d37c6" +
+		"01000000" +
+		"9a80081a" +
+		"0000000000000000000000000000000000000000000000000000000000000000",
+)
+
+// TestBlockHeader tests the BlockHeader API with the new Handshake signature.
 func TestBlockHeader(t *testing.T) {
 	nonce64, err := RandomUint64()
 	if err != nil {
-		t.Errorf("RandomUint64: Error generating nonce: %v", err)
+		t.Fatalf("RandomUint64: Error generating nonce: %v", err)
 	}
 	nonce := uint32(nonce64)
 
-	hash := mainNetGenesisHash
-	merkleHash := mainNetGenesisMerkleRoot
-	bits := uint32(0x1d00ffff)
-	bh := NewBlockHeader(1, &hash, &merkleHash, bits, nonce)
+	prevHash := hexToHash("0000000000000008fb98a534f78c6594b9c5581d6e7ca688efebca93e3567d98")
+	merkleHash := hexToHash("7daf23875654e512d4235898dfda96202d6a11f0314945c9835f60b8d14a64cc")
+	nameRoot := hexToHash("0b5cc7b8bb7632532df5d5adc0af9f2a830fcb72b2595cd7c4e34e6371465f17")
+	witnessRoot := hexToHash("45779eb2591efda24b4e502cb186d6b7b3d786bb8b247180205b8e8edc70ec6c")
+	bits := uint32(0x19099370)
+
+	bh := NewBlockHeader(0, &prevHash, &merkleHash, &nameRoot, &witnessRoot, bits, nonce)
 
 	// Ensure we get the same data back out.
-	if !bh.PrevBlock.IsEqual(&hash) {
+	if !bh.PrevBlock.IsEqual(&prevHash) {
 		t.Errorf("NewBlockHeader: wrong prev hash - got %v, want %v",
-			spew.Sprint(bh.PrevBlock), spew.Sprint(hash))
+			spew.Sprint(bh.PrevBlock), spew.Sprint(prevHash))
 	}
 	if !bh.MerkleRoot.IsEqual(&merkleHash) {
 		t.Errorf("NewBlockHeader: wrong merkle root - got %v, want %v",
 			spew.Sprint(bh.MerkleRoot), spew.Sprint(merkleHash))
+	}
+	if !bh.NameRoot.IsEqual(&nameRoot) {
+		t.Errorf("NewBlockHeader: wrong name root - got %v, want %v",
+			spew.Sprint(bh.NameRoot), spew.Sprint(nameRoot))
+	}
+	if !bh.WitnessRoot.IsEqual(&witnessRoot) {
+		t.Errorf("NewBlockHeader: wrong witness root - got %v, want %v",
+			spew.Sprint(bh.WitnessRoot), spew.Sprint(witnessRoot))
 	}
 	if bh.Bits != bits {
 		t.Errorf("NewBlockHeader: wrong bits - got %v, want %v",
@@ -45,37 +112,31 @@ func TestBlockHeader(t *testing.T) {
 	}
 }
 
-// TestBlockHeaderWire tests the BlockHeader wire encode and decode for various
-// protocol versions.
+// TestBlockHeaderWire tests the BlockHeader wire encode and decode for
+// Handshake's 236-byte header format.
 func TestBlockHeaderWire(t *testing.T) {
-	nonce := uint32(123123) // 0x1e0f3
 	pver := uint32(70001)
 
-	// baseBlockHdr is used in the various tests as a baseline BlockHeader.
-	bits := uint32(0x1d00ffff)
-	baseBlockHdr := &BlockHeader{
-		Version:    1,
-		PrevBlock:  mainNetGenesisHash,
-		MerkleRoot: mainNetGenesisMerkleRoot,
-		Timestamp:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST
-		Bits:       bits,
-		Nonce:      nonce,
+	// Decode test vector 1 to build the expected header.
+	var expectedHdr1 BlockHeader
+	rbuf := bytes.NewReader(testVector1Bytes)
+	err := readBlockHeader(rbuf, 0, &expectedHdr1)
+	if err != nil {
+		t.Fatalf("failed to decode test vector 1: %v", err)
 	}
 
-	// baseBlockHdrEncoded is the wire encoded bytes of baseBlockHdr.
-	baseBlockHdrEncoded := []byte{
-		0x01, 0x00, 0x00, 0x00, // Version 1
-		0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-		0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-		0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-		0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, // PrevBlock
-		0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2,
-		0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61,
-		0x7f, 0xc8, 0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32,
-		0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a, // MerkleRoot
-		0x29, 0xab, 0x5f, 0x49, // Timestamp
-		0xff, 0xff, 0x00, 0x1d, // Bits
-		0xf3, 0xe0, 0x01, 0x00, // Nonce
+	// Verify key decoded fields.
+	if expectedHdr1.Nonce != 734240706 {
+		t.Errorf("vector 1 Nonce: got %d, want 734240706", expectedHdr1.Nonce)
+	}
+	if expectedHdr1.Timestamp.Unix() != 1743533225 {
+		t.Errorf("vector 1 Time: got %d, want 1743533225", expectedHdr1.Timestamp.Unix())
+	}
+	if expectedHdr1.Version != 0 {
+		t.Errorf("vector 1 Version: got %d, want 0", expectedHdr1.Version)
+	}
+	if expectedHdr1.Bits != 420057968 {
+		t.Errorf("vector 1 Bits: got %d, want 420057968", expectedHdr1.Bits)
 	}
 
 	tests := []struct {
@@ -85,48 +146,18 @@ func TestBlockHeaderWire(t *testing.T) {
 		pver uint32          // Protocol version for wire encoding
 		enc  MessageEncoding // Message encoding variant to use
 	}{
-		// Latest protocol version.
 		{
-			baseBlockHdr,
-			baseBlockHdr,
-			baseBlockHdrEncoded,
+			&expectedHdr1,
+			&expectedHdr1,
+			testVector1Bytes,
 			ProtocolVersion,
 			BaseEncoding,
 		},
-
-		// Protocol version BIP0035Version.
 		{
-			baseBlockHdr,
-			baseBlockHdr,
-			baseBlockHdrEncoded,
-			BIP0035Version,
-			BaseEncoding,
-		},
-
-		// Protocol version BIP0031Version.
-		{
-			baseBlockHdr,
-			baseBlockHdr,
-			baseBlockHdrEncoded,
-			BIP0031Version,
-			BaseEncoding,
-		},
-
-		// Protocol version NetAddressTimeVersion.
-		{
-			baseBlockHdr,
-			baseBlockHdr,
-			baseBlockHdrEncoded,
-			NetAddressTimeVersion,
-			BaseEncoding,
-		},
-
-		// Protocol version MultipleAddressVersion.
-		{
-			baseBlockHdr,
-			baseBlockHdr,
-			baseBlockHdrEncoded,
-			MultipleAddressVersion,
+			&expectedHdr1,
+			&expectedHdr1,
+			testVector1Bytes,
+			pver,
 			BaseEncoding,
 		},
 	}
@@ -188,33 +219,12 @@ func TestBlockHeaderWire(t *testing.T) {
 
 // TestBlockHeaderSerialize tests BlockHeader serialize and deserialize.
 func TestBlockHeaderSerialize(t *testing.T) {
-	nonce := uint32(123123) // 0x1e0f3
-
-	// baseBlockHdr is used in the various tests as a baseline BlockHeader.
-	bits := uint32(0x1d00ffff)
-	baseBlockHdr := &BlockHeader{
-		Version:    1,
-		PrevBlock:  mainNetGenesisHash,
-		MerkleRoot: mainNetGenesisMerkleRoot,
-		Timestamp:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST
-		Bits:       bits,
-		Nonce:      nonce,
-	}
-
-	// baseBlockHdrEncoded is the wire encoded bytes of baseBlockHdr.
-	baseBlockHdrEncoded := []byte{
-		0x01, 0x00, 0x00, 0x00, // Version 1
-		0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-		0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-		0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-		0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, // PrevBlock
-		0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2,
-		0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61,
-		0x7f, 0xc8, 0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32,
-		0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a, // MerkleRoot
-		0x29, 0xab, 0x5f, 0x49, // Timestamp
-		0xff, 0xff, 0x00, 0x1d, // Bits
-		0xf3, 0xe0, 0x01, 0x00, // Nonce
+	// Decode test vector 1 to build the expected header.
+	var expectedHdr BlockHeader
+	rbuf := bytes.NewReader(testVector1Bytes)
+	err := readBlockHeader(rbuf, 0, &expectedHdr)
+	if err != nil {
+		t.Fatalf("failed to decode test vector 1: %v", err)
 	}
 
 	tests := []struct {
@@ -223,9 +233,9 @@ func TestBlockHeaderSerialize(t *testing.T) {
 		buf []byte       // Serialized data
 	}{
 		{
-			baseBlockHdr,
-			baseBlockHdr,
-			baseBlockHdrEncoded,
+			&expectedHdr,
+			&expectedHdr,
+			testVector1Bytes,
 		},
 	}
 
@@ -257,5 +267,59 @@ func TestBlockHeaderSerialize(t *testing.T) {
 				spew.Sdump(&bh), spew.Sdump(test.out))
 			continue
 		}
+	}
+}
+
+// TestBlockHeaderPoWHash tests that BlockHash() produces the correct PoW hash
+// for known Handshake mainnet blocks.
+func TestBlockHeaderPoWHash(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      []byte
+		wantHash string // Big-endian display hash
+	}{
+		{
+			name:     "mainnet block ~271014",
+			raw:      testVector1Bytes,
+			wantHash: "0000000000000000aaeb53f05d5d6f9ec895f3ab7858c8a6b5911e41e410ebc7",
+		},
+		{
+			name:     "early mainnet block",
+			raw:      testVector2Bytes,
+			wantHash: "0000000000000424ee6c2a5d6e0da5edfc47a4a10328c1792056ee48303c3e40",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var bh BlockHeader
+			rbuf := bytes.NewReader(tc.raw)
+			err := readBlockHeader(rbuf, 0, &bh)
+			if err != nil {
+				t.Fatalf("failed to decode header: %v", err)
+			}
+
+			gotHash := bh.BlockHash()
+			wantHash := hexToHash(tc.wantHash)
+
+			if !gotHash.IsEqual(&wantHash) {
+				t.Errorf("BlockHash mismatch:\n  got:  %s\n  want: %s",
+					gotHash.String(), wantHash.String())
+			}
+		})
+	}
+}
+
+// TestBlockHeaderSize verifies that the header serializes to exactly 236 bytes.
+func TestBlockHeaderSize(t *testing.T) {
+	var bh BlockHeader
+	bh.Timestamp = time.Unix(0, 0)
+	var buf bytes.Buffer
+	err := bh.Serialize(&buf)
+	if err != nil {
+		t.Fatalf("Serialize error: %v", err)
+	}
+	if buf.Len() != blockHeaderLen {
+		t.Errorf("serialized header length = %d, want %d", buf.Len(), blockHeaderLen)
 	}
 }
