@@ -95,7 +95,12 @@ type blockNode struct {
 	bits       uint32
 	nonce      uint32
 	timestamp  int64
-	merkleRoot chainhash.Hash
+	merkleRoot   chainhash.Hash
+	nameRoot     chainhash.Hash
+	extraNonce   [24]byte
+	reservedRoot chainhash.Hash
+	witnessRoot  chainhash.Hash
+	mask         chainhash.Hash
 
 	// status is a bitfield representing the validation state of the block. The
 	// status field, unlike the other fields, may be written to and so should
@@ -116,7 +121,12 @@ func initBlockNode(node *blockNode, blockHeader *wire.BlockHeader, parent *block
 		bits:       blockHeader.Bits,
 		nonce:      blockHeader.Nonce,
 		timestamp:  blockHeader.Timestamp.Unix(),
-		merkleRoot: blockHeader.MerkleRoot,
+		merkleRoot:   blockHeader.MerkleRoot,
+		nameRoot:     blockHeader.NameRoot,
+		extraNonce:   blockHeader.ExtraNonce,
+		reservedRoot: blockHeader.ReservedRoot,
+		witnessRoot:  blockHeader.WitnessRoot,
+		mask:         blockHeader.Mask,
 	}
 	if parent != nil {
 		node.parent = parent
@@ -146,6 +156,11 @@ func (node *blockNode) Equals(other *blockNode) bool {
 		node.nonce == other.nonce &&
 		node.timestamp == other.timestamp &&
 		node.merkleRoot == other.merkleRoot &&
+		node.nameRoot == other.nameRoot &&
+		node.extraNonce == other.extraNonce &&
+		node.reservedRoot == other.reservedRoot &&
+		node.witnessRoot == other.witnessRoot &&
+		node.mask == other.mask &&
 		node.status == other.status
 }
 
@@ -159,12 +174,17 @@ func (node *blockNode) Header() wire.BlockHeader {
 		prevHash = &node.parent.hash
 	}
 	return wire.BlockHeader{
-		Version:    node.version,
-		PrevBlock:  *prevHash,
-		MerkleRoot: node.merkleRoot,
-		Timestamp:  time.Unix(node.timestamp, 0),
-		Bits:       node.bits,
-		Nonce:      node.nonce,
+		Version:      node.version,
+		PrevBlock:    *prevHash,
+		MerkleRoot:   node.merkleRoot,
+		NameRoot:     node.nameRoot,
+		ExtraNonce:   node.extraNonce,
+		ReservedRoot: node.reservedRoot,
+		WitnessRoot:  node.witnessRoot,
+		Mask:         node.mask,
+		Timestamp:    time.Unix(node.timestamp, 0),
+		Bits:         node.bits,
+		Nonce:        node.nonce,
 	}
 }
 

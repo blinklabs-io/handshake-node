@@ -178,5 +178,5 @@ func Example_blockStorageAndRetrieval() {
 	fmt.Printf("Serialized block size: %d bytes\n", len(loadedBlockBytes))
 
 	// Output:
-	// Serialized block size: 285 bytes
+	// Serialized block size: 441 bytes
 }

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -26,9 +27,10 @@ func TestHeaders(t *testing.T) {
 	}
 
 	// Ensure max payload is expected value for latest protocol version.
-	// Num headers (varInt) + max allowed headers (header length + 1 byte
+	// Num headers (varInt) + max allowed headers * (header length + 1 byte
 	// for the number of transactions which is always 0).
-	wantPayload := uint32(162009)
+	// MaxVarIntPayload(9) + 2000 * (236 + 1) = 474009
+	wantPayload := uint32(474009)
 	maxPayload := msg.MaxPayloadLength(pver)
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -64,7 +66,7 @@ func TestHeadersWire(t *testing.T) {
 	merkleHash := blockOne.Header.MerkleRoot
 	bits := uint32(0x1d00ffff)
 	nonce := uint32(0x9962e301)
-	bh := NewBlockHeader(1, &hash, &merkleHash, bits, nonce)
+	bh := NewBlockHeader(1, &hash, &merkleHash, &chainhash.Hash{}, &chainhash.Hash{}, bits, nonce)
 	bh.Version = blockOne.Header.Version
 	bh.Timestamp = blockOne.Header.Timestamp
 
@@ -77,22 +79,15 @@ func TestHeadersWire(t *testing.T) {
 	// Headers message with one header.
 	oneHeader := NewMsgHeaders()
 	oneHeader.AddBlockHeader(bh)
-	oneHeaderEncoded := []byte{
-		0x01,                   // VarInt for number of headers.
-		0x01, 0x00, 0x00, 0x00, // Version 1
-		0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-		0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-		0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-		0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, // PrevBlock
-		0x98, 0x20, 0x51, 0xfd, 0x1e, 0x4b, 0xa7, 0x44,
-		0xbb, 0xbe, 0x68, 0x0e, 0x1f, 0xee, 0x14, 0x67,
-		0x7b, 0xa1, 0xa3, 0xc3, 0x54, 0x0b, 0xf7, 0xb1,
-		0xcd, 0xb6, 0x06, 0xe8, 0x57, 0x23, 0x3e, 0x0e, // MerkleRoot
-		0x61, 0xbc, 0x66, 0x49, // Timestamp
-		0xff, 0xff, 0x00, 0x1d, // Bits
-		0x01, 0xe3, 0x62, 0x99, // Nonce
-		0x00, // TxnCount (0 for headers message)
-	}
+
+	// Compute oneHeaderEncoded programmatically: varint(1) + serialized header + txncount(0).
+	oneHeaderEncoded := func() []byte {
+		var buf bytes.Buffer
+		buf.WriteByte(0x01) // varint for 1 header
+		bh.Serialize(&buf)
+		buf.WriteByte(0x00) // txncount = 0
+		return buf.Bytes()
+	}()
 
 	tests := []struct {
 		in   *MsgHeaders     // Message to encode
@@ -232,29 +227,22 @@ func TestHeadersWireErrors(t *testing.T) {
 	merkleHash := blockOne.Header.MerkleRoot
 	bits := uint32(0x1d00ffff)
 	nonce := uint32(0x9962e301)
-	bh := NewBlockHeader(1, &hash, &merkleHash, bits, nonce)
+	bh := NewBlockHeader(1, &hash, &merkleHash, &chainhash.Hash{}, &chainhash.Hash{}, bits, nonce)
 	bh.Version = blockOne.Header.Version
 	bh.Timestamp = blockOne.Header.Timestamp
 
 	// Headers message with one header.
 	oneHeader := NewMsgHeaders()
 	oneHeader.AddBlockHeader(bh)
-	oneHeaderEncoded := []byte{
-		0x01,                   // VarInt for number of headers.
-		0x01, 0x00, 0x00, 0x00, // Version 1
-		0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-		0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-		0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-		0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, // PrevBlock
-		0x98, 0x20, 0x51, 0xfd, 0x1e, 0x4b, 0xa7, 0x44,
-		0xbb, 0xbe, 0x68, 0x0e, 0x1f, 0xee, 0x14, 0x67,
-		0x7b, 0xa1, 0xa3, 0xc3, 0x54, 0x0b, 0xf7, 0xb1,
-		0xcd, 0xb6, 0x06, 0xe8, 0x57, 0x23, 0x3e, 0x0e, // MerkleRoot
-		0x61, 0xbc, 0x66, 0x49, // Timestamp
-		0xff, 0xff, 0x00, 0x1d, // Bits
-		0x01, 0xe3, 0x62, 0x99, // Nonce
-		0x00, // TxnCount (0 for headers message)
-	}
+
+	// Compute oneHeaderEncoded programmatically.
+	oneHeaderEncoded := func() []byte {
+		var buf bytes.Buffer
+		buf.WriteByte(0x01)
+		bh.Serialize(&buf)
+		buf.WriteByte(0x00) // txncount = 0
+		return buf.Bytes()
+	}()
 
 	// Message that forces an error by having more than the max allowed
 	// headers.
@@ -269,28 +257,21 @@ func TestHeadersWireErrors(t *testing.T) {
 
 	// Intentionally invalid block header that has a transaction count used
 	// to force errors.
-	bhTrans := NewBlockHeader(1, &hash, &merkleHash, bits, nonce)
+	bhTrans := NewBlockHeader(1, &hash, &merkleHash, &chainhash.Hash{}, &chainhash.Hash{}, bits, nonce)
 	bhTrans.Version = blockOne.Header.Version
 	bhTrans.Timestamp = blockOne.Header.Timestamp
 
 	transHeader := NewMsgHeaders()
 	transHeader.AddBlockHeader(bhTrans)
-	transHeaderEncoded := []byte{
-		0x01,                   // VarInt for number of headers.
-		0x01, 0x00, 0x00, 0x00, // Version 1
-		0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-		0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-		0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-		0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, // PrevBlock
-		0x98, 0x20, 0x51, 0xfd, 0x1e, 0x4b, 0xa7, 0x44,
-		0xbb, 0xbe, 0x68, 0x0e, 0x1f, 0xee, 0x14, 0x67,
-		0x7b, 0xa1, 0xa3, 0xc3, 0x54, 0x0b, 0xf7, 0xb1,
-		0xcd, 0xb6, 0x06, 0xe8, 0x57, 0x23, 0x3e, 0x0e, // MerkleRoot
-		0x61, 0xbc, 0x66, 0x49, // Timestamp
-		0xff, 0xff, 0x00, 0x1d, // Bits
-		0x01, 0xe3, 0x62, 0x99, // Nonce
-		0x01, // TxnCount (should be 0 for headers message, but 1 to force error)
-	}
+
+	// Compute transHeaderEncoded programmatically.
+	transHeaderEncoded := func() []byte {
+		var buf bytes.Buffer
+		buf.WriteByte(0x01)
+		bhTrans.Serialize(&buf)
+		buf.WriteByte(0x01) // txncount = 1 to force error
+		return buf.Bytes()
+	}()
 
 	tests := []struct {
 		in       *MsgHeaders     // Value to encode
@@ -309,7 +290,8 @@ func TestHeadersWireErrors(t *testing.T) {
 		// Force error with greater than max headers.
 		{maxHeaders, maxHeadersEncoded, pver, BaseEncoding, 3, wireErr, wireErr},
 		// Force error with number of transactions.
-		{transHeader, transHeaderEncoded, pver, BaseEncoding, 81, io.ErrShortWrite, io.EOF},
+		// 1 (varint) + 236 (header) = 237; cut before txncount byte.
+		{transHeader, transHeaderEncoded, pver, BaseEncoding, 237, io.ErrShortWrite, io.EOF},
 		// Force error with included transactions.
 		{transHeader, transHeaderEncoded, pver, BaseEncoding, len(transHeaderEncoded), nil, wireErr},
 	}
