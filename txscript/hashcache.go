@@ -82,16 +82,16 @@ type PrevOutputFetcher interface {
 // CannedPrevOutputFetcher is an implementation of PrevOutputFetcher that only
 // is able to return information for a single previous output.
 type CannedPrevOutputFetcher struct {
-	pkScript []byte
-	amt      int64
+	addr wire.Address
+	amt  int64
 }
 
 // NewCannedPrevOutputFetcher returns an instance of a CannedPrevOutputFetcher
-// that can only return the TxOut defined by the passed script and amount.
-func NewCannedPrevOutputFetcher(script []byte, amt int64) *CannedPrevOutputFetcher {
+// that can only return the TxOut defined by the passed address and amount.
+func NewCannedPrevOutputFetcher(addr wire.Address, amt int64) *CannedPrevOutputFetcher {
 	return &CannedPrevOutputFetcher{
-		pkScript: script,
-		amt:      amt,
+		addr: addr,
+		amt:  amt,
 	}
 }
 
@@ -101,8 +101,8 @@ func NewCannedPrevOutputFetcher(script []byte, amt int64) *CannedPrevOutputFetch
 // NOTE: This is a part of the PrevOutputFetcher interface.
 func (c *CannedPrevOutputFetcher) FetchPrevOutput(wire.OutPoint) *wire.TxOut {
 	return &wire.TxOut{
-		PkScript: c.pkScript,
-		Value:    c.amt,
+		Value:   c.amt,
+		Address: c.addr,
 	}
 }
 
@@ -172,7 +172,7 @@ func calcHashInputScripts(tx *wire.MsgTx, inputFetcher PrevOutputFetcher) chainh
 	for _, txIn := range tx.TxIn {
 		prevOut := inputFetcher.FetchPrevOutput(txIn.PreviousOutPoint)
 
-		_ = wire.WriteVarBytes(&b, 0, prevOut.PkScript)
+		_ = wire.WriteVarBytes(&b, 0, prevOut.Address.WitnessProgram())
 	}
 
 	return chainhash.HashH(b.Bytes())
@@ -239,7 +239,7 @@ func NewTxSigHashes(tx *wire.MsgTx,
 
 		// If this is spending a script that looks like a taproot output,
 		// then we'll need to pre-compute the extra taproot data.
-		if IsPayToTaproot(prevOut.PkScript) {
+		if IsPayToTaproot(prevOut.Address.WitnessProgram()) {
 			hasV1Inputs = true
 		} else {
 			// Otherwise, we'll assume we need the v0 sighash midstate.

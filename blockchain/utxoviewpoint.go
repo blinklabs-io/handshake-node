@@ -7,9 +7,9 @@ package blockchain
 import (
 	"fmt"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -41,6 +41,11 @@ const (
 // view such as whether or not it was contained in a coinbase tx, the height of
 // the block that contains the tx, whether or not it is spent, its public key
 // script, and how much it pays.
+//
+// TODO(handshake): This entry stores the Address as a pkScript (witness
+// program bytes) but does not store Covenant data.  Covenant data is lost
+// when outputs enter the UTXO set.  This will need to be addressed when
+// covenant validation is implemented (Phase 3: Name System).
 type UtxoEntry struct {
 	// NOTE: Additions, deletions, or modifications to the order of the
 	// definitions in this struct should not be changed without considering
@@ -135,16 +140,22 @@ func (entry *UtxoEntry) Clone() *UtxoEntry {
 }
 
 // NewUtxoEntry returns a new UtxoEntry built from the arguments.
+//
+// NOTE: Only the Address script is stored; Covenant data from the TxOut is not
+// preserved. The Address can be reconstructed from witness program pkScripts
+// via addressFromPkScript, but Covenant information is lost.
+// TODO(handshake): Store covenant data when covenant validation is implemented.
 func NewUtxoEntry(
 	txOut *wire.TxOut, blockHeight int32, isCoinbase bool) *UtxoEntry {
 	var cbFlag txoFlags
 	if isCoinbase {
 		cbFlag |= tfCoinBase
 	}
+	pkScript := txOutPkScript(txOut)
 
 	return &UtxoEntry{
 		amount:      txOut.Value,
-		pkScript:    txOut.PkScript,
+		pkScript:    pkScript,
 		blockHeight: blockHeight,
 		packedFlags: cbFlag,
 	}
@@ -193,19 +204,60 @@ func (view *UtxoViewpoint) FetchPrevOutput(op wire.OutPoint) *wire.TxOut {
 		return nil
 	}
 
+	// Reconstruct the Address from the stored pkScript (witness program).
+	// TODO(handshake): Covenant data is not stored in UtxoEntry and cannot
+	// be reconstructed here.  This will need to be addressed when covenant
+	// validation is implemented.
+	addr := addressFromPkScript(prevOut.pkScript)
+
 	return &wire.TxOut{
-		Value:    prevOut.amount,
-		PkScript: prevOut.PkScript(),
+		Value:   prevOut.amount,
+		Address: addr,
 	}
+}
+
+// addressFromPkScript reconstructs a wire.Address from a witness program
+// (pkScript) by delegating to txscript.AddressFromWitnessProgram.  If the
+// script is not a valid witness program a zero Address is returned.
+func addressFromPkScript(pkScript []byte) wire.Address {
+	addr, err := txscript.AddressFromWitnessProgram(pkScript)
+	if err != nil {
+		return wire.Address{}
+	}
+	return addr
+}
+
+func txOutPkScript(txOut *wire.TxOut) []byte {
+	rawScript := txOut.Address.Hash
+	if isRawNullDataScript(rawScript) {
+		return append([]byte(nil), rawScript...)
+	}
+
+	pkScript := txOut.Address.WitnessProgram()
+	if txscript.GetScriptClass(pkScript) == txscript.NonStandardTy &&
+		len(rawScript) > 0 {
+		return append([]byte(nil), rawScript...)
+	}
+
+	return pkScript
+}
+
+func isRawNullDataScript(script []byte) bool {
+	return txscript.GetScriptClass(script) == txscript.NullDataTy
 }
 
 // addTxOut adds the specified output to the view if it is not provably
 // unspendable.  When the view already has an entry for the output, it will be
 // marked unspent.  All fields will be updated for existing entries since it's
 // possible it has changed during a reorg.
+//
+// NOTE: Only the Address script is stored as pkScript; Covenant data from the
+// TxOut is not preserved in the UtxoEntry.
+// TODO(handshake): Store covenant data when covenant validation is implemented.
 func (view *UtxoViewpoint) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, isCoinBase bool, blockHeight int32) {
 	// Don't add provably unspendable outputs.
-	if txscript.IsUnspendable(txOut.PkScript) {
+	pkScript := txOutPkScript(txOut)
+	if txscript.IsUnspendable(pkScript) {
 		return
 	}
 
@@ -220,7 +272,7 @@ func (view *UtxoViewpoint) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, i
 	}
 
 	entry.amount = txOut.Value
-	entry.pkScript = txOut.PkScript
+	entry.pkScript = append(entry.pkScript[:0], pkScript...)
 	entry.blockHeight = blockHeight
 	entry.packedFlags = tfFresh | tfModified
 	if isCoinBase {
@@ -400,7 +452,8 @@ func (view *UtxoViewpoint) disconnectTransactions(db database.DB, block *hnsutil
 		txHash := tx.Hash()
 		prevOut := wire.OutPoint{Hash: *txHash}
 		for txOutIdx, txOut := range tx.MsgTx().TxOut {
-			if txscript.IsUnspendable(txOut.PkScript) {
+			pkScript := txOutPkScript(txOut)
+			if txscript.IsUnspendable(pkScript) {
 				continue
 			}
 
@@ -409,7 +462,7 @@ func (view *UtxoViewpoint) disconnectTransactions(db database.DB, block *hnsutil
 			if entry == nil {
 				entry = &UtxoEntry{
 					amount:      txOut.Value,
-					pkScript:    txOut.PkScript,
+					pkScript:    pkScript,
 					blockHeight: block.Height(),
 					packedFlags: packedFlags,
 				}

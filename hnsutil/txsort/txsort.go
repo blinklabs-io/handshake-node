@@ -86,10 +86,20 @@ func (s sortableInputSlice) Less(i, j int) bool {
 }
 
 // Output comparison function.
-// First sort based on amount (smallest first), then PkScript.
+// First sort based on amount (smallest first), then Address, then Covenant.
 func (s sortableOutputSlice) Less(i, j int) bool {
-	if s[i].Value == s[j].Value {
-		return bytes.Compare(s[i].PkScript, s[j].PkScript) < 0
+	if s[i].Value != s[j].Value {
+		return s[i].Value < s[j].Value
 	}
-	return s[i].Value < s[j].Value
+
+	addrCmp := bytes.Compare(s[i].Address.WitnessProgram(), s[j].Address.WitnessProgram())
+	if addrCmp != 0 {
+		return addrCmp < 0
+	}
+
+	// Tie-break on covenant serialization.
+	var iBuf, jBuf bytes.Buffer
+	s[i].Covenant.Encode(&iBuf)
+	s[j].Covenant.Encode(&jBuf)
+	return bytes.Compare(iBuf.Bytes(), jBuf.Bytes()) < 0
 }

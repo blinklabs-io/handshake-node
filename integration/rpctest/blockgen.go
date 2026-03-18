@@ -100,8 +100,11 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32,
 	addr hnsutil.Address, mineTo []wire.TxOut,
 	net *chaincfg.Params) (*hnsutil.Tx, error) {
 
-	// Create the script to pay to the provided payment address.
 	pkScript, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return nil, err
+	}
+	payToAddr, err := txscript.AddressFromWitnessProgram(pkScript)
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +115,13 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32,
 		// zero hash and max index.
 		PreviousOutPoint: *wire.NewOutPoint(&chainhash.Hash{},
 			wire.MaxPrevOutIndex),
-		SignatureScript: coinbaseScript,
-		Sequence:        wire.MaxTxInSequenceNum,
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  [][]byte{coinbaseScript},
 	})
 	if len(mineTo) == 0 {
 		tx.AddTxOut(&wire.TxOut{
-			Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, net),
-			PkScript: pkScript,
+			Value:   blockchain.CalcBlockSubsidy(nextBlockHeight, net),
+			Address: payToAddr,
 		})
 	} else {
 		for i := range mineTo {

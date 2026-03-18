@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -251,22 +251,28 @@ func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, e
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
 func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockHeight int32, addr hnsutil.Address) (*hnsutil.Tx, error) {
-	// Create the script to pay to the provided payment address if one was
-	// specified.  Otherwise create a script that allows the coinbase to be
-	// redeemable by anyone.
-	var pkScript []byte
+	// Derive the wire.Address from the hnsutil.Address.  Handshake only
+	// supports witness address types (P2WPKH / P2WSH), so we extract the
+	// witness version and program hash directly.  When addr is nil the
+	// coinbase is redeemable by anyone (version 0, empty-ish hash is not
+	// valid, so we use a zero-length Address which serialises to 0x00 0x00).
+	var outputAddr wire.Address
 	if addr != nil {
-		var err error
-		pkScript, err = txscript.PayToAddrScript(addr)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		var err error
-		scriptBuilder := txscript.NewScriptBuilder()
-		pkScript, err = scriptBuilder.AddOp(txscript.OP_TRUE).Script()
-		if err != nil {
-			return nil, err
+		switch a := addr.(type) {
+		case *hnsutil.AddressWitnessPubKeyHash:
+			outputAddr = wire.Address{
+				Version: a.WitnessVersion(),
+				Hash:    a.WitnessProgram(),
+			}
+		case *hnsutil.AddressWitnessScriptHash:
+			outputAddr = wire.Address{
+				Version: a.WitnessVersion(),
+				Hash:    a.WitnessProgram(),
+			}
+		default:
+			return nil, fmt.Errorf("unsupported address type %T for "+
+				"coinbase output; only witness addresses "+
+				"(P2WPKH, P2WSH) are supported", addr)
 		}
 	}
 
@@ -276,12 +282,12 @@ func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockH
 		// zero hash and max index.
 		PreviousOutPoint: *wire.NewOutPoint(&chainhash.Hash{},
 			wire.MaxPrevOutIndex),
-		SignatureScript: coinbaseScript,
-		Sequence:        wire.MaxTxInSequenceNum,
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  [][]byte{coinbaseScript},
 	})
 	tx.AddTxOut(&wire.TxOut{
-		Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
-		PkScript: pkScript,
+		Value:   blockchain.CalcBlockSubsidy(nextBlockHeight, params),
+		Address: outputAddr,
 	})
 	return hnsutil.NewTx(tx), nil
 }
@@ -641,8 +647,7 @@ mempoolLoop:
 					blockchain.CoinbaseWitnessDataLen),
 			}
 			coinbaseCopy.MsgTx().AddTxOut(&wire.TxOut{
-				PkScript: bytes.Repeat([]byte("a"),
-					blockchain.CoinbaseWitnessPkScriptLength),
+				Address: wire.Address{}, // witness commitment placeholder
 			})
 
 			// In order to accurately account for the weight
@@ -889,9 +894,17 @@ func AddWitnessCommitment(coinbaseTx *hnsutil.Tx,
 
 	// Finally, create the OP_RETURN carrying witness commitment
 	// output as an additional output within the coinbase.
+	// The witness script (magic bytes + commitment hash) is stored
+	// in the Address so that ExtractWitnessCommitment can locate it
+	// via Address.WitnessProgram().
 	commitmentOutput := &wire.TxOut{
-		Value:    0,
-		PkScript: witnessScript,
+		Value: 0,
+		Address: wire.Address{
+			// Version 1 permits the 38-byte OP_RETURN commitment
+			// payload; version 0 is restricted to 20 or 32 bytes.
+			Version: 1,
+			Hash:    witnessScript,
+		},
 	}
 	coinbaseTx.MsgTx().TxOut = append(coinbaseTx.MsgTx().TxOut,
 		commitmentOutput)
@@ -939,7 +952,20 @@ func (g *BlkTmplGenerator) UpdateExtraNonce(msgBlock *wire.MsgBlock, blockHeight
 			len(coinbaseScript), blockchain.MinCoinbaseScriptLen,
 			blockchain.MaxCoinbaseScriptLen)
 	}
-	msgBlock.Transactions[0].TxIn[0].SignatureScript = coinbaseScript
+	// In Handshake, the coinbase script goes in the witness.
+	// If AddWitnessCommitment has already placed a 32-byte witness nonce
+	// as the first element, we must preserve it and prepend the coinbase
+	// script rather than replacing the entire witness field.
+	existingWitness := msgBlock.Transactions[0].TxIn[0].Witness
+	if len(existingWitness) > 0 && len(existingWitness[0]) == blockchain.CoinbaseWitnessDataLen {
+		// Witness nonce is present (placed by AddWitnessCommitment).
+		// Keep the nonce as element [0] so that ValidateWitnessCommitment
+		// can locate it, and append the coinbase script after it.
+		msgBlock.Transactions[0].TxIn[0].Witness = append(
+			existingWitness, coinbaseScript)
+	} else {
+		msgBlock.Transactions[0].TxIn[0].Witness = [][]byte{coinbaseScript}
+	}
 
 	// TODO(davec): A hnsutil.Block should use saved in the state to avoid
 	// recalculating all of the other transaction hashes.

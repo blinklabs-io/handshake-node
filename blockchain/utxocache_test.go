@@ -4,6 +4,7 @@
 package blockchain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -13,11 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -194,26 +196,46 @@ func TestMapsliceConcurrency(t *testing.T) {
 	}
 }
 
-// getValidP2PKHScript returns a valid P2PKH script.  Useful as unspendables cannot be
-// added to the cache.
+// getValidP2PKHScript returns a valid 20-byte pubkey hash for use in a
+// version 0 wire.Address.  Useful as unspendable outputs cannot be added
+// to the cache.
 func getValidP2PKHScript() []byte {
-	validP2PKHScript := []byte{
-		// OP_DUP
-		0x76,
-		// OP_HASH160
-		0xa9,
-		// OP_DATA_20
-		0x14,
-		// <20-byte pubkey hash>
+	return []byte{
 		0xf0, 0x7a, 0xb8, 0xce, 0x72, 0xda, 0x4e, 0x76,
 		0x0b, 0x74, 0x7d, 0x48, 0xd6, 0x65, 0xec, 0x96,
 		0xad, 0xf0, 0x24, 0xf5,
-		// OP_EQUALVERIFY
-		0x88,
-		// OP_CHECKSIG
-		0xac,
 	}
-	return validP2PKHScript
+}
+
+func TestTxOutPkScript(t *testing.T) {
+	witnessHash := getValidP2PKHScript()
+	witnessTxOut := &wire.TxOut{
+		Address: wire.Address{Version: 0, Hash: witnessHash},
+	}
+	wantWitnessProgram := witnessTxOut.Address.WitnessProgram()
+	gotWitnessProgram := txOutPkScript(witnessTxOut)
+	if !bytes.Equal(gotWitnessProgram, wantWitnessProgram) {
+		t.Fatalf("unexpected witness program: got %x want %x",
+			gotWitnessProgram, wantWitnessProgram)
+	}
+
+	rawNullDataScript, err := txscript.NullDataScript(bytes.Repeat([]byte{1}, 18))
+	if err != nil {
+		t.Fatalf("unable to build nulldata script: %v", err)
+	}
+	rawScriptTxOut := &wire.TxOut{
+		Address: wire.Address{Version: 0, Hash: rawNullDataScript},
+	}
+	gotRawScript := txOutPkScript(rawScriptTxOut)
+	if !bytes.Equal(gotRawScript, rawNullDataScript) {
+		t.Fatalf("unexpected raw script: got %x want %x",
+			gotRawScript, rawNullDataScript)
+	}
+
+	gotRawScript[0] = 0
+	if rawNullDataScript[0] != txscript.OP_RETURN {
+		t.Fatal("txOutPkScript returned aliased raw script bytes")
+	}
 }
 
 // outpointFromInt generates an outpoint from an int by hashing the int and making
@@ -243,7 +265,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 				return []block{
 					{
 						txOuts: []*wire.TxOut{
-							{Value: 10000, PkScript: getValidP2PKHScript()},
+							{Value: 10000, Address: wire.Address{Version: 0, Hash: getValidP2PKHScript()}},
 						},
 						outOps: []wire.OutPoint{
 							outpointFromInt(0),
@@ -262,7 +284,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 
 					block := block{
 						txOuts: []*wire.TxOut{
-							{Value: 10000, PkScript: getValidP2PKHScript()},
+							{Value: 10000, Address: wire.Address{Version: 0, Hash: getValidP2PKHScript()}},
 						},
 						outOps: []wire.OutPoint{
 							op,
@@ -292,7 +314,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 
 					block := block{
 						txOuts: []*wire.TxOut{
-							{Value: 1000, PkScript: getValidP2PKHScript()},
+							{Value: 1000, Address: wire.Address{Version: 0, Hash: getValidP2PKHScript()}},
 						},
 						outOps: []wire.OutPoint{
 							op,
@@ -430,7 +452,7 @@ func TestUtxoCacheFlush(t *testing.T) {
 		outPoints[i] = op
 
 		// Add the txout.
-		txOut := wire.TxOut{Value: 10000, PkScript: getValidP2PKHScript()}
+		txOut := wire.TxOut{Value: 10000, Address: wire.Address{Version: 0, Hash: getValidP2PKHScript()}}
 		cache.addTxOut(op, &txOut, true, int32(i))
 	}
 
@@ -566,7 +588,7 @@ func TestUtxoCacheFlush(t *testing.T) {
 		outPoints1[i] = op
 
 		// Add the txout.
-		txOut := wire.TxOut{Value: 10000, PkScript: getValidP2PKHScript()}
+		txOut := wire.TxOut{Value: 10000, Address: wire.Address{Version: 0, Hash: getValidP2PKHScript()}}
 		cache.addTxOut(op, &txOut, true, int32(i+prevLen))
 	}
 	if cache.cachedEntries.length() != len(outPoints1) {
@@ -728,7 +750,11 @@ func TestFlushNeededAfterPrune(t *testing.T) {
 }
 
 func TestFlushOnPrune(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
+	// TODO(handshake): Enable this test once Handshake block test fixtures
+	// are created (Phase 2).  The current test data (blk_0_to_14131.dat)
+	// contains Bitcoin blocks with 80-byte headers that are incompatible
+	// with Handshake's 236-byte block header format.
+	t.Skip("Skipping: requires Handshake block test fixtures (tracked as TODO)")
 	chain, tearDown, err := chainSetup("TestFlushOnPrune", &chaincfg.MainNetParams)
 	if err != nil {
 		panic(fmt.Sprintf("error loading blockchain with database: %v", err))
@@ -849,7 +875,11 @@ func TestFlushOnPrune(t *testing.T) {
 }
 
 func TestInitConsistentState(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
+	// TODO(handshake): Enable this test once Handshake block test fixtures
+	// are created (Phase 2).  The current test data (blk_0_to_14131.dat)
+	// contains Bitcoin blocks with 80-byte headers that are incompatible
+	// with Handshake's 236-byte block header format.
+	t.Skip("Skipping: requires Handshake block test fixtures (tracked as TODO)")
 	//  Boilerplate for creating a chain.
 	dbName := "TestFlushOnPrune"
 	chain, tearDown, err := chainSetup(dbName, &chaincfg.MainNetParams)

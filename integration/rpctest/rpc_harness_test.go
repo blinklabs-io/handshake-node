@@ -17,25 +17,14 @@ import (
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
-	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 func testSendOutputs(r *Harness, t *testing.T) {
 	genSpend := func(amt hnsutil.Amount) *chainhash.Hash {
-		// Grab a fresh address from the wallet.
-		addr, err := r.NewAddress()
-		if err != nil {
-			t.Fatalf("unable to get new address: %v", err)
-		}
-
-		// Next, send amt BTC to this address, spending from one of our mature
+		// Next, send amt HNS to this address, spending from one of our mature
 		// coinbase outputs.
-		addrScript, err := txscript.PayToAddrScript(addr)
-		if err != nil {
-			t.Fatalf("unable to generate pkscript to addr: %v", err)
-		}
-		output := wire.NewTxOut(int64(amt), addrScript)
+		output := wire.NewTxOut(int64(amt), wire.Address{}, wire.Covenant{})
 		txid, err := r.SendOutputs([]*wire.TxOut{output}, 10)
 		if err != nil {
 			t.Fatalf("coinbase spend failed: %v", err)
@@ -201,12 +190,7 @@ func testJoinMempools(r *Harness, t *testing.T) {
 
 	// Generate a coinbase spend to a new address within the main harness'
 	// mempool.
-	addr, err := r.NewAddress()
-	addrScript, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		t.Fatalf("unable to generate pkscript to addr: %v", err)
-	}
-	output := wire.NewTxOut(5e8, addrScript)
+	output := wire.NewTxOut(5e8, wire.Address{}, wire.Covenant{})
 	testTx, err := r.CreateTransaction([]*wire.TxOut{output}, 10, true)
 	if err != nil {
 		t.Fatalf("coinbase spend failed: %v", err)
@@ -328,15 +312,7 @@ func testJoinBlocks(r *Harness, t *testing.T) {
 
 func testGenerateAndSubmitBlock(r *Harness, t *testing.T) {
 	// Generate a few test spend transactions.
-	addr, err := r.NewAddress()
-	if err != nil {
-		t.Fatalf("unable to generate new address: %v", err)
-	}
-	pkScript, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		t.Fatalf("unable to create script: %v", err)
-	}
-	output := wire.NewTxOut(hnsutil.SatoshiPerBitcoin, pkScript)
+	output := wire.NewTxOut(hnsutil.SatoshiPerBitcoin, wire.Address{}, wire.Covenant{})
 
 	const numTxns = 5
 	txns := make([]*hnsutil.Tx, 0, numTxns)
@@ -395,15 +371,7 @@ func testGenerateAndSubmitBlock(r *Harness, t *testing.T) {
 func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	t *testing.T) {
 	// Generate a few test spend transactions.
-	addr, err := r.NewAddress()
-	if err != nil {
-		t.Fatalf("unable to generate new address: %v", err)
-	}
-	pkScript, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		t.Fatalf("unable to create script: %v", err)
-	}
-	output := wire.NewTxOut(hnsutil.SatoshiPerBitcoin, pkScript)
+	output := wire.NewTxOut(hnsutil.SatoshiPerBitcoin, wire.Address{}, wire.Covenant{})
 
 	const numTxns = 5
 	txns := make([]*hnsutil.Tx, 0, numTxns)
@@ -421,7 +389,8 @@ func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	block, err := r.GenerateAndSubmitBlockWithCustomCoinbaseOutputs(txns,
 		-1, time.Time{}, []wire.TxOut{{
 			Value:    0,
-			PkScript: []byte{},
+			Address:  wire.Address{},
+			Covenant: wire.Covenant{},
 		}})
 	if err != nil {
 		t.Fatalf("unable to generate block: %v", err)
@@ -447,7 +416,8 @@ func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	block, err = r.GenerateAndSubmitBlockWithCustomCoinbaseOutputs(nil,
 		targetBlockVersion, timestamp, []wire.TxOut{{
 			Value:    0,
-			PkScript: []byte{},
+			Address:  wire.Address{},
+			Covenant: wire.Covenant{},
 		}})
 	if err != nil {
 		t.Fatalf("unable to generate block: %v", err)
@@ -513,16 +483,8 @@ func testMemWalletLockedOutputs(r *Harness, t *testing.T) {
 	startingBalance := r.ConfirmedBalance()
 
 	// First, create a signed transaction spending some outputs.
-	addr, err := r.NewAddress()
-	if err != nil {
-		t.Fatalf("unable to generate new address: %v", err)
-	}
-	pkScript, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		t.Fatalf("unable to create script: %v", err)
-	}
 	outputAmt := hnsutil.Amount(50 * hnsutil.SatoshiPerBitcoin)
-	output := wire.NewTxOut(int64(outputAmt), pkScript)
+	output := wire.NewTxOut(int64(outputAmt), wire.Address{}, wire.Covenant{})
 	tx, err := r.CreateTransaction([]*wire.TxOut{output}, 10, true)
 	if err != nil {
 		t.Fatalf("unable to create transaction: %v", err)

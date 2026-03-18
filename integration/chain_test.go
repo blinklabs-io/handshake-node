@@ -6,12 +6,11 @@ package integration
 import (
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/integration/rpctest"
 	"github.com/blinklabs-io/handshake-node/rpcclient"
-	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
@@ -119,24 +118,15 @@ func createTxInMempool(t *testing.T, r *rpctest.Harness) *wire.MsgTx {
 		PreviousOutPoint: *testOutput,
 	})
 
-	// Fetch a fresh address from the harness, we'll use this address to
-	// send funds back into the Harness.
-	addr, err := r.NewAddress()
-	require.NoError(t, err)
-
-	addrScript, err := txscript.PayToAddrScript(addr)
-	require.NoError(t, err)
-
 	tx.AddTxOut(&wire.TxOut{
-		PkScript: addrScript,
-		Value:    outputValue - 1000,
+		Address: wire.Address{},
+		Value:   outputValue - 1000,
 	})
 
-	sigScript, err := txscript.SignatureScript(
-		tx, 0, testPkScript, txscript.SigHashAll, outputKey, true,
-	)
+	witness, err := p2wpkhWitnessSignature(tx, 0, outputValue,
+		testPkScript, outputKey, r.ActiveNet)
 	require.NoError(t, err)
-	tx.TxIn[0].SignatureScript = sigScript
+	tx.TxIn[0].Witness = witness
 
 	// Send the tx.
 	_, err = r.Client.SendRawTransaction(tx, true)

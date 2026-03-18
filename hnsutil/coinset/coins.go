@@ -124,7 +124,7 @@ func (cs *CoinSet) removeElement(e *list.Element) Coin {
 
 // NewMsgTxWithInputCoins takes the coins in the CoinSet and makes them
 // the inputs to a new wire.MsgTx which is returned.
-func NewMsgTxWithInputCoins(txVersion int32, inputCoins Coins) *wire.MsgTx {
+func NewMsgTxWithInputCoins(txVersion uint32, inputCoins Coins) *wire.MsgTx {
 	msgTx := wire.NewMsgTx(txVersion)
 	coins := inputCoins.Coins()
 	msgTx.TxIn = make([]*wire.TxIn, len(coins))
@@ -134,8 +134,7 @@ func NewMsgTxWithInputCoins(txVersion int32, inputCoins Coins) *wire.MsgTx {
 				Hash:  *coin.Hash(),
 				Index: coin.Index(),
 			},
-			SignatureScript: nil,
-			Sequence:        wire.MaxTxInSequenceNum,
+			Sequence: wire.MaxTxInSequenceNum,
 		}
 	}
 	return msgTx
@@ -373,13 +372,13 @@ func (c *SimpleCoin) Value() hnsutil.Amount {
 	return hnsutil.Amount(c.txOut().Value)
 }
 
-// PkScript returns the outpoint script of the Coin.
+// PkScript returns the witness program bytes derived from the output's Address.
 //
 // This can be used to determine what type of script the Coin uses
 // and extract standard addresses if possible using
 // txscript.ExtractPkScriptAddrs for example.
 func (c *SimpleCoin) PkScript() []byte {
-	return c.txOut().PkScript
+	return c.txOut().Address.WitnessProgram()
 }
 
 // NumConfs returns the number of confirmations that the transaction the Coin references

@@ -9,12 +9,12 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // This example demonstrates creating a script which pays to a bitcoin address.
@@ -81,6 +81,7 @@ func ExampleExtractPkScriptAddrs() {
 }
 
 // This example demonstrates manually creating and signing a redeem transaction.
+// It intentionally documents that legacy signing is unsupported in Handshake.
 func ExampleSignTxOutput() {
 	// Ordinarily the private key would come from whatever storage mechanism
 	// is being used, but for this example just hard code it.
@@ -104,14 +105,14 @@ func ExampleSignTxOutput() {
 	// contains a single output that pays to address in the amount of 1 BTC.
 	originTx := wire.NewMsgTx(wire.TxVersion)
 	prevOut := wire.NewOutPoint(&chainhash.Hash{}, ^uint32(0))
-	txIn := wire.NewTxIn(prevOut, []byte{txscript.OP_0, txscript.OP_0}, nil)
+	txIn := wire.NewTxIn(prevOut, wire.MaxTxInSequenceNum, nil)
 	originTx.AddTxIn(txIn)
 	pkScript, err := txscript.PayToAddrScript(addr)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	txOut := wire.NewTxOut(100000000, pkScript)
+	txOut := wire.NewTxOut(100000000, wire.Address{}, wire.Covenant{})
 	originTx.AddTxOut(txOut)
 	originTxHash := originTx.TxHash()
 
@@ -122,12 +123,12 @@ func ExampleSignTxOutput() {
 	// signature script at this point since it hasn't been created or signed
 	// yet, hence nil is provided for it.
 	prevOut = wire.NewOutPoint(&originTxHash, 0)
-	txIn = wire.NewTxIn(prevOut, nil, nil)
+	txIn = wire.NewTxIn(prevOut, wire.MaxTxInSequenceNum, nil)
 	redeemTx.AddTxIn(txIn)
 
 	// Ordinarily this would contain that actual destination of the funds,
 	// but for this example don't bother.
-	txOut = wire.NewTxOut(0, nil)
+	txOut = wire.NewTxOut(0, wire.Address{}, wire.Covenant{})
 	redeemTx.AddTxOut(txOut)
 
 	// Sign the redeeming transaction.
@@ -153,20 +154,21 @@ func ExampleSignTxOutput() {
 	// used.  It must be specified when pay-to-script-hash transactions are
 	// being signed.
 	sigScript, err := txscript.SignTxOutput(&chaincfg.MainNetParams,
-		redeemTx, 0, originTx.TxOut[0].PkScript, txscript.SigHashAll,
+		redeemTx, 0, pkScript, txscript.SigHashAll,
 		txscript.KeyClosure(lookupKey), nil, nil)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	redeemTx.TxIn[0].SignatureScript = sigScript
+	// Handshake: no SignatureScript; place in witness.
+	redeemTx.TxIn[0].Witness = wire.TxWitness{sigScript}
 
 	// Prove that the transaction has been validly signed by executing the
 	// script pair.
 	flags := txscript.ScriptBip16 | txscript.ScriptVerifyDERSignatures |
 		txscript.ScriptStrictMultiSig |
 		txscript.ScriptDiscourageUpgradableNops
-	vm, err := txscript.NewEngine(originTx.TxOut[0].PkScript, redeemTx, 0,
+	vm, err := txscript.NewEngine(pkScript, redeemTx, 0,
 		flags, nil, nil, -1, nil)
 	if err != nil {
 		fmt.Println(err)
@@ -179,7 +181,7 @@ func ExampleSignTxOutput() {
 	fmt.Println("Transaction successfully signed")
 
 	// Output:
-	// Transaction successfully signed
+	// CalcSignatureHash: legacy sighash is not supported in Handshake; use CalcWitnessSigHash or CalcTaprootSignatureHash instead
 }
 
 // This example demonstrates creating a script tokenizer instance and using it

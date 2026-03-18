@@ -68,20 +68,22 @@ func shallowCopyTx(tx *wire.MsgTx) wire.MsgTx {
 	return txCopy
 }
 
-// CalcSignatureHash will, given a script and hash type for the current script
-// engine instance, calculate the signature hash to be used for signing and
-// verification.
+// CalcSignatureHash would calculate the legacy (non-witness) signature hash
+// for the specified input of the target transaction.
 //
-// NOTE: This function is only valid for version 0 scripts. Since the function
-// does not accept a script version, the results are undefined for other script
-// versions.
+// Handshake does not support legacy sighash: its TxIn type has no
+// SignatureScript field, so there is nothing to bind the subscript into the
+// modified transaction prior to hashing.  Attempting to use this function
+// silently produced identical digests for every input, so it now returns an
+// error directing callers to the witness- or taproot-aware helpers.
 func CalcSignatureHash(script []byte, hashType SigHashType, tx *wire.MsgTx, idx int) ([]byte, error) {
 	const scriptVersion = 0
 	if err := checkScriptParses(scriptVersion, script); err != nil {
 		return nil, err
 	}
-
-	return calcSignatureHash(script, hashType, tx, idx), nil
+	return nil, fmt.Errorf("CalcSignatureHash: legacy sighash is not " +
+		"supported in Handshake; use CalcWitnessSigHash or " +
+		"CalcTaprootSignatureHash instead")
 }
 
 // calcSignatureHash computes the signature hash for the specified input of the
@@ -119,13 +121,8 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 	// Make a shallow copy of the transaction, zeroing out the script for
 	// all inputs that are not currently being processed.
 	txCopy := shallowCopyTx(tx)
-	for i := range txCopy.TxIn {
-		if i == idx {
-			txCopy.TxIn[idx].SignatureScript = sigScript
-		} else {
-			txCopy.TxIn[i].SignatureScript = nil
-		}
-	}
+	// NOTE: In Handshake, TxIn has no SignatureScript field.
+	// Legacy sighash script injection is not applicable.
 
 	switch hashType & sigHashMask {
 	case SigHashNone:
@@ -143,7 +140,8 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 		// All but current output get zeroed out.
 		for i := 0; i < idx; i++ {
 			txCopy.TxOut[i].Value = -1
-			txCopy.TxOut[i].PkScript = nil
+			txCopy.TxOut[i].Address = wire.Address{}
+			txCopy.TxOut[i].Covenant = wire.Covenant{}
 		}
 
 		// Sequence on all other inputs is 0, too.

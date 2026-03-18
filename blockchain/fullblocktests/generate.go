@@ -272,17 +272,62 @@ func additionalSpendFee(fee hnsutil.Amount) func(*wire.MsgBlock) {
 
 // replaceSpendScript returns a function that itself takes a block and modifies
 // it by replacing the public key script of the spending transaction.
+//
+// TODO(handshake): This function is lossy for non-witness scripts.  It
+// interprets any pkScript as a witness program (version opcode + push length
+// + hash), which is incorrect for arbitrary scripts like P2SH or bare
+// multisig.  For now, scripts that don't fit the witness program format are
+// stored with the raw bytes in Address.Hash.  This is acceptable for test
+// code but will need a proper PkScript field or script-type-aware parsing
+// when non-witness output types are supported.
 func replaceSpendScript(pkScript []byte) func(*wire.MsgBlock) {
 	return func(b *wire.MsgBlock) {
-		b.Transactions[1].TxOut[0].PkScript = pkScript
+		if len(pkScript) >= 2 {
+			versionOpcode := pkScript[0]
+			pushLen := pkScript[1]
+
+			// Check if this looks like a valid witness program:
+			// version opcode (0x00 or 0x51-0x60) followed by a push
+			// length that accounts for the remaining bytes.
+			isWitnessProgram := (versionOpcode == 0x00 ||
+				(versionOpcode >= 0x51 && versionOpcode <= 0x60)) &&
+				int(pushLen) == len(pkScript)-2
+
+			if isWitnessProgram {
+				var version uint8
+				if versionOpcode == 0x00 {
+					version = 0
+				} else {
+					version = versionOpcode - 0x50
+				}
+				hash := make([]byte, len(pkScript)-2)
+				copy(hash, pkScript[2:])
+				b.Transactions[1].TxOut[0].Address = wire.Address{
+					Version: version,
+					Hash:    hash,
+				}
+			} else {
+				// Not a witness program; store raw script bytes
+				// in Address.Hash as a best-effort for test code.
+				hash := make([]byte, len(pkScript))
+				copy(hash, pkScript)
+				b.Transactions[1].TxOut[0].Address = wire.Address{
+					Version: 0,
+					Hash:    hash,
+				}
+			}
+		} else {
+			b.Transactions[1].TxOut[0].Address = wire.Address{}
+		}
 	}
 }
 
 // replaceCoinbaseSigScript returns a function that itself takes a block and
-// modifies it by replacing the signature key script of the coinbase.
+// modifies it by replacing the coinbase script (carried in the witness in
+// Handshake).
 func replaceCoinbaseSigScript(script []byte) func(*wire.MsgBlock) {
 	return func(b *wire.MsgBlock) {
-		b.Transactions[0].TxIn[0].SignatureScript = script
+		b.Transactions[0].TxIn[0].Witness = wire.TxWitness{script}
 	}
 }
 
@@ -521,12 +566,10 @@ func assertScriptSigOpsCount(script []byte, expected int) {
 func countBlockSigOps(block *wire.MsgBlock) int {
 	totalSigOps := 0
 	for _, tx := range block.Transactions {
-		for _, txIn := range tx.TxIn {
-			numSigOps := txscript.GetSigOpCount(txIn.SignatureScript)
-			totalSigOps += numSigOps
-		}
+		// Handshake has no signature scripts; skip input sigop counting.
+		_ = tx.TxIn
 		for _, txOut := range tx.TxOut {
-			numSigOps := txscript.GetSigOpCount(txOut.PkScript)
+			numSigOps := txscript.GetSigOpCount(txOut.Address.WitnessProgram())
 			totalSigOps += numSigOps
 		}
 	}
@@ -619,7 +662,7 @@ func (g *testGenerator) assertTipBlockTxOutOpReturn(txIndex, txOutIndex uint32) 
 	}
 
 	txOut := tx.TxOut[txOutIndex]
-	if txOut.PkScript[0] != txscript.OP_RETURN {
+	if len(txOut.Address.Hash) == 0 || txOut.Address.Hash[0] != txscript.OP_RETURN {
 		panic(fmt.Sprintf("transaction index %d output %d in block %q "+
 			"(height %d) is not an OP_RETURN", txIndex, txOutIndex,
 			g.tipName, g.tipHeight))
@@ -1163,13 +1206,20 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 		// the redeem script and the total number of signature
 		// operations in those redeem scripts will be more than the
 		// max allowed per block.
+		//
+		// TODO(handshake): P2SH scripts don't map cleanly to
+		// Handshake's Address model.  The P2SH script bytes are
+		// stored in Address.Hash as a best-effort for test code.
+		// This will need revisiting when proper script-type-aware
+		// address handling is implemented.
 		p2shScript := payToScriptHashScript(redeemScript)
+		p2shAddr := wire.Address{Version: 0, Hash: p2shScript}
 		txnsNeeded := (maxBlockSigOps / redeemScriptSigOps) + 1
 		prevTx := b.Transactions[1]
 		for i := 0; i < txnsNeeded; i++ {
 			prevTx = createSpendTxForTx(prevTx, testhelper.LowFee)
 			prevTx.TxOut[0].Value -= 2
-			prevTx.AddTxOut(wire.NewTxOut(2, p2shScript))
+			prevTx.AddTxOut(wire.NewTxOut(2, p2shAddr, wire.Covenant{}))
 			b.AddTransaction(prevTx)
 		}
 	})
@@ -1194,8 +1244,8 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 			if err != nil {
 				panic(err)
 			}
-			tx.TxIn[0].SignatureScript = pushDataScript(sig,
-				redeemScript)
+			tx.TxIn[0].Witness = wire.TxWitness{pushDataScript(sig,
+				redeemScript)}
 			b.AddTransaction(tx)
 		}
 
@@ -1205,7 +1255,10 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 		fill := maxBlockSigOps - (txnsNeeded * redeemScriptSigOps) + 1
 		finalTx := b.Transactions[len(b.Transactions)-1]
 		tx := createSpendTxForTx(finalTx, testhelper.LowFee)
-		tx.TxOut[0].PkScript = repeatOpcode(txscript.OP_CHECKSIG, fill)
+		// In Handshake, the script is stored as an Address witness program.
+		// For test purposes, store the raw bytes directly.
+		script := repeatOpcode(txscript.OP_CHECKSIG, fill)
+		tx.TxOut[0].Address = wire.Address{Version: 0, Hash: script}
 		b.AddTransaction(tx)
 	})
 	rejected(blockchain.ErrTooManySigOps)
@@ -1225,8 +1278,8 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 			if err != nil {
 				panic(err)
 			}
-			tx.TxIn[0].SignatureScript = pushDataScript(sig,
-				redeemScript)
+			tx.TxIn[0].Witness = wire.TxWitness{pushDataScript(sig,
+				redeemScript)}
 			b.AddTransaction(tx)
 		}
 
@@ -1239,7 +1292,10 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 		}
 		finalTx := b.Transactions[len(b.Transactions)-1]
 		tx := createSpendTxForTx(finalTx, testhelper.LowFee)
-		tx.TxOut[0].PkScript = repeatOpcode(txscript.OP_CHECKSIG, fill)
+		// In Handshake, the script is stored as an Address witness program.
+		// For test purposes, store the raw bytes directly.
+		script := repeatOpcode(txscript.OP_CHECKSIG, fill)
+		tx.TxOut[0].Address = wire.Address{Version: 0, Hash: script}
 		b.AddTransaction(tx)
 	})
 	accepted()
@@ -1805,7 +1861,7 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 	g.nextBlock("b74", outs[23], replaceSpendScript(script), func(b *wire.MsgBlock) {
 		tx2 := b.Transactions[1]
 		tx3 := createSpendTxForTx(tx2, testhelper.LowFee)
-		tx3.TxIn[0].SignatureScript = []byte{txscript.OP_FALSE}
+		tx3.TxIn[0].Witness = wire.TxWitness{[]byte{txscript.OP_FALSE}}
 		b.AddTransaction(tx3)
 	})
 	accepted()
@@ -1825,7 +1881,7 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 		const zeroCoin = int64(0)
 		spendTx := b.Transactions[1]
 		for i := 0; i < numAdditionalOutputs; i++ {
-			spendTx.AddTxOut(wire.NewTxOut(zeroCoin, testhelper.OpTrueScript))
+			spendTx.AddTxOut(wire.NewTxOut(zeroCoin, wire.Address{}, wire.Covenant{}))
 		}
 
 		// Add transactions spending from the outputs added above that
@@ -1894,7 +1950,10 @@ func Generate(includeLargeReorg bool) (tests [][]TestInstance, err error) {
 			if err != nil {
 				panic(err)
 			}
-			spendTx.AddTxOut(wire.NewTxOut(zeroCoin, opRetScript))
+			// Store the full OP_RETURN script as the Address hash so
+			// that the leading OP_RETURN opcode is visible for
+			// assertions and the unique payload is preserved.
+			spendTx.AddTxOut(wire.NewTxOut(zeroCoin, wire.Address{Version: 0, Hash: opRetScript}, wire.Covenant{}))
 		}
 	})
 	for i := uint32(2); i < 6; i++ {

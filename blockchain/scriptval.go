@@ -70,7 +70,9 @@ out:
 			}
 
 			// Create a new script engine for the script pair.
-			sigScript := txIn.SignatureScript
+			// Handshake has no signature scripts; all signatures
+			// are in the witness.
+			var sigScript []byte
 			witness := txIn.Witness
 			pkScript := utxo.PkScript()
 			inputAmount := utxo.Amount()

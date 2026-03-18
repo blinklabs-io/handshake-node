@@ -29,14 +29,15 @@ const (
 	//   unsafe.Sizeof(UtxoEntry{})
 	baseEntrySize = 40
 
-	// pubKeyHashLen is the length of a P2PKH script.
-	pubKeyHashLen = 25
+	// pubKeyHashLen is the length of a version 0, 20-byte witness program
+	// as stored in UtxoEntry (OP_0 + push_20 + 20-byte hash = 22 bytes).
+	pubKeyHashLen = 22
 
 	// avgEntrySize is how much each entry we expect it to be.  Since most
 	// txs are p2pkh, we can assume the entry to be more or less the size
-	// of a p2pkh tx.  We add on 7 to make it 32 since 64 bit systems will
-	// align by 8 bytes.
-	avgEntrySize = baseEntrySize + (pubKeyHashLen + 7)
+	// of a p2pkh tx.  Round up to the next multiple of 8 for 64-bit
+	// alignment.
+	avgEntrySize = baseEntrySize + ((pubKeyHashLen + 7) &^ 7)
 )
 
 // The code here is shamelessly taken from the go runtime package.  All the relevant

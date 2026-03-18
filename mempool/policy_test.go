@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -205,11 +204,11 @@ func TestCheckPkScriptStandard(t *testing.T) {
 
 // TestDust tests the IsDust API.
 func TestDust(t *testing.T) {
-	pkScript := []byte{0x76, 0xa9, 0x21, 0x03, 0x2f, 0x7e, 0x43,
-		0x0a, 0xa4, 0xc9, 0xd1, 0x59, 0x43, 0x7e, 0x84, 0xb9,
-		0x75, 0xdc, 0x76, 0xd9, 0x00, 0x3b, 0xf0, 0x92, 0x2c,
-		0xf3, 0xaa, 0x45, 0x28, 0x46, 0x4b, 0xab, 0x78, 0x0d,
-		0xba, 0x5e, 0x88, 0xac}
+	// Standard P2WPKH address (version 0, 20-byte hash).
+	// Handshake TxOut size: 8 (value) + 22 (address: 1 ver + 1 hashlen + 20 hash)
+	// + 2 (covenant: 1 type + 1 varint(0)) = 32 bytes.
+	// Dust threshold for P2WPKH: 3 * (32 + 41 + 107/4) = 3 * 99 = 297.
+	stdAddr := wire.Address{Version: 0, Hash: make([]byte, 20)}
 
 	tests := []struct {
 		name     string // test description
@@ -220,49 +219,41 @@ func TestDust(t *testing.T) {
 		{
 			// Any value is allowed with a zero relay fee.
 			"zero value with zero relay fee",
-			wire.TxOut{Value: 0, PkScript: pkScript},
+			wire.TxOut{Value: 0, Address: stdAddr},
 			0,
 			false,
 		},
 		{
 			// Zero value is dust with any relay fee"
 			"zero value with very small tx fee",
-			wire.TxOut{Value: 0, PkScript: pkScript},
+			wire.TxOut{Value: 0, Address: stdAddr},
 			1,
 			true,
 		},
 		{
-			"38 byte public key script with value 584",
-			wire.TxOut{Value: 584, PkScript: pkScript},
+			"standard P2WPKH output with value 296",
+			wire.TxOut{Value: 296, Address: stdAddr},
 			1000,
 			true,
 		},
 		{
-			"38 byte public key script with value 585",
-			wire.TxOut{Value: 585, PkScript: pkScript},
+			"standard P2WPKH output with value 297",
+			wire.TxOut{Value: 297, Address: stdAddr},
 			1000,
 			false,
 		},
 		{
 			// Maximum allowed value is never dust.
 			"max satoshi amount is never dust",
-			wire.TxOut{Value: hnsutil.MaxSatoshi, PkScript: pkScript},
+			wire.TxOut{Value: hnsutil.MaxSatoshi, Address: stdAddr},
 			hnsutil.MaxSatoshi,
 			false,
 		},
 		{
 			// Maximum int64 value causes overflow.
 			"maximum int64 value",
-			wire.TxOut{Value: 1<<63 - 1, PkScript: pkScript},
+			wire.TxOut{Value: 1<<63 - 1, Address: stdAddr},
 			1<<63 - 1,
-			true,
-		},
-		{
-			// Unspendable pkScript due to an invalid public key
-			// script.
-			"unspendable pkScript",
-			wire.TxOut{Value: 5000, PkScript: []byte{0x01}},
-			0, // no relay fee
 			true,
 		},
 	}
@@ -277,31 +268,39 @@ func TestDust(t *testing.T) {
 
 // TestCheckTransactionStandard tests the CheckTransactionStandard API.
 func TestCheckTransactionStandard(t *testing.T) {
+	// maxTxVersion is the max transaction version the test Policy
+	// accepts.
+	const maxTxVersion = 1
+
+	// opReturnAddressVersion is the wire.Address version that yields an
+	// OP_RETURN opcode via Address.WitnessProgram(): 0x50 + 26 = 0x6a =
+	// OP_RETURN.  This is how the tests fabricate nulldata outputs.
+	const opReturnAddressVersion uint8 = 26
+
+	// nulldataAddr constructs the wire.Address used for OP_RETURN /
+	// nulldata outputs in the tests below.
+	nulldataAddr := func(data []byte) wire.Address {
+		return wire.Address{Version: opReturnAddressVersion, Hash: data}
+	}
+
 	// Create some dummy, but otherwise standard, data for transactions.
 	prevOutHash, err := chainhash.NewHashFromStr("01")
 	if err != nil {
 		t.Fatalf("NewShaHashFromStr: unexpected error: %v", err)
 	}
 	dummyPrevOut := wire.OutPoint{Hash: *prevOutHash, Index: 1}
-	dummySigScript := bytes.Repeat([]byte{0x00}, 65)
+	dummyWitness := wire.TxWitness{bytes.Repeat([]byte{0x00}, 65)}
 	dummyTxIn := wire.TxIn{
 		PreviousOutPoint: dummyPrevOut,
-		SignatureScript:  dummySigScript,
 		Sequence:         wire.MaxTxInSequenceNum,
+		Witness:          dummyWitness,
 	}
-	addrHash := [20]byte{0x01}
-	addr, err := hnsutil.NewAddressPubKeyHash(addrHash[:],
-		&chaincfg.TestNet3Params)
-	if err != nil {
-		t.Fatalf("NewAddressPubKeyHash: unexpected error: %v", err)
-	}
-	dummyPkScript, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		t.Fatalf("PayToAddrScript: unexpected error: %v", err)
-	}
+	// Standard P2WPKH address (version 0, 20-byte hash).
+	dummyAddr := wire.Address{Version: 0, Hash: make([]byte, 20)}
+	dummyAddr.Hash[0] = 0x01
 	dummyTxOut := wire.TxOut{
-		Value:    100000000, // 1 BTC
-		PkScript: dummyPkScript,
+		Value:   100000000, // 1 HNS
+		Address: dummyAddr,
 	}
 
 	tests := []struct {
@@ -325,7 +324,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Transaction version too high",
 			tx: wire.MsgTx{
-				Version:  wire.TxVersion + 1,
+				Version:  maxTxVersion + 1,
 				TxIn:     []*wire.TxIn{&dummyTxIn},
 				TxOut:    []*wire.TxOut{&dummyTxOut},
 				LockTime: 0,
@@ -340,8 +339,8 @@ func TestCheckTransactionStandard(t *testing.T) {
 				Version: 1,
 				TxIn: []*wire.TxIn{{
 					PreviousOutPoint: dummyPrevOut,
-					SignatureScript:  dummySigScript,
 					Sequence:         0,
+					Witness:          dummyWitness,
 				}},
 				TxOut:    []*wire.TxOut{&dummyTxOut},
 				LockTime: 300001,
@@ -357,8 +356,11 @@ func TestCheckTransactionStandard(t *testing.T) {
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value: 0,
-					PkScript: bytes.Repeat([]byte{0x00},
-						(maxStandardTxWeight/4)+1),
+					Address: wire.Address{
+						Version: 0,
+						Hash: bytes.Repeat([]byte{0x00},
+							(maxStandardTxWeight/4)+1),
+					},
 				}},
 				LockTime: 0,
 			},
@@ -366,48 +368,16 @@ func TestCheckTransactionStandard(t *testing.T) {
 			isStandard: false,
 			code:       wire.RejectNonstandard,
 		},
-		{
-			name: "Signature script size is too large",
-			tx: wire.MsgTx{
-				Version: 1,
-				TxIn: []*wire.TxIn{{
-					PreviousOutPoint: dummyPrevOut,
-					SignatureScript: bytes.Repeat([]byte{0x00},
-						maxStandardSigScriptSize+1),
-					Sequence: wire.MaxTxInSequenceNum,
-				}},
-				TxOut:    []*wire.TxOut{&dummyTxOut},
-				LockTime: 0,
-			},
-			height:     300000,
-			isStandard: false,
-			code:       wire.RejectNonstandard,
-		},
-		{
-			name: "Signature script that does more than push data",
-			tx: wire.MsgTx{
-				Version: 1,
-				TxIn: []*wire.TxIn{{
-					PreviousOutPoint: dummyPrevOut,
-					SignatureScript: []byte{
-						txscript.OP_CHECKSIGVERIFY},
-					Sequence: wire.MaxTxInSequenceNum,
-				}},
-				TxOut:    []*wire.TxOut{&dummyTxOut},
-				LockTime: 0,
-			},
-			height:     300000,
-			isStandard: false,
-			code:       wire.RejectNonstandard,
-		},
+		// Handshake has no SignatureScript; signature script size and
+		// push-data-only checks are not applicable (witness-only model).
 		{
 			name: "Valid but non standard public key script",
 			tx: wire.MsgTx{
 				Version: 1,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
-					Value:    100000000,
-					PkScript: []byte{txscript.OP_TRUE},
+					Value:   100000000,
+					Address: wire.Address{Version: 1, Hash: []byte{0x01, 0x01}},
 				}},
 				LockTime: 0,
 			},
@@ -421,11 +391,11 @@ func TestCheckTransactionStandard(t *testing.T) {
 				Version: 1,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
-					Value:    0,
-					PkScript: []byte{txscript.OP_RETURN},
+					Value:   0,
+					Address: nulldataAddr([]byte{0x00, 0x00}),
 				}, {
-					Value:    0,
-					PkScript: []byte{txscript.OP_RETURN},
+					Value:   0,
+					Address: nulldataAddr([]byte{0x00, 0x00}),
 				}},
 				LockTime: 0,
 			},
@@ -439,8 +409,8 @@ func TestCheckTransactionStandard(t *testing.T) {
 				Version: 1,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
-					Value:    0,
-					PkScript: dummyPkScript,
+					Value:   0,
+					Address: dummyAddr,
 				}},
 				LockTime: 0,
 			},
@@ -454,8 +424,8 @@ func TestCheckTransactionStandard(t *testing.T) {
 				Version: 1,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
-					Value:    0,
-					PkScript: []byte{txscript.OP_RETURN},
+					Value:   0,
+					Address: nulldataAddr([]byte{0x00, 0x00}),
 				}},
 				LockTime: 0,
 			},

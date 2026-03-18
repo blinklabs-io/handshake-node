@@ -12,14 +12,14 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/hnsutil/hdkeychain"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/hnsutil/hdkeychain"
 	"github.com/blinklabs-io/handshake-node/rpcclient"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 var (
@@ -253,7 +253,7 @@ func (m *memWallet) evalOutputs(outputs []*wire.TxOut, txHash *chainhash.Hash,
 	isCoinbase bool, undo *undoEntry) {
 
 	for i, output := range outputs {
-		pkScript := output.PkScript
+		pkScript := output.Address.WitnessProgram()
 
 		// Scan all the addresses we currently control to see if the
 		// output is paying to us.
@@ -406,7 +406,7 @@ func (m *memWallet) fundTx(tx *wire.MsgTx, amt hnsutil.Amount,
 		// Add the selected output to the transaction, updating the
 		// current tx size while accounting for the size of the future
 		// sigScript.
-		tx.AddTxIn(wire.NewTxIn(&outPoint, nil, nil))
+		tx.AddTxIn(wire.NewTxIn(&outPoint, wire.MaxTxInSequenceNum, nil))
 		txSize = tx.SerializeSize() + spendSize*len(tx.TxIn)
 
 		// Calculate the fee required for the txn at this point
@@ -423,17 +423,23 @@ func (m *memWallet) fundTx(tx *wire.MsgTx, amt hnsutil.Amount,
 		// reserved for it.
 		changeVal := amtSelected - amt - reqFee
 		if changeVal > 0 && change {
-			addr, err := m.newAddress()
+			changeAddr, err := m.newAddress()
 			if err != nil {
 				return err
 			}
-			pkScript, err := txscript.PayToAddrScript(addr)
+			changeScript, err := txscript.PayToAddrScript(changeAddr)
+			if err != nil {
+				return err
+			}
+			changeWireAddr, err := txscript.AddressFromWitnessProgram(
+				changeScript,
+			)
 			if err != nil {
 				return err
 			}
 			changeOutput := &wire.TxOut{
-				Value:    int64(changeVal),
-				PkScript: pkScript,
+				Value:   int64(changeVal),
+				Address: changeWireAddr,
 			}
 			tx.AddTxOut(changeOutput)
 		}
@@ -501,9 +507,25 @@ func (m *memWallet) CreateTransaction(outputs []*wire.TxOut,
 		return nil, err
 	}
 
-	// Populate all the selected inputs with valid sigScript for spending.
-	// Along the way record all outputs being spent in order to avoid a
-	// potential double spend.
+	// Populate all the selected inputs with valid witness data for
+	// spending.  Along the way record all outputs being spent in order to
+	// avoid a potential double spend.
+	//
+	// Build a PrevOutputFetcher so we can compute the BIP-143 sighash
+	// midstate required by WitnessSignature.
+	prevOuts := make(map[wire.OutPoint]*wire.TxOut, len(tx.TxIn))
+	for _, txIn := range tx.TxIn {
+		op := txIn.PreviousOutPoint
+		u := m.utxos[op]
+		prevAddr, err := txscript.AddressFromWitnessProgram(u.pkScript)
+		if err != nil {
+			return nil, err
+		}
+		prevOuts[op] = wire.NewTxOut(int64(u.value), prevAddr, wire.Covenant{})
+	}
+	sigHashes := txscript.NewTxSigHashes(tx,
+		txscript.NewMultiPrevOutFetcher(prevOuts))
+
 	spentOutputs := make([]*utxo, 0, len(tx.TxIn))
 	for i, txIn := range tx.TxIn {
 		outPoint := txIn.PreviousOutPoint
@@ -521,13 +543,18 @@ func (m *memWallet) CreateTransaction(outputs []*wire.TxOut,
 
 		privKey, _ := btcec.PrivKeyFromBytes(privKeyOld.Serialize())
 
-		sigScript, err := txscript.SignatureScript(tx, i, utxo.pkScript,
+		scriptCode, err := p2wpkhScriptCode(utxo.pkScript, m.net)
+		if err != nil {
+			return nil, err
+		}
+		witness, err := txscript.WitnessSignature(tx, sigHashes, i,
+			int64(utxo.value), scriptCode,
 			txscript.SigHashAll, privKey, true)
 		if err != nil {
 			return nil, err
 		}
 
-		txIn.SignatureScript = sigScript
+		txIn.Witness = witness
 
 		spentOutputs = append(spentOutputs, utxo)
 	}
@@ -582,12 +609,20 @@ func (m *memWallet) ConfirmedBalance() hnsutil.Amount {
 	return balance
 }
 
-// keyToAddr maps the passed private to corresponding p2pkh address.
-func keyToAddr(key *btcec.PrivateKey, net *chaincfg.Params) (hnsutil.Address, error) {
-	serializedKey := key.PubKey().SerializeCompressed()
-	pubKeyAddr, err := hnsutil.NewAddressPubKey(serializedKey, net)
+func p2wpkhScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
+	if !txscript.IsPayToWitnessPubKeyHash(pkScript) {
+		return nil, fmt.Errorf("unsupported wallet witness script %x", pkScript)
+	}
+
+	addr, err := hnsutil.NewAddressPubKeyHash(pkScript[2:], net)
 	if err != nil {
 		return nil, err
 	}
-	return pubKeyAddr.AddressPubKeyHash(), nil
+	return txscript.PayToAddrScript(addr)
+}
+
+// keyToAddr maps the passed private key to the corresponding P2WPKH address.
+func keyToAddr(key *btcec.PrivateKey, net *chaincfg.Params) (hnsutil.Address, error) {
+	serializedKey := key.PubKey().SerializeCompressed()
+	return hnsutil.NewAddressWitnessPubKeyHash(hnsutil.Hash160(serializedKey), net)
 }

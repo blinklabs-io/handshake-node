@@ -42,13 +42,11 @@ func TestBadPC(t *testing.T) {
 					}),
 					Index: 0,
 				},
-				SignatureScript: mustParseShortForm("NOP"),
-				Sequence:        4294967295,
+				Sequence: 4294967295,
 			},
 		},
 		TxOut: []*wire.TxOut{{
-			Value:    1000000000,
-			PkScript: nil,
+			Value: 1000000000,
 		}},
 		LockTime: 0,
 	}
@@ -100,12 +98,10 @@ func TestCheckErrorCondition(t *testing.T) {
 				}),
 				Index: 0,
 			},
-			SignatureScript: nil,
-			Sequence:        4294967295,
+			Sequence: 4294967295,
 		}},
 		TxOut: []*wire.TxOut{{
-			Value:    1000000000,
-			PkScript: nil,
+			Value: 1000000000,
 		}},
 		LockTime: 0,
 	}
@@ -173,14 +169,12 @@ func TestInvalidFlagCombinations(t *testing.T) {
 					}),
 					Index: 0,
 				},
-				SignatureScript: []uint8{OP_NOP},
-				Sequence:        4294967295,
+				Sequence: 4294967295,
 			},
 		},
 		TxOut: []*wire.TxOut{
 			{
-				Value:    1000000000,
-				PkScript: nil,
+				Value: 1000000000,
 			},
 		},
 		LockTime: 0,

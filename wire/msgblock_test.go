@@ -70,8 +70,8 @@ func TestBlock(t *testing.T) {
 // TestBlockTxHashes tests the ability to generate a slice of all transaction
 // hashes from a block accurately.
 func TestBlockTxHashes(t *testing.T) {
-	// Block 1, transaction 1 hash.
-	hashStr := "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
+	// Block 1, transaction 1 hash (Blake2b-256 of the Handshake tx).
+	hashStr := "7c9c54219471d8490e812cc290fd812320e1ce007b53e94228ab5789a7715ca7"
 	wantHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -124,7 +124,7 @@ func TestBlockWire(t *testing.T) {
 			blockOneBytes,
 			blockOneTxLocs,
 			ProtocolVersion,
-			BaseEncoding,
+			WitnessEncoding,
 		},
 
 		// Protocol version BIP0035Version.
@@ -134,7 +134,7 @@ func TestBlockWire(t *testing.T) {
 			blockOneBytes,
 			blockOneTxLocs,
 			BIP0035Version,
-			BaseEncoding,
+			WitnessEncoding,
 		},
 
 		// Protocol version BIP0031Version.
@@ -144,7 +144,7 @@ func TestBlockWire(t *testing.T) {
 			blockOneBytes,
 			blockOneTxLocs,
 			BIP0031Version,
-			BaseEncoding,
+			WitnessEncoding,
 		},
 
 		// Protocol version NetAddressTimeVersion.
@@ -154,7 +154,7 @@ func TestBlockWire(t *testing.T) {
 			blockOneBytes,
 			blockOneTxLocs,
 			NetAddressTimeVersion,
-			BaseEncoding,
+			WitnessEncoding,
 		},
 
 		// Protocol version MultipleAddressVersion.
@@ -164,7 +164,7 @@ func TestBlockWire(t *testing.T) {
 			blockOneBytes,
 			blockOneTxLocs,
 			MultipleAddressVersion,
-			BaseEncoding,
+			WitnessEncoding,
 		},
 		// TODO(roasbeef): add case for witnessy block
 	}
@@ -523,35 +523,31 @@ var blockOne = MsgBlock{
 	},
 	Transactions: []*MsgTx{
 		{
-			Version: 1,
+			Version: 0,
 			TxIn: []*TxIn{
 				{
 					PreviousOutPoint: OutPoint{
 						Hash:  chainhash.Hash{},
 						Index: 0xffffffff,
 					},
-					SignatureScript: []byte{
-						0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04,
-					},
 					Sequence: 0xffffffff,
+					Witness: [][]byte{
+						{0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04},
+					},
 				},
 			},
 			TxOut: []*TxOut{
 				{
 					Value: 0x12a05f200,
-					PkScript: []byte{
-						0x41, // OP_DATA_65
-						0x04, 0x96, 0xb5, 0x38, 0xe8, 0x53, 0x51, 0x9c,
-						0x72, 0x6a, 0x2c, 0x91, 0xe6, 0x1e, 0xc1, 0x16,
-						0x00, 0xae, 0x13, 0x90, 0x81, 0x3a, 0x62, 0x7c,
-						0x66, 0xfb, 0x8b, 0xe7, 0x94, 0x7b, 0xe6, 0x3c,
-						0x52, 0xda, 0x75, 0x89, 0x37, 0x95, 0x15, 0xd4,
-						0xe0, 0xa6, 0x04, 0xf8, 0x14, 0x17, 0x81, 0xe6,
-						0x22, 0x94, 0x72, 0x11, 0x66, 0xbf, 0x62, 0x1e,
-						0x73, 0xa8, 0x2c, 0xbf, 0x23, 0x42, 0xc8, 0x58,
-						0xee, // 65-byte signature
-						0xac, // OP_CHECKSIG
+					Address: Address{
+						Version: 0,
+						Hash: []byte{
+							0x96, 0xb5, 0x38, 0xe8, 0x53, 0x51, 0x9c, 0x72,
+							0x6a, 0x2c, 0x91, 0xe6, 0x1e, 0xc1, 0x16, 0x00,
+							0xae, 0x13, 0x90, 0x81,
+						},
 					},
+					Covenant: Covenant{Type: CovenantNone},
 				},
 			},
 			LockTime: 0,
@@ -570,7 +566,9 @@ var blockOneBytes = func() []byte {
 }()
 
 // Transaction location information for block one transactions.
-// Header(236) + TxnCount varint(1) = 237 byte offset; tx is 134 bytes.
+// Header(236) + TxnCount varint(1) = 237 byte offset.
+// Tx size: version(4) + inCount(1) + input(40) + outCount(1) + output(32) +
+// locktime(4) + witness(1 item count + 1 len + 7 data = 9) = 91 bytes.
 var blockOneTxLocs = []TxLoc{
-	{TxStart: 237, TxLen: 134},
+	{TxStart: 237, TxLen: 91},
 }
