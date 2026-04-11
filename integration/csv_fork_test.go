@@ -10,19 +10,21 @@ package integration
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/integration/rpctest"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 const (
@@ -30,7 +32,7 @@ const (
 )
 
 // makeTestOutput creates an on-chain output paying to a freshly generated
-// p2pkh output with the specified amount.
+// P2WPKH output with the specified amount.
 func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	amt hnsutil.Amount) (*btcec.PrivateKey, *wire.OutPoint, []byte, error) {
 
@@ -41,17 +43,23 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 		return nil, nil, nil, err
 	}
 
-	// Using the key created above, generate a pkScript which it's able to
-	// spend.
-	a, err := hnsutil.NewAddressPubKey(key.PubKey().SerializeCompressed(), r.ActiveNet)
+	// Using the key created above, generate a witness program which it's
+	// able to spend.
+	witnessAddr, err := hnsutil.NewAddressWitnessPubKeyHash(
+		hnsutil.Hash160(key.PubKey().SerializeCompressed()), r.ActiveNet,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	selfAddrScript, err := txscript.PayToAddrScript(a.AddressPubKeyHash())
+	selfAddrScript, err := txscript.PayToAddrScript(witnessAddr)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	output := &wire.TxOut{PkScript: selfAddrScript, Value: 1e8}
+	selfAddr, err := txscript.AddressFromWitnessProgram(selfAddrScript)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	output := &wire.TxOut{Address: selfAddr, Value: int64(amt)}
 
 	// Next, create and broadcast a transaction paying to the output.
 	fundTx, err := r.CreateTransaction([]*wire.TxOut{output}, 10, true)
@@ -75,7 +83,7 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	// generated above, this is needed in order to create a proper utxo for
 	// this output.
 	var outputIndex uint32
-	if bytes.Equal(fundTx.TxOut[0].PkScript, selfAddrScript) {
+	if bytes.Equal(fundTx.TxOut[0].Address.WitnessProgram(), selfAddrScript) {
 		outputIndex = 0
 	} else {
 		outputIndex = 1
@@ -87,6 +95,40 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	}
 
 	return key, utxo, selfAddrScript, nil
+}
+
+func p2wpkhScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
+	if !txscript.IsPayToWitnessPubKeyHash(pkScript) {
+		return nil, errors.New("expected P2WPKH witness program")
+	}
+
+	addr, err := hnsutil.NewAddressPubKeyHash(pkScript[2:], net)
+	if err != nil {
+		return nil, err
+	}
+	return txscript.PayToAddrScript(addr)
+}
+
+func p2wpkhWitnessSignature(tx *wire.MsgTx, idx int, amount hnsutil.Amount,
+	pkScript []byte, key *btcec.PrivateKey, net *chaincfg.Params) (wire.TxWitness, error) {
+
+	prevAddr, err := txscript.AddressFromWitnessProgram(pkScript)
+	if err != nil {
+		return nil, err
+	}
+
+	prevOutputFetcher := txscript.NewCannedPrevOutputFetcher(
+		prevAddr, int64(amount),
+	)
+	sigHashes := txscript.NewTxSigHashes(tx, prevOutputFetcher)
+
+	scriptCode, err := p2wpkhScriptCode(pkScript, net)
+	if err != nil {
+		return nil, err
+	}
+
+	return txscript.WitnessSignature(tx, sigHashes, idx, int64(amount),
+		scriptCode, txscript.SigHashAll, key, true)
 }
 
 // TestBIP0113Activation tests for proper adherence of the BIP 113 rule
@@ -129,17 +171,6 @@ func TestBIP0113Activation(t *testing.T) {
 		t.Fatalf("unable to create test output: %v", err)
 	}
 
-	// Fetch a fresh address from the harness, we'll use this address to
-	// send funds back into the Harness.
-	addr, err := r.NewAddress()
-	if err != nil {
-		t.Fatalf("unable to generate address: %v", err)
-	}
-	addrScript, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		t.Fatalf("unable to generate addr script: %v", err)
-	}
-
 	// Now create a transaction with a lock time which is "final" according
 	// to the latest block, but not according to the current median time
 	// past.
@@ -148,8 +179,8 @@ func TestBIP0113Activation(t *testing.T) {
 		PreviousOutPoint: *testOutput,
 	})
 	tx.AddTxOut(&wire.TxOut{
-		PkScript: addrScript,
-		Value:    outputValue - 1000,
+		Address: wire.Address{},
+		Value:   outputValue - 1000,
 	})
 
 	// We set the lock-time of the transaction to just one minute after the
@@ -160,12 +191,12 @@ func TestBIP0113Activation(t *testing.T) {
 	}
 	tx.LockTime = uint32(chainInfo.MedianTime) + 1
 
-	sigScript, err := txscript.SignatureScript(tx, 0, testPkScript,
-		txscript.SigHashAll, outputKey, true)
+	witness, err := p2wpkhWitnessSignature(tx, 0, outputValue,
+		testPkScript, outputKey, r.ActiveNet)
 	if err != nil {
 		t.Fatalf("unable to generate sig: %v", err)
 	}
-	tx.TxIn[0].SignatureScript = sigScript
+	tx.TxIn[0].Witness = witness
 
 	// This transaction should be rejected from the mempool as using MTP
 	// for transactions finality is now a policy rule. Additionally, the
@@ -243,16 +274,16 @@ func TestBIP0113Activation(t *testing.T) {
 			PreviousOutPoint: *testOutput,
 		})
 		tx.AddTxOut(&wire.TxOut{
-			PkScript: addrScript,
-			Value:    outputValue - 1000,
+			Address: wire.Address{},
+			Value:   outputValue - 1000,
 		})
 		tx.LockTime = uint32(medianTimePast + timeLockDelta)
-		sigScript, err = txscript.SignatureScript(tx, 0, testPkScript,
-			txscript.SigHashAll, outputKey, true)
+		witness, err := p2wpkhWitnessSignature(tx, 0, outputValue,
+			testPkScript, outputKey, r.ActiveNet)
 		if err != nil {
 			t.Fatalf("unable to generate sig: %v", err)
 		}
-		tx.TxIn[0].SignatureScript = sigScript
+		tx.TxIn[0].Witness = witness
 
 		// If the time-lock delta is greater than -1, then the
 		// transaction should be rejected from the mempool and when
@@ -270,7 +301,7 @@ func TestBIP0113Activation(t *testing.T) {
 		}
 
 		txns = []*hnsutil.Tx{hnsutil.NewTx(tx)}
-		_, err := r.GenerateAndSubmitBlock(txns, -1, time.Time{})
+		_, err = r.GenerateAndSubmitBlock(txns, -1, time.Time{})
 		if err == nil && timeLockDelta >= 0 {
 			t.Fatal("block should be rejected due to non-final " +
 				"txn, but was accepted")
@@ -302,19 +333,26 @@ func createCSVOutput(r *rpctest.Harness, t *testing.T,
 		return nil, nil, nil, err
 	}
 
-	// Using the script generated above, create a P2SH output which will be
+	// Using the script generated above, create a P2WSH output which will be
 	// accepted into the mempool.
-	p2shAddr, err := hnsutil.NewAddressScriptHash(csvScript, r.ActiveNet)
+	scriptHash := sha256.Sum256(csvScript)
+	p2wshAddr, err := hnsutil.NewAddressWitnessScriptHash(
+		scriptHash[:], r.ActiveNet,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	p2shScript, err := txscript.PayToAddrScript(p2shAddr)
+	p2wshScript, err := txscript.PayToAddrScript(p2wshAddr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	p2wshWireAddr, err := txscript.AddressFromWitnessProgram(p2wshScript)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	output := &wire.TxOut{
-		PkScript: p2shScript,
-		Value:    int64(numSatoshis),
+		Address: p2wshWireAddr,
+		Value:   int64(numSatoshis),
 	}
 
 	// Finally create a valid transaction which creates the output crafted
@@ -325,7 +363,7 @@ func createCSVOutput(r *rpctest.Harness, t *testing.T,
 	}
 
 	var outputIndex uint32
-	if !bytes.Equal(tx.TxOut[0].PkScript, p2shScript) {
+	if !bytes.Equal(tx.TxOut[0].Address.WitnessProgram(), p2wshScript) {
 		outputIndex = 1
 	}
 
@@ -338,11 +376,10 @@ func createCSVOutput(r *rpctest.Harness, t *testing.T,
 }
 
 // spendCSVOutput spends an output previously created by the createCSVOutput
-// function. The sigScript is a trivial push of OP_TRUE followed by the
-// redeemScript to pass P2SH evaluation.
+// function. The witness stack has a true item followed by the witness script.
 func spendCSVOutput(redeemScript []byte, csvUTXO *wire.OutPoint,
 	sequence uint32, targetOutput *wire.TxOut,
-	txVersion int32) (*wire.MsgTx, error) {
+	txVersion uint32) (*wire.MsgTx, error) {
 
 	tx := wire.NewMsgTx(txVersion)
 	tx.AddTxIn(&wire.TxIn{
@@ -352,14 +389,18 @@ func spendCSVOutput(redeemScript []byte, csvUTXO *wire.OutPoint,
 	tx.AddTxOut(targetOutput)
 
 	b := txscript.NewScriptBuilder().
-		AddOp(txscript.OP_TRUE).
+		AddData([]byte{1}).
 		AddData(redeemScript)
 
-	sigScript, err := b.Script()
+	serializedScript, err := b.Script()
 	if err != nil {
 		return nil, err
 	}
-	tx.TxIn[0].SignatureScript = sigScript
+	witness, err := txscript.PushedData(serializedScript)
+	if err != nil {
+		return nil, err
+	}
+	tx.TxIn[0].Witness = witness
 
 	return tx, nil
 }
@@ -421,29 +462,20 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 
 	assertSoftForkStatus(r, t, csvKey, blockchain.ThresholdStarted)
 
-	harnessAddr, err := r.NewAddress()
-	if err != nil {
-		t.Fatalf("unable to obtain harness address: %v", err)
-	}
-	harnessScript, err := txscript.PayToAddrScript(harnessAddr)
-	if err != nil {
-		t.Fatalf("unable to generate pkScript: %v", err)
-	}
-
 	const (
 		outputAmt         = hnsutil.SatoshiPerBitcoin
 		relativeBlockLock = 10
 	)
 
 	sweepOutput := &wire.TxOut{
-		Value:    outputAmt - 5000,
-		PkScript: harnessScript,
+		Value:   outputAmt - 5000,
+		Address: wire.Address{},
 	}
 
 	// As the soft-fork hasn't yet activated _any_ transaction version
 	// which uses the CSV opcode should be accepted. Since at this point,
 	// CSV doesn't actually exist, it's just a NOP.
-	for txVersion := int32(0); txVersion < 3; txVersion++ {
+	for txVersion := uint32(0); txVersion < 3; txVersion++ {
 		// Create a trivially spendable output with a CSV lock-time of
 		// 10 relative blocks.
 		redeemScript, testUTXO, tx, err := createCSVOutput(r, t, outputAmt,
@@ -574,7 +606,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	// A helper function to create fully signed transactions in-line during
 	// the array initialization below.
 	var inputIndex uint32
-	makeTxCase := func(sequenceNum uint32, txVersion int32) *wire.MsgTx {
+	makeTxCase := func(sequenceNum uint32, txVersion uint32) *wire.MsgTx {
 		csvInput := spendableInputs[inputIndex]
 
 		tx, err := spendCSVOutput(csvInput.RedeemScript, csvInput.Utxo,

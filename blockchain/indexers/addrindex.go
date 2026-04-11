@@ -740,7 +740,7 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block *hnsutil.Block,
 		}
 
 		for _, txOut := range tx.MsgTx().TxOut {
-			idx.indexPkScript(data, txOut.PkScript, txIdx)
+			idx.indexPkScript(data, txOut.Address.WitnessProgram(), txIdx)
 		}
 	}
 }
@@ -915,7 +915,7 @@ func (idx *AddrIndex) AddUnconfirmedTx(tx *hnsutil.Tx, utxoView *blockchain.Utxo
 
 	// Index addresses of all created outputs.
 	for _, txOut := range tx.MsgTx().TxOut {
-		idx.indexUnconfirmedAddresses(txOut.PkScript, tx)
+		idx.indexUnconfirmedAddresses(txOut.Address.WitnessProgram(), tx)
 	}
 }
 

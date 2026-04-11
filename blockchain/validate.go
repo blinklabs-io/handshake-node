@@ -284,8 +284,13 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 	}
 
 	// Coinbase script length must be between min and max length.
+	// In Handshake, the coinbase script is carried in the witness.  When
+	// the miner has already added a witness commitment, the 32-byte
+	// witness nonce will sit at Witness[0] and the coinbase script moves
+	// to Witness[1].
 	if IsCoinBase(tx) {
-		slen := len(msgTx.TxIn[0].SignatureScript)
+		coinbaseScript := coinbaseWitnessScript(msgTx.TxIn[0].Witness)
+		slen := len(coinbaseScript)
 		if slen < MinCoinbaseScriptLen || slen > MaxCoinbaseScriptLen {
 			str := fmt.Sprintf("coinbase transaction script length "+
 				"of %d is out of range (min: %d, max: %d)",
@@ -361,17 +366,14 @@ func CountSigOps(tx *hnsutil.Tx) int {
 	msgTx := tx.MsgTx()
 
 	// Accumulate the number of signature operations in all transaction
-	// inputs.
+	// inputs.  Handshake has no signature scripts; sigops from inputs
+	// are counted from the witness during witness validation.
 	totalSigOps := 0
-	for _, txIn := range msgTx.TxIn {
-		numSigOps := txscript.GetSigOpCount(txIn.SignatureScript)
-		totalSigOps += numSigOps
-	}
 
 	// Accumulate the number of signature operations in all transaction
 	// outputs.
 	for _, txOut := range msgTx.TxOut {
-		numSigOps := txscript.GetSigOpCount(txOut.PkScript)
+		numSigOps := txscript.GetSigOpCount(txOut.Address.WitnessProgram())
 		totalSigOps += numSigOps
 	}
 
@@ -411,9 +413,9 @@ func CountP2SHSigOps(tx *hnsutil.Tx, isCoinBaseTx bool, utxoView *UtxoViewpoint)
 		}
 
 		// Count the precise number of signature operations in the
-		// referenced public key script.
-		sigScript := txIn.SignatureScript
-		numSigOps := txscript.GetPreciseSigOpCount(sigScript, pkScript,
+		// referenced public key script.  Handshake has no signature
+		// scripts, so pass nil.
+		numSigOps := txscript.GetPreciseSigOpCount(nil, pkScript,
 			true)
 
 		// We could potentially overflow the accumulator so check for
@@ -586,11 +588,26 @@ func CheckBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 	return checkBlockSanity(block, powLimit, timeSource, BFNone)
 }
 
+// coinbaseWitnessScript returns the coinbase script bytes from a coinbase
+// transaction's witness stack.  Miners may prepend a 32-byte witness nonce at
+// Witness[0] when adding a witness commitment, in which case the coinbase
+// script lives at Witness[1].
+func coinbaseWitnessScript(witness [][]byte) []byte {
+	if len(witness) == 0 {
+		return nil
+	}
+	if len(witness[0]) == CoinbaseWitnessDataLen && len(witness) > 1 {
+		return witness[1]
+	}
+	return witness[0]
+}
+
 // ExtractCoinbaseHeight attempts to extract the height of the block from the
 // scriptSig of a coinbase transaction.  Coinbase heights are only present in
 // blocks of version 2 or later.  This was added as part of BIP0034.
 func ExtractCoinbaseHeight(coinbaseTx *hnsutil.Tx) (int32, error) {
-	sigScript := coinbaseTx.MsgTx().TxIn[0].SignatureScript
+	// In Handshake, the coinbase script is carried in the witness.
+	sigScript := coinbaseWitnessScript(coinbaseTx.MsgTx().TxIn[0].Witness)
 	if len(sigScript) < 1 {
 		str := "the coinbase signature script for blocks of " +
 			"version %d or greater must start with the " +

@@ -146,8 +146,7 @@ func TestCalcSequenceLock(t *testing.T) {
 	// age of 4 blocks.
 	targetTx := hnsutil.NewTx(&wire.MsgTx{
 		TxOut: []*wire.TxOut{{
-			PkScript: nil,
-			Value:    10,
+			Value: 10,
 		}},
 	})
 	utxoView := NewUtxoViewpoint()
@@ -181,8 +180,7 @@ func TestCalcSequenceLock(t *testing.T) {
 	// output.
 	unConfTx := &wire.MsgTx{
 		TxOut: []*wire.TxOut{{
-			PkScript: nil,
-			Value:    5,
+			Value: 5,
 		}},
 	}
 	unConfUtxo := wire.OutPoint{

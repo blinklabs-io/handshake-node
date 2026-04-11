@@ -295,7 +295,8 @@ func (bf *Filter) matchTxAndUpdate(tx *hnsutil.Tx) bool {
 	// from the client and avoids some potential races that could otherwise
 	// occur.
 	for i, txOut := range tx.MsgTx().TxOut {
-		pushedData, err := txscript.PushedData(txOut.PkScript)
+		script := txOut.Address.WitnessProgram()
+		pushedData, err := txscript.PushedData(script)
 		if err != nil {
 			continue
 		}
@@ -306,7 +307,7 @@ func (bf *Filter) matchTxAndUpdate(tx *hnsutil.Tx) bool {
 			}
 
 			matched = true
-			bf.maybeAddOutpoint(txOut.PkScript, tx.Hash(), uint32(i))
+			bf.maybeAddOutpoint(script, tx.Hash(), uint32(i))
 			break
 		}
 	}
@@ -320,19 +321,27 @@ func (bf *Filter) matchTxAndUpdate(tx *hnsutil.Tx) bool {
 	// public key scripts of its outputs matched.
 
 	// Check if the filter matches any outpoints this transaction spends or
-	// any data elements in the signature scripts of any of the inputs.
+	// any data elements in the witness of any of the inputs.
 	for _, txin := range tx.MsgTx().TxIn {
 		if bf.matchesOutPoint(&txin.PreviousOutPoint) {
 			return true
 		}
 
-		pushedData, err := txscript.PushedData(txin.SignatureScript)
-		if err != nil {
-			continue
-		}
-		for _, data := range pushedData {
-			if bf.matches(data) {
+		// Match witness data items directly.
+		for _, witItem := range txin.Witness {
+			if bf.matches(witItem) {
 				return true
+			}
+
+			// Also check pushed data within each witness item.
+			pushedData, err := txscript.PushedData(witItem)
+			if err != nil {
+				continue
+			}
+			for _, data := range pushedData {
+				if bf.matches(data) {
+					return true
+				}
 			}
 		}
 	}

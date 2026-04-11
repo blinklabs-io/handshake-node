@@ -32,15 +32,17 @@ func CreateSpendTx(spend *SpendableOut, fee hnsutil.Amount) *wire.MsgTx {
 	spendTx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: spend.PrevOut,
 		Sequence:         wire.MaxTxInSequenceNum,
-		SignatureScript:  nil,
 	})
 	spendTx.AddTxOut(wire.NewTxOut(int64(spend.Amount-fee),
-		OpTrueScript))
+		wire.Address{}, wire.Covenant{}))
 	opRetScript, err := UniqueOpReturnScript()
 	if err != nil {
 		panic(err)
 	}
-	spendTx.AddTxOut(wire.NewTxOut(0, opRetScript))
+	// Store the full OP_RETURN script as the Address hash so that the
+	// unique random payload is preserved (maintaining tx hash uniqueness)
+	// and the leading OP_RETURN opcode is visible for assertions.
+	spendTx.AddTxOut(wire.NewTxOut(0, wire.Address{Version: 0, Hash: opRetScript}, wire.Covenant{}))
 
 	return spendTx
 }
@@ -61,12 +63,13 @@ func CreateCoinbaseTx(blockHeight int32, blockSubsidy int64) *wire.MsgTx {
 		// zero hash and max index.
 		PreviousOutPoint: *wire.NewOutPoint(&chainhash.Hash{},
 			wire.MaxPrevOutIndex),
-		Sequence:        wire.MaxTxInSequenceNum,
-		SignatureScript: coinbaseScript,
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  wire.TxWitness{coinbaseScript},
 	})
 	tx.AddTxOut(&wire.TxOut{
 		Value:    blockSubsidy,
-		PkScript: OpTrueScript,
+		Address:  wire.Address{},
+		Covenant: wire.Covenant{},
 	})
 	return tx
 }

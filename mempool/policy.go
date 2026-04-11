@@ -102,8 +102,9 @@ func checkInputsStandard(tx *hnsutil.Tx, utxoView *blockchain.UtxoViewpoint) err
 		originPkScript := entry.PkScript()
 		switch txscript.GetScriptClass(originPkScript) {
 		case txscript.ScriptHashTy:
+			// Handshake inputs have no SignatureScript; pass nil.
 			numSigOps := txscript.GetPreciseSigOpCount(
-				txIn.SignatureScript, originPkScript, true)
+				nil, originPkScript, true)
 			if numSigOps > maxStandardP2SHSigOps {
 				str := fmt.Sprintf("transaction input #%d has "+
 					"%d signature operations which is more "+
@@ -240,7 +241,7 @@ func GetDustThreshold(txOut *wire.TxOut) int64 {
 	// Both cases share a 41 byte preamble required to reference the input
 	// being spent and the sequence number of the input.
 	totalSize := txOut.SerializeSize() + 41
-	if txscript.IsWitnessProgram(txOut.PkScript) {
+	if txscript.IsWitnessProgram(txOut.Address.WitnessProgram()) {
 		totalSize += (107 / blockchain.WitnessScaleFactor)
 	} else {
 		totalSize += 107
@@ -256,7 +257,7 @@ func GetDustThreshold(txOut *wire.TxOut) int64 {
 // minimum transaction relay fee, it is considered dust.
 func IsDust(txOut *wire.TxOut, minRelayTxFee hnsutil.Amount) bool {
 	// Unspendable outputs are considered dust.
-	if txscript.IsUnspendable(txOut.PkScript) {
+	if txscript.IsUnspendable(txOut.Address.WitnessProgram()) {
 		return true
 	}
 
@@ -288,7 +289,7 @@ func CheckTransactionStandard(tx *hnsutil.Tx, height int32,
 
 	// The transaction must be a currently supported version.
 	msgTx := tx.MsgTx()
-	if msgTx.Version > maxTxVersion || msgTx.Version < 1 {
+	if msgTx.Version > uint32(maxTxVersion) {
 		str := fmt.Sprintf("transaction version %d is not in the "+
 			"valid range of %d-%d", msgTx.Version, 1,
 			maxTxVersion)
@@ -313,34 +314,16 @@ func CheckTransactionStandard(tx *hnsutil.Tx, height int32,
 		return txRuleError(wire.RejectNonstandard, str)
 	}
 
-	for i, txIn := range msgTx.TxIn {
-		// Each transaction input signature script must not exceed the
-		// maximum size allowed for a standard transaction.  See
-		// the comment on maxStandardSigScriptSize for more details.
-		sigScriptLen := len(txIn.SignatureScript)
-		if sigScriptLen > maxStandardSigScriptSize {
-			str := fmt.Sprintf("transaction input %d: signature "+
-				"script size is larger than max allowed: "+
-				"%d > %d bytes", i, sigScriptLen,
-				maxStandardSigScriptSize)
-			return txRuleError(wire.RejectNonstandard, str)
-		}
-
-		// Each transaction input signature script must only contain
-		// opcodes which push data onto the stack.
-		if !txscript.IsPushOnlyScript(txIn.SignatureScript) {
-			str := fmt.Sprintf("transaction input %d: signature "+
-				"script is not push only", i)
-			return txRuleError(wire.RejectNonstandard, str)
-		}
-	}
+	// Handshake inputs have no SignatureScript; skip sig script checks.
+	_ = msgTx.TxIn
 
 	// None of the output public key scripts can be a non-standard script or
 	// be "dust" (except when the script is a null data script).
 	numNullDataOutputs := 0
 	for i, txOut := range msgTx.TxOut {
-		scriptClass := txscript.GetScriptClass(txOut.PkScript)
-		err := checkPkScriptStandard(txOut.PkScript, scriptClass)
+		script := txOut.Address.WitnessProgram()
+		scriptClass := txscript.GetScriptClass(script)
+		err := checkPkScriptStandard(script, scriptClass)
 		if err != nil {
 			// Attempt to extract a reject code from the error so
 			// it can be retained.  When not possible, fall back to

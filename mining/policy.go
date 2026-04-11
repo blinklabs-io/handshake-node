@@ -116,10 +116,9 @@ func CalcPriority(tx *wire.MsgTx, utxoView *blockchain.UtxoViewpoint, nextBlockH
 	//
 	// Thus 1 + 73 + 1 + 1 + 33 + 1 = 110
 	overhead := 0
-	for _, txIn := range tx.TxIn {
-		// Max inputs + size can't possibly overflow here.
-		overhead += 41 + minInt(110, len(txIn.SignatureScript))
-	}
+	// Handshake inputs have no SignatureScript; use a fixed
+	// overhead per input (outpoint 36 + sequence 4 + overhead 1 = 41).
+	overhead = 41 * len(tx.TxIn)
 
 	serializedTxSize := tx.SerializeSize()
 	if overhead >= serializedTxSize {

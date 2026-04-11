@@ -9,22 +9,10 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
-
-// newHashFromStr converts the passed big-endian hex string into a
-// chainhash.Hash.  It only differs from the one available in chainhash in that
-// it panics on an error since it will only (and must only) be called with
-// hard-coded, and therefore known good, hashes.
-func newHashFromStr(hexStr string) *chainhash.Hash {
-	hash, err := chainhash.NewHashFromStr(hexStr)
-	if err != nil {
-		panic("invalid hash in source file: " + hexStr)
-	}
-	return hash
-}
 
 // hexToBytes converts the passed hex string into bytes and will panic if there
 // is an error.  This is only provided for the hard-coded constants so errors in
@@ -68,15 +56,12 @@ func TestCalcPriority(t *testing.T) {
 				Hash:  chainhash.Hash{},
 				Index: wire.MaxPrevOutIndex,
 			},
-			SignatureScript: hexToBytes("04ffff001d0134"),
-			Sequence:        0xffffffff,
+			Sequence: 0xffffffff,
+			Witness:  [][]byte{hexToBytes("04ffff001d0134")},
 		}},
 		TxOut: []*wire.TxOut{{
-			Value: 5000000000,
-			PkScript: hexToBytes("410411db93e1dcdb8a016b49840f8c5" +
-				"3bc1eb68a382e97b1482ecad7b148a6909a5cb2e0ead" +
-				"dfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8" +
-				"643f656b412a3ac"),
+			Value:   5000000000,
+			Address: wire.Address{},
 		}},
 		LockTime: 0,
 	}
@@ -89,31 +74,26 @@ func TestCalcPriority(t *testing.T) {
 		Version: 1,
 		TxIn: []*wire.TxIn{{
 			PreviousOutPoint: wire.OutPoint{
-				Hash: *newHashFromStr("0437cd7f8525ceed232435" +
-					"9c2d0ba26006d92d856a9c20fa0241106ee5" +
-					"a597c9"),
+				Hash:  commonSourceTx1.TxHash(),
 				Index: 0,
 			},
-			SignatureScript: hexToBytes("47304402204e45e16932b8af" +
-				"514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5f" +
-				"b8cd410220181522ec8eca07de4860a4acdd12909d83" +
-				"1cc56cbbac4622082221a8768d1d0901"),
 			Sequence: 0xffffffff,
 		}},
 		TxOut: []*wire.TxOut{{
-			Value: 1000000000,
-			PkScript: hexToBytes("4104ae1a62fe09c5f51b13905f07f06" +
-				"b99a2f7159b2225f374cd378d71302fa28414e7aab37" +
-				"397f554a7df5f142c21c1b7303b8a0626f1baded5c72" +
-				"a704f7e6cd84cac"),
+			Value:   1000000000,
+			Address: wire.Address{},
 		}, {
-			Value: 4000000000,
-			PkScript: hexToBytes("410411db93e1dcdb8a016b49840f8c5" +
-				"3bc1eb68a382e97b1482ecad7b148a6909a5cb2e0ead" +
-				"dfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8" +
-				"643f656b412a3ac"),
+			Value:   4000000000,
+			Address: wire.Address{},
 		}},
 		LockTime: 0,
+	}
+
+	const priorityDenom = 34
+	expectedPriority := func(inputHeight, nextHeight int32) float64 {
+		age := nextHeight - inputHeight
+		return float64(commonSourceTx1.TxOut[0].Value*int64(age)) /
+			priorityDenom
 	}
 
 	tests := []struct {
@@ -129,7 +109,7 @@ func TestCalcPriority(t *testing.T) {
 			utxoView: newUtxoViewpoint([]*wire.MsgTx{commonSourceTx1},
 				[]int32{7}),
 			nextHeight: 169,
-			want:       5e9,
+			want:       expectedPriority(7, 169),
 		},
 		{
 			name: "one height 100 input, prio tx height 169",
@@ -137,7 +117,7 @@ func TestCalcPriority(t *testing.T) {
 			utxoView: newUtxoViewpoint([]*wire.MsgTx{commonSourceTx1},
 				[]int32{100}),
 			nextHeight: 169,
-			want:       2129629629.6296296,
+			want:       expectedPriority(100, 169),
 		},
 		{
 			name: "one height 7 input, prio tx height 100000",
@@ -145,7 +125,7 @@ func TestCalcPriority(t *testing.T) {
 			utxoView: newUtxoViewpoint([]*wire.MsgTx{commonSourceTx1},
 				[]int32{7}),
 			nextHeight: 100000,
-			want:       3086203703703.7036,
+			want:       expectedPriority(7, 100000),
 		},
 		{
 			name: "one height 100 input, prio tx height 100000",
@@ -153,7 +133,7 @@ func TestCalcPriority(t *testing.T) {
 			utxoView: newUtxoViewpoint([]*wire.MsgTx{commonSourceTx1},
 				[]int32{100}),
 			nextHeight: 100000,
-			want:       3083333333333.3335,
+			want:       expectedPriority(100, 100000),
 		},
 	}
 

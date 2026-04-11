@@ -11,8 +11,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil/gcs"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil/gcs"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -314,18 +314,15 @@ func BuildBasicFilter(block *wire.MsgBlock, prevOutScripts [][]byte) (*gcs.Filte
 		// For each output in a transaction, we'll add each of the
 		// individual data pushes within the script.
 		for _, txOut := range tx.TxOut {
-			if len(txOut.PkScript) == 0 {
-				continue
-			}
-
 			// In order to allow the filters to later be committed
-			// to within an OP_RETURN output, we ignore all
-			// OP_RETURNs to avoid a circular dependency.
-			if txOut.PkScript[0] == txscript.OP_RETURN {
+			// to within an unspendable output, we ignore those
+			// outputs to avoid a circular dependency.
+			if isCommitmentOutput(txOut) {
 				continue
 			}
 
-			b.AddEntry(txOut.PkScript)
+			script := txOut.Address.WitnessProgram()
+			b.AddEntry(script)
 		}
 	}
 
@@ -340,6 +337,23 @@ func BuildBasicFilter(block *wire.MsgBlock, prevOutScripts [][]byte) (*gcs.Filte
 	}
 
 	return b.Build()
+}
+
+func isCommitmentOutput(txOut *wire.TxOut) bool {
+	if isRawNullDataScript(txOut.Address.Hash) {
+		return true
+	}
+
+	pkScript := txOut.Address.WitnessProgram()
+	if txscript.IsUnspendable(pkScript) {
+		return true
+	}
+
+	return false
+}
+
+func isRawNullDataScript(script []byte) bool {
+	return txscript.GetScriptClass(script) == txscript.NullDataTy
 }
 
 // GetFilterHash returns the double-SHA256 of the filter.

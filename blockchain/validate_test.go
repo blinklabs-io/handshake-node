@@ -178,7 +178,7 @@ func TestCheckSerializedHeight(t *testing.T) {
 	// Create an empty coinbase template to be used in the tests below.
 	coinbaseOutpoint := wire.NewOutPoint(&chainhash.Hash{}, math.MaxUint32)
 	coinbaseTx := wire.NewMsgTx(1)
-	coinbaseTx.AddTxIn(wire.NewTxIn(coinbaseOutpoint, nil, nil))
+	coinbaseTx.AddTxIn(wire.NewTxIn(coinbaseOutpoint, wire.MaxTxInSequenceNum, nil))
 
 	// Expected rule errors.
 	missingHeightError := RuleError{
@@ -214,7 +214,8 @@ func TestCheckSerializedHeight(t *testing.T) {
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
 		msgTx := coinbaseTx.Copy()
-		msgTx.TxIn[0].SignatureScript = test.sigScript
+		// In Handshake, the coinbase script is carried in the witness.
+		msgTx.TxIn[0].Witness = wire.TxWitness{test.sigScript}
 		tx := hnsutil.NewTx(msgTx)
 
 		err := CheckSerializedHeight(tx, test.wantHeight)
@@ -234,6 +235,16 @@ func TestCheckSerializedHeight(t *testing.T) {
 			}
 		}
 	}
+}
+
+// init recomputes the merkle root for Block100000 from its transactions so
+// the header is consistent with the Handshake wire format.
+func init() {
+	txs := make([]*hnsutil.Tx, len(Block100000.Transactions))
+	for i, tx := range Block100000.Transactions {
+		txs[i] = hnsutil.NewTx(tx)
+	}
+	Block100000.Header.MerkleRoot = CalcMerkleRoot(txs, false)
 }
 
 // Block100000 defines block 100,000 of the block chain.  It is used to
@@ -266,28 +277,17 @@ var Block100000 = wire.MsgBlock{
 						Hash:  chainhash.Hash{},
 						Index: 0xffffffff,
 					},
-					SignatureScript: []byte{
+					Witness: wire.TxWitness{[]byte{
 						0x04, 0x4c, 0x86, 0x04, 0x1b, 0x02, 0x06, 0x02,
-					},
+										}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
 					Value: 0x12a05f200, // 5000000000
-					PkScript: []byte{
-						0x41, // OP_DATA_65
-						0x04, 0x1b, 0x0e, 0x8c, 0x25, 0x67, 0xc1, 0x25,
-						0x36, 0xaa, 0x13, 0x35, 0x7b, 0x79, 0xa0, 0x73,
-						0xdc, 0x44, 0x44, 0xac, 0xb8, 0x3c, 0x4e, 0xc7,
-						0xa0, 0xe2, 0xf9, 0x9d, 0xd7, 0x45, 0x75, 0x16,
-						0xc5, 0x81, 0x72, 0x42, 0xda, 0x79, 0x69, 0x24,
-						0xca, 0x4e, 0x99, 0x94, 0x7d, 0x08, 0x7f, 0xed,
-						0xf9, 0xce, 0x46, 0x7c, 0xb9, 0xf7, 0xc6, 0x28,
-						0x70, 0x78, 0xf8, 0x01, 0xdf, 0x27, 0x6f, 0xdf,
-						0x84, // 65-byte signature
-						0xac, // OP_CHECKSIG
-					},
+					Address:  wire.Address{},
+					Covenant: wire.Covenant{},
 				},
 			},
 			LockTime: 0,
@@ -305,7 +305,7 @@ var Block100000 = wire.MsgBlock{
 						}), // 87a157f3fd88ac7907c05fc55e271dc4acdc5605d187d646604ca8c0e9382e03
 						Index: 0,
 					},
-					SignatureScript: []byte{
+					Witness: wire.TxWitness{[]byte{
 						0x49, // OP_DATA_73
 						0x30, 0x46, 0x02, 0x21, 0x00, 0xc3, 0x52, 0xd3,
 						0xdd, 0x99, 0x3a, 0x98, 0x1b, 0xeb, 0xa4, 0xa6,
@@ -327,36 +327,20 @@ var Block100000 = wire.MsgBlock{
 						0x1f, 0x63, 0x3f, 0x25, 0xf8, 0x7c, 0x16, 0x1b,
 						0xc6, 0xf8, 0xa6, 0x30, 0x12, 0x1d, 0xf2, 0xb3,
 						0xd3, // 65-byte pubkey
-					},
+										}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
 					Value: 0x2123e300, // 556000000
-					PkScript: []byte{
-						0x76, // OP_DUP
-						0xa9, // OP_HASH160
-						0x14, // OP_DATA_20
-						0xc3, 0x98, 0xef, 0xa9, 0xc3, 0x92, 0xba, 0x60,
-						0x13, 0xc5, 0xe0, 0x4e, 0xe7, 0x29, 0x75, 0x5e,
-						0xf7, 0xf5, 0x8b, 0x32,
-						0x88, // OP_EQUALVERIFY
-						0xac, // OP_CHECKSIG
-					},
+					Address:  wire.Address{},
+					Covenant: wire.Covenant{},
 				},
 				{
 					Value: 0x108e20f00, // 4444000000
-					PkScript: []byte{
-						0x76, // OP_DUP
-						0xa9, // OP_HASH160
-						0x14, // OP_DATA_20
-						0x94, 0x8c, 0x76, 0x5a, 0x69, 0x14, 0xd4, 0x3f,
-						0x2a, 0x7a, 0xc1, 0x77, 0xda, 0x2c, 0x2f, 0x6b,
-						0x52, 0xde, 0x3d, 0x7c,
-						0x88, // OP_EQUALVERIFY
-						0xac, // OP_CHECKSIG
-					},
+					Address:  wire.Address{},
+					Covenant: wire.Covenant{},
 				},
 			},
 			LockTime: 0,
@@ -374,7 +358,7 @@ var Block100000 = wire.MsgBlock{
 						}), // cf4e2978d0611ce46592e02d7e7daf8627a316ab69759a9f3df109a7f2bf3ec3
 						Index: 1,
 					},
-					SignatureScript: []byte{
+					Witness: wire.TxWitness{[]byte{
 						0x47, // OP_DATA_71
 						0x30, 0x44, 0x02, 0x20, 0x03, 0x2d, 0x30, 0xdf,
 						0x5e, 0xe6, 0xf5, 0x7f, 0xa4, 0x6c, 0xdd, 0xb5,
@@ -395,36 +379,20 @@ var Block100000 = wire.MsgBlock{
 						0xa7, 0xb9, 0x0d, 0xa4, 0x63, 0x1e, 0xe3, 0x95,
 						0x60, 0x63, 0x9d, 0xb4, 0x62, 0xe9, 0xcb, 0x85,
 						0x0f, // 65-byte pubkey
-					},
+										}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
 					Value: 0xf4240, // 1000000
-					PkScript: []byte{
-						0x76, // OP_DUP
-						0xa9, // OP_HASH160
-						0x14, // OP_DATA_20
-						0xb0, 0xdc, 0xbf, 0x97, 0xea, 0xbf, 0x44, 0x04,
-						0xe3, 0x1d, 0x95, 0x24, 0x77, 0xce, 0x82, 0x2d,
-						0xad, 0xbe, 0x7e, 0x10,
-						0x88, // OP_EQUALVERIFY
-						0xac, // OP_CHECKSIG
-					},
+					Address:  wire.Address{},
+					Covenant: wire.Covenant{},
 				},
 				{
 					Value: 0x11d260c0, // 299000000
-					PkScript: []byte{
-						0x76, // OP_DUP
-						0xa9, // OP_HASH160
-						0x14, // OP_DATA_20
-						0x6b, 0x12, 0x81, 0xee, 0xc2, 0x5a, 0xb4, 0xe1,
-						0xe0, 0x79, 0x3f, 0xf4, 0xe0, 0x8a, 0xb1, 0xab,
-						0xb3, 0x40, 0x9c, 0xd9,
-						0x88, // OP_EQUALVERIFY
-						0xac, // OP_CHECKSIG
-					},
+					Address:  wire.Address{},
+					Covenant: wire.Covenant{},
 				},
 			},
 			LockTime: 0,
@@ -442,7 +410,7 @@ var Block100000 = wire.MsgBlock{
 						}), // f4515fed3dc4a19b90a317b9840c243bac26114cf637522373a7d486b372600b
 						Index: 0,
 					},
-					SignatureScript: []byte{
+					Witness: wire.TxWitness{[]byte{
 						0x49, // OP_DATA_73
 						0x30, 0x46, 0x02, 0x21, 0x00, 0xbb, 0x1a, 0xd2,
 						0x6d, 0xf9, 0x30, 0xa5, 0x1c, 0xce, 0x11, 0x0c,
@@ -464,23 +432,15 @@ var Block100000 = wire.MsgBlock{
 						0xdb, 0xfd, 0xd5, 0xaa, 0xd3, 0xe0, 0x63, 0xce,
 						0x6a, 0xf4, 0xcf, 0xaa, 0xea, 0x4e, 0xa1, 0x4f,
 						0xbb, // 65-byte pubkey
-					},
+										}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
 					Value: 0xf4240, // 1000000
-					PkScript: []byte{
-						0x76, // OP_DUP
-						0xa9, // OP_HASH160
-						0x14, // OP_DATA_20
-						0x39, 0xaa, 0x3d, 0x56, 0x9e, 0x06, 0xa1, 0xd7,
-						0x92, 0x6d, 0xc4, 0xbe, 0x11, 0x93, 0xc9, 0x9b,
-						0xf2, 0xeb, 0x9e, 0xe0,
-						0x88, // OP_EQUALVERIFY
-						0xac, // OP_CHECKSIG
-					},
+					Address:  wire.Address{},
+					Covenant: wire.Covenant{},
 				},
 			},
 			LockTime: 0,

@@ -1558,36 +1558,9 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 // validateSegWitDeployment checks that when a transaction has witness data,
 // segwit must be active.
 func (mp *TxPool) validateSegWitDeployment(tx *hnsutil.Tx) error {
-	// Exit early if this transaction doesn't have witness data.
-	if !tx.MsgTx().HasWitness() {
-		return nil
-	}
-
-	// If a transaction has witness data, and segwit isn't active yet, then
-	// we won't accept it into the mempool as it can't be mined yet.
-	segwitActive, err := mp.cfg.IsDeploymentActive(
-		chaincfg.DeploymentSegwit,
-	)
-	if err != nil {
-		return err
-	}
-
-	// Exit early if segwit is active.
-	if segwitActive {
-		return nil
-	}
-
-	simnetHint := ""
-	if mp.cfg.ChainParams.Net == wire.SimNet {
-		bestHeight := mp.cfg.BestHeight()
-		simnetHint = fmt.Sprintf(" (The threshold for segwit "+
-			"activation is 300 blocks on simnet, current best "+
-			"height is %d)", bestHeight)
-	}
-	str := fmt.Sprintf("transaction %v has witness data, "+
-		"but segwit isn't active yet%s", tx.Hash(), simnetHint)
-
-	return txRuleError(wire.RejectNonstandard, str)
+	// In Handshake, witness is always part of the transaction format
+	// (there is no segwit soft fork deployment). Always accept witness data.
+	return nil
 }
 
 // validateStandardness checks the transaction passes both transaction standard

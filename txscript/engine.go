@@ -12,9 +12,9 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // ScriptFlags is a bitmask defining additional operations or tests that will be
@@ -1474,7 +1474,9 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags ScriptFlags
 			">= %d", txIdx, len(tx.TxIn))
 		return nil, scriptError(ErrInvalidIndex, str)
 	}
-	scriptSig := tx.TxIn[txIdx].SignatureScript
+	// Handshake inputs have no SignatureScript; all input data comes
+	// from the witness stack.
+	var scriptSig []byte
 
 	// When both the signature script and public key script are empty the result
 	// is necessarily an error since the stack would end up being empty which is
@@ -1560,10 +1562,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags ScriptFlags
 	}
 
 	// Check to see if we should execute in witness verification mode
-	// according to the set flags. We check both the pkScript, and sigScript
-	// here since in the case of nested p2sh, the scriptSig will be a valid
-	// witness program. For nested p2sh, all the bytes after the first data
-	// push should *exactly* match the witness program template.
+	// according to the set flags.
 	if vm.hasFlag(ScriptVerifyWitness) {
 		// If witness evaluation is enabled, then P2SH MUST also be
 		// active.
@@ -1585,21 +1584,6 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags ScriptFlags
 			}
 
 			witProgram = scriptPubKey
-		case len(tx.TxIn[txIdx].Witness) != 0 && vm.bip16:
-			// The sigScript MUST be *exactly* a single canonical
-			// data push of the witness program, otherwise we
-			// reintroduce malleability.
-			sigPops := vm.scripts[0]
-			if len(sigPops) > 2 &&
-				isCanonicalPush(sigPops[0], sigPops[1:]) &&
-				IsWitnessProgram(sigPops[1:]) {
-
-				witProgram = sigPops[1:]
-			} else {
-				errStr := "signature script for witness " +
-					"nested p2sh is not canonical"
-				return nil, scriptError(ErrWitnessMalleatedP2SH, errStr)
-			}
 		}
 
 		if witProgram != nil {

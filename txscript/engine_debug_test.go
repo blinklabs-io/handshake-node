@@ -57,19 +57,24 @@ func TestDebugEngine(t *testing.T) {
 			Index: 1,
 		},
 	})
+	debugP2trAddr, err := AddressFromWitnessProgram(p2trScript)
+	if err != nil {
+		t.Fatalf("AddressFromWitnessProgram: %v", err)
+	}
 	txOut := &wire.TxOut{
-		Value: 1e8, PkScript: p2trScript,
+		Value:   1e8,
+		Address: debugP2trAddr,
 	}
 	testTx.AddTxOut(txOut)
 
 	prevFetcher := NewCannedPrevOutputFetcher(
-		txOut.PkScript, txOut.Value,
+		debugP2trAddr, txOut.Value,
 	)
 	sigHashes := NewTxSigHashes(testTx, prevFetcher)
 
 	sig, err := RawTxInTapscriptSignature(
 		testTx, sigHashes, 0, txOut.Value,
-		txOut.PkScript, tapLeaf,
+		p2trScript, tapLeaf,
 		SigHashDefault, privKey,
 	)
 	require.NoError(t, err)
@@ -169,7 +174,7 @@ func TestDebugEngine(t *testing.T) {
 
 	// Run the debug engine.
 	vm, err := NewDebugEngine(
-		txOut.PkScript, txCopy, 0, StandardVerifyFlags,
+		p2trScript, txCopy, 0, StandardVerifyFlags,
 		nil, sigHashes, txOut.Value, prevFetcher,
 		callback,
 	)

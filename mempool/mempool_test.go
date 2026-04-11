@@ -135,6 +135,7 @@ type poolHarness struct {
 	signKey     *btcec.PrivateKey
 	payAddr     hnsutil.Address
 	payScript   []byte
+	payWireAddr wire.Address
 	chainParams *chaincfg.Params
 
 	chain  *fakeChain
@@ -161,8 +162,8 @@ func (p *poolHarness) CreateCoinbaseTx(blockHeight int32, numOutputs uint32) (*h
 		// zero hash and max index.
 		PreviousOutPoint: *wire.NewOutPoint(&chainhash.Hash{},
 			wire.MaxPrevOutIndex),
-		SignatureScript: coinbaseScript,
-		Sequence:        wire.MaxTxInSequenceNum,
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  [][]byte{coinbaseScript},
 	})
 	totalInput := blockchain.CalcBlockSubsidy(blockHeight, p.chainParams)
 	amountPerOutput := totalInput / int64(numOutputs)
@@ -175,8 +176,8 @@ func (p *poolHarness) CreateCoinbaseTx(blockHeight int32, numOutputs uint32) (*h
 			amount = amountPerOutput + remainder
 		}
 		tx.AddTxOut(&wire.TxOut{
-			PkScript: p.payScript,
-			Value:    amount,
+			Address: p.payWireAddr,
+			Value:   amount,
 		})
 	}
 
@@ -209,7 +210,6 @@ func (p *poolHarness) CreateSignedTx(inputs []spendableOutput,
 	for _, input := range inputs {
 		tx.AddTxIn(&wire.TxIn{
 			PreviousOutPoint: input.outPoint,
-			SignatureScript:  nil,
 			Sequence:         sequence,
 		})
 	}
@@ -221,19 +221,31 @@ func (p *poolHarness) CreateSignedTx(inputs []spendableOutput,
 			amount = amountPerOutput + remainder
 		}
 		tx.AddTxOut(&wire.TxOut{
-			PkScript: p.payScript,
-			Value:    amount,
+			Address: p.payWireAddr,
+			Value:   amount,
 		})
 	}
 
-	// Sign the new transaction.
+	// Sign the new transaction using witness signing (BIP-143 sighash).
 	for i := range tx.TxIn {
-		sigScript, err := txscript.SignatureScript(tx, i, p.payScript,
-			txscript.SigHashAll, p.signKey, true)
+		// Use the input amount directly from the caller-provided spendable
+		// outputs.  Looking it up via p.chain.utxos.LookupEntry would panic
+		// with a nil pointer for unconfirmed or orphan prevouts that are not
+		// yet in the UTXO set.
+		inputAmt := int64(inputs[i].amount)
+
+		sigHashes := txscript.NewTxSigHashes(tx,
+			txscript.NewCannedPrevOutputFetcher(
+				p.payWireAddr, inputAmt,
+			),
+		)
+		witness, err := txscript.WitnessSignature(tx, sigHashes,
+			i, inputAmt, p.payScript, txscript.SigHashAll,
+			p.signKey, true)
 		if err != nil {
 			return nil, err
 		}
-		tx.TxIn[i].SignatureScript = sigScript
+		tx.TxIn[i].Witness = witness
 	}
 
 	return hnsutil.NewTx(tx), nil
@@ -254,21 +266,26 @@ func (p *poolHarness) CreateTxChain(firstOutput spendableOutput, numTxns uint32)
 		tx := wire.NewMsgTx(wire.TxVersion)
 		tx.AddTxIn(&wire.TxIn{
 			PreviousOutPoint: prevOutPoint,
-			SignatureScript:  nil,
 			Sequence:         wire.MaxTxInSequenceNum,
 		})
 		tx.AddTxOut(&wire.TxOut{
-			PkScript: p.payScript,
-			Value:    int64(spendableAmount),
+			Address: p.payWireAddr,
+			Value:   int64(spendableAmount),
 		})
 
-		// Sign the new transaction.
-		sigScript, err := txscript.SignatureScript(tx, 0, p.payScript,
+		// Sign the new transaction using witness signing (BIP-143 sighash).
+		sigHashes := txscript.NewTxSigHashes(tx,
+			txscript.NewCannedPrevOutputFetcher(
+				p.payWireAddr, int64(spendableAmount),
+			),
+		)
+		witness, err := txscript.WitnessSignature(tx, sigHashes,
+			0, int64(spendableAmount), p.payScript,
 			txscript.SigHashAll, p.signKey, true)
 		if err != nil {
 			return nil, err
 		}
-		tx.TxIn[0].SignatureScript = sigScript
+		tx.TxIn[0].Witness = witness
 
 		txChain = append(txChain, hnsutil.NewTx(tx))
 
@@ -306,12 +323,20 @@ func newPoolHarness(chainParams *chaincfg.Params) (*poolHarness, []spendableOutp
 		return nil, nil, err
 	}
 
+	// Build the wire.Address that corresponds to a version-0 witness
+	// program (P2WPKH) for the test key's pubkey hash.
+	payWireAddr := wire.Address{
+		Version: 0,
+		Hash:    payAddr.ScriptAddress(),
+	}
+
 	// Create a new fake chain and harness bound to it.
 	chain := &fakeChain{utxos: blockchain.NewUtxoViewpoint()}
 	harness := poolHarness{
 		signKey:     signKey,
 		payAddr:     payAddr,
 		payScript:   pkScript,
+		payWireAddr: payWireAddr,
 		chainParams: chainParams,
 
 		chain: chain,
@@ -331,6 +356,7 @@ func newPoolHarness(chainParams *chaincfg.Params) (*poolHarness, []spendableOutp
 			MedianTimePast:   chain.MedianTimePast,
 			CalcSequenceLock: chain.CalcSequenceLock,
 			SigCache:         nil,
+			HashCache:        txscript.NewHashCache(10),
 			AddrIndex:        nil,
 		}),
 	}

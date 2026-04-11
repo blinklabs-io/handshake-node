@@ -106,9 +106,9 @@ func GetSigOpCost(tx *hnsutil.Tx, isCoinBaseTx bool, utxoView *UtxoViewpoint, bi
 			}
 
 			witness := txIn.Witness
-			sigScript := txIn.SignatureScript
+			// Handshake has no signature scripts.
 			pkScript := utxo.PkScript()
-			numSigOps += txscript.GetWitnessSigOpCount(sigScript, pkScript, witness)
+			numSigOps += txscript.GetWitnessSigOpCount(nil, pkScript, witness)
 		}
 
 	}

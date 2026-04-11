@@ -56,7 +56,7 @@ func TestMessage(t *testing.T) {
 	msgInv := NewMsgInv()
 	msgGetData := NewMsgGetData()
 	msgNotFound := NewMsgNotFound()
-	msgTx := NewMsgTx(1)
+	msgTx := NewMsgTx(0)
 	msgPing := NewMsgPing(123123)
 	msgPong := NewMsgPong(123123)
 	msgGetHeaders := NewMsgGetHeaders()
@@ -88,7 +88,7 @@ func TestMessage(t *testing.T) {
 		{msgGetAddr, msgGetAddr, pver, MainNet, 24},
 		{msgAddr, msgAddr, pver, MainNet, 25},
 		{msgGetBlocks, msgGetBlocks, pver, MainNet, 61},
-		{msgBlock, msgBlock, pver, MainNet, 395},
+		{msgBlock, msgBlock, pver, MainNet, 352},
 		{msgInv, msgInv, pver, MainNet, 25},
 		{msgGetData, msgGetData, pver, MainNet, 25},
 		{msgNotFound, msgNotFound, pver, MainNet, 25},

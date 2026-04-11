@@ -656,7 +656,7 @@ func (m *wsNotificationManager) subscribedClients(tx *hnsutil.Tx,
 
 	for i, output := range msgTx.TxOut {
 		_, addrs, _, err := txscript.ExtractPkScriptAddrs(
-			output.PkScript, m.server.cfg.ChainParams)
+			output.Address.WitnessProgram(), m.server.cfg.ChainParams)
 		if err != nil {
 			// Clients are not able to subscribe to
 			// nonstandard or non-address outputs.
@@ -999,7 +999,7 @@ func (m *wsNotificationManager) notifyForTxOuts(ops map[wire.OutPoint]map[chan s
 	wscNotified := make(map[chan struct{}]struct{})
 	for i, txOut := range tx.MsgTx().TxOut {
 		_, txAddrs, _, err := txscript.ExtractPkScriptAddrs(
-			txOut.PkScript, m.server.cfg.ChainParams)
+			txOut.Address.WitnessProgram(), m.server.cfg.ChainParams)
 		if err != nil {
 			continue
 		}
@@ -2346,8 +2346,9 @@ func rescanBlock(wsc *wsClient, lookups *rescanKeys, blk *hnsutil.Block) {
 			// We'll also recompute the pkScript the input is
 			// attempting to spend to determine whether it is
 			// relevant to us.
+			// Handshake inputs have no SignatureScript.
 			pkScript, err := txscript.ComputePkScript(
-				txin.SignatureScript, txin.Witness,
+				nil, txin.Witness,
 			)
 			if err != nil {
 				continue
@@ -2384,7 +2385,7 @@ func rescanBlock(wsc *wsClient, lookups *rescanKeys, blk *hnsutil.Block) {
 
 		for txOutIdx, txout := range tx.MsgTx().TxOut {
 			_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
-				txout.PkScript, wsc.server.cfg.ChainParams)
+				txout.Address.WitnessProgram(), wsc.server.cfg.ChainParams)
 
 			for _, addr := range addrs {
 				if _, ok := lookups.addrs[addr.String()]; !ok {
@@ -2459,7 +2460,7 @@ func rescanBlockFilter(filter *wsClientFilter, block *hnsutil.Block, params *cha
 		// Scan outputs.
 		for i, output := range msgTx.TxOut {
 			_, addrs, _, err := txscript.ExtractPkScriptAddrs(
-				output.PkScript, params)
+				output.Address.WitnessProgram(), params)
 			if err != nil {
 				continue
 			}

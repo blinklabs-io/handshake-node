@@ -68,32 +68,25 @@ func TestHandleTestMempoolAcceptFailDecode(t *testing.T) {
 }
 
 var (
-	// TODO(yy): make a `btctest` package and move these testing txns there
-	// so they be used in other tests.
+	// Handshake-format test transactions: version(4) + input_count(1) +
+	// prevhash(32) + previndex(4) + sequence(4) + output_count(1) +
+	// value(8) + address(version+hashlen+hash) + covenant(type+items) +
+	// locktime(4) + witness_count(1) + witness_items...
 	//
-	// txHex1 is taken from `txscript/data/tx_valid.json`.
-	txHex1 = "0100000001b14bdcbc3e01bdaad36cc08e81e69c82e1060bc14e518db2b" +
-		"49aa43ad90ba26000000000490047304402203f16c6f40162ab686621ef3" +
-		"000b04e75418a0c0cb2d8aebeac894ae360ac1e780220ddc15ecdfc3507a" +
-		"c48e1681a33eb60996631bf6bf5bc0a0682c4db743ce7ca2b01ffffffff0" +
-		"140420f00000000001976a914660d4ef3a743e3e696ad990364e555c271a" +
-		"d504b88ac00000000"
+	// txHex1: 1 input, 1 output (version-0, 20-byte zero hash), 1 witness item.
+	txHex1 = "0100000001b14bdcbc3e01bdaad36cc08e81e69c82e1060bc14e518db2b49aa4" +
+		"3ad90ba02600000000ffffffff0140420f000000000000140000000000000000" +
+		"000000000000000000000000000000000000010430440220"
 
-	// txHex2 is taken from `txscript/data/tx_valid.json`.
-	txHex2 = "0100000001b14bdcbc3e01bdaad36cc08e81e69c82e1060bc14e518db2b" +
-		"49aa43ad90ba260000000004a0048304402203f16c6f40162ab686621ef3" +
-		"000b04e75418a0c0cb2d8aebeac894ae360ac1e780220ddc15ecdfc3507a" +
-		"c48e1681a33eb60996631bf6bf5bc0a0682c4db743ce7ca2bab01fffffff" +
-		"f0140420f00000000001976a914660d4ef3a743e3e696ad990364e555c27" +
-		"1ad504b88ac00000000"
+	// txHex2: same structure, different witness bytes.
+	txHex2 = "0100000001b14bdcbc3e01bdaad36cc08e81e69c82e1060bc14e518db2b49aa4" +
+		"3ad90ba02600000000ffffffff0140420f000000000000140000000000000000" +
+		"000000000000000000000000000000000000010530440220ab"
 
-	// txHex3 is taken from `txscript/data/tx_valid.json`.
-	txHex3 = "0100000001b14bdcbc3e01bdaad36cc08e81e69c82e1060bc14e518db2b" +
-		"49aa43ad90ba260000000004a01ff47304402203f16c6f40162ab686621e" +
-		"f3000b04e75418a0c0cb2d8aebeac894ae360ac1e780220ddc15ecdfc350" +
-		"7ac48e1681a33eb60996631bf6bf5bc0a0682c4db743ce7ca2b01fffffff" +
-		"f0140420f00000000001976a914660d4ef3a743e3e696ad990364e555c27" +
-		"1ad504b88ac00000000"
+	// txHex3: same structure, yet another witness variant.
+	txHex3 = "0100000001b14bdcbc3e01bdaad36cc08e81e69c82e1060bc14e518db2b49aa4" +
+		"3ad90ba02600000000ffffffff0140420f000000000000140000000000000000" +
+		"000000000000000000000000000000000000010630440220ff47"
 )
 
 // decodeTxHex decodes the given hex string into a transaction.

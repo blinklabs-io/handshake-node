@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -341,21 +341,19 @@ func (s *utxoCache) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, isCoinBa
 	blockHeight int32) error {
 
 	// Don't add provably unspendable outputs.
-	if txscript.IsUnspendable(txOut.PkScript) {
+	pkScript := txOutPkScript(txOut)
+	if txscript.IsUnspendable(pkScript) {
 		return nil
 	}
 
 	entry := new(UtxoEntry)
 	entry.amount = txOut.Value
 
-	// Deep copy the script when the script in the entry differs from the one in
-	// the txout.  This is required since the txout script is a subslice of the
-	// overall contiguous buffer that the msg tx houses for all scripts within
-	// the tx.  It is deep copied here since this entry may be added to the utxo
-	// cache, and we don't want the utxo cache holding the entry to prevent all
-	// of the other tx scripts from getting garbage collected.
-	entry.pkScript = make([]byte, len(txOut.PkScript))
-	copy(entry.pkScript, txOut.PkScript)
+	// Store the original script bytes when they are available as a test shim,
+	// otherwise store the witness program derived from the address. We deep
+	// copy to avoid holding references to the original transaction buffer.
+	entry.pkScript = make([]byte, len(pkScript))
+	copy(entry.pkScript, pkScript)
 
 	entry.blockHeight = blockHeight
 	entry.packedFlags = tfFresh | tfModified

@@ -544,7 +544,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 
 		prevOut := wire.NewOutPoint(txHash, input.Vout)
-		txIn := wire.NewTxIn(prevOut, []byte{}, nil)
+		txIn := wire.NewTxIn(prevOut, wire.MaxTxInSequenceNum, nil)
 		if c.LockTime != nil && *c.LockTime != 0 {
 			txIn.Sequence = wire.MaxTxInSequenceNum - 1
 		}
@@ -572,16 +572,25 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 			}
 		}
 
-		// Ensure the address is one of the supported types and that
+		// Ensure the address is a supported witness type and that
 		// the network encoded with the address matches the network the
 		// server is currently on.
-		switch addr.(type) {
-		case *hnsutil.AddressPubKeyHash:
-		case *hnsutil.AddressScriptHash:
+		var wireAddr wire.Address
+		switch a := addr.(type) {
+		case *hnsutil.AddressWitnessPubKeyHash:
+			wireAddr = wire.Address{
+				Version: a.WitnessVersion(),
+				Hash:    a.WitnessProgram(),
+			}
+		case *hnsutil.AddressWitnessScriptHash:
+			wireAddr = wire.Address{
+				Version: a.WitnessVersion(),
+				Hash:    a.WitnessProgram(),
+			}
 		default:
 			return nil, &hnsjson.RPCError{
 				Code:    hnsjson.ErrRPCInvalidAddressOrKey,
-				Message: "Invalid address or key",
+				Message: "Invalid address or key: only witness addresses are supported",
 			}
 		}
 		if !addr.IsForNet(params) {
@@ -593,7 +602,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 
 		// Create a new script which pays to the provided address.
-		pkScript, err := txscript.PayToAddrScript(addr)
+		_, err = txscript.PayToAddrScript(addr)
 		if err != nil {
 			context := "Failed to generate pay-to-address script"
 			return nil, internalRPCError(err.Error(), context)
@@ -606,7 +615,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 			return nil, internalRPCError(err.Error(), context)
 		}
 
-		txOut := wire.NewTxOut(int64(satoshi), pkScript)
+		txOut := wire.NewTxOut(int64(satoshi), wireAddr, wire.Covenant{})
 		mtx.AddTxOut(txOut)
 	}
 
@@ -654,25 +663,29 @@ func createVinList(mtx *wire.MsgTx) []hnsjson.Vin {
 	vinList := make([]hnsjson.Vin, len(mtx.TxIn))
 	if blockchain.IsCoinBaseTx(mtx) {
 		txIn := mtx.TxIn[0]
-		vinList[0].Coinbase = hex.EncodeToString(txIn.SignatureScript)
+		// Handshake coinbase inputs have no SignatureScript; use
+		// witness data for the coinbase field.
+		var coinbaseData []byte
+		if len(txIn.Witness) > 0 {
+			coinbaseData = txIn.Witness[0]
+		}
+		vinList[0].Coinbase = hex.EncodeToString(coinbaseData)
 		vinList[0].Sequence = txIn.Sequence
 		vinList[0].Witness = txIn.Witness.ToHexStrings()
 		return vinList
 	}
 
 	for i, txIn := range mtx.TxIn {
-		// The disassembled string will contain [error] inline
-		// if the script doesn't fully parse, so ignore the
-		// error here.
-		disbuf, _ := txscript.DisasmString(txIn.SignatureScript)
+		// Handshake inputs have no signature scripts; the witness
+		// carries all signing data.
 
 		vinEntry := &vinList[i]
 		vinEntry.Txid = txIn.PreviousOutPoint.Hash.String()
 		vinEntry.Vout = txIn.PreviousOutPoint.Index
 		vinEntry.Sequence = txIn.Sequence
 		vinEntry.ScriptSig = &hnsjson.ScriptSig{
-			Asm: disbuf,
-			Hex: hex.EncodeToString(txIn.SignatureScript),
+			Asm: "",
+			Hex: "",
 		}
 
 		if mtx.HasWitness() {
@@ -688,15 +701,18 @@ func createVinList(mtx *wire.MsgTx) []hnsjson.Vin {
 func createVoutList(mtx *wire.MsgTx, chainParams *chaincfg.Params, filterAddrMap map[string]struct{}) []hnsjson.Vout {
 	voutList := make([]hnsjson.Vout, 0, len(mtx.TxOut))
 	for i, v := range mtx.TxOut {
+		// Derive the witness program from the Handshake address.
+		wpScript := v.Address.WitnessProgram()
+
 		// The disassembled string will contain [error] inline if the
 		// script doesn't fully parse, so ignore the error here.
-		disbuf, _ := txscript.DisasmString(v.PkScript)
+		disbuf, _ := txscript.DisasmString(wpScript)
 
 		// Ignore the error here since an error means the script
 		// couldn't parse and there is no additional information about
 		// it anyways.
 		scriptClass, addrs, reqSigs, _ := txscript.ExtractPkScriptAddrs(
-			v.PkScript, chainParams)
+			wpScript, chainParams)
 
 		// Encode the addresses while checking if the address passes the
 		// filter when needed.
@@ -725,7 +741,7 @@ func createVoutList(mtx *wire.MsgTx, chainParams *chaincfg.Params, filterAddrMap
 		vout.Value = hnsutil.Amount(v.Value).ToBTC()
 		vout.ScriptPubKey.Addresses = encodedAddrs
 		vout.ScriptPubKey.Asm = disbuf
-		vout.ScriptPubKey.Hex = hex.EncodeToString(v.PkScript)
+		vout.ScriptPubKey.Hex = hex.EncodeToString(wpScript)
 		vout.ScriptPubKey.Type = scriptClass.String()
 		vout.ScriptPubKey.ReqSigs = int32(reqSigs)
 
@@ -1649,12 +1665,23 @@ func (state *gbtWorkState) updateBlockTemplate(s *rpcServer, useCoinbaseValue bo
 
 			// Update the block coinbase output of the template to
 			// pay to the randomly selected payment address.
-			pkScript, err := txscript.PayToAddrScript(payToAddr)
-			if err != nil {
-				context := "Failed to create pay-to-addr script"
-				return internalRPCError(err.Error(), context)
+			// Handshake TxOut uses Address instead of PkScript.
+			var wireAddr wire.Address
+			switch a := payToAddr.(type) {
+			case *hnsutil.AddressWitnessPubKeyHash:
+				wireAddr = wire.Address{
+					Version: a.WitnessVersion(),
+					Hash:    a.WitnessProgram(),
+				}
+			case *hnsutil.AddressWitnessScriptHash:
+				wireAddr = wire.Address{
+					Version: a.WitnessVersion(),
+					Hash:    a.WitnessProgram(),
+				}
+			default:
+				return internalRPCError("configured mining address is not convertible to wire.Address", "")
 			}
-			template.Block.Transactions[0].TxOut[0].PkScript = pkScript
+			template.Block.Transactions[0].TxOut[0].Address = wireAddr
 			template.ValidPayAddress = true
 
 			// Update the merkle root.
@@ -2789,7 +2816,7 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		bestBlockHash = best.Hash.String()
 		confirmations = 0
 		value = txOut.Value
-		pkScript = txOut.PkScript
+		pkScript = txOut.Address.WitnessProgram()
 		isCoinbase = blockchain.IsCoinBaseTx(mtx)
 	} else {
 		out := wire.OutPoint{Hash: *txHash, Index: c.Vout}
@@ -3017,7 +3044,13 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 
 		txIn := mtx.TxIn[0]
 		vinList := make([]hnsjson.VinPrevOut, 1)
-		vinList[0].Coinbase = hex.EncodeToString(txIn.SignatureScript)
+		// Handshake coinbase inputs have no SignatureScript; the full
+		// witness stack carries the coinbase script (and any witness
+		// nonce added for a witness commitment).
+		if len(txIn.Witness) > 0 {
+			vinList[0].Coinbase = hex.EncodeToString(txIn.Witness[0])
+			vinList[0].Witness = txIn.Witness.ToHexStrings()
+		}
 		vinList[0].Sequence = txIn.Sequence
 		return vinList, nil
 	}
@@ -3037,10 +3070,8 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 	}
 
 	for _, txIn := range mtx.TxIn {
-		// The disassembled string will contain [error] inline
-		// if the script doesn't fully parse, so ignore the
-		// error here.
-		disbuf, _ := txscript.DisasmString(txIn.SignatureScript)
+		// Handshake inputs have no signature scripts; the witness
+		// carries all signing data.
 
 		// Create the basic input entry without the additional optional
 		// previous output details which will be added later if
@@ -3051,8 +3082,8 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 			Vout:     prevOut.Index,
 			Sequence: txIn.Sequence,
 			ScriptSig: &hnsjson.ScriptSig{
-				Asm: disbuf,
-				Hex: hex.EncodeToString(txIn.SignatureScript),
+				Asm: "",
+				Hex: "",
 			},
 		}
 
@@ -3081,7 +3112,7 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 		// couldn't parse and there is no additional information about
 		// it anyways.
 		_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
-			originTxOut.PkScript, chainParams)
+			originTxOut.Address.WitnessProgram(), chainParams)
 
 		// Encode the addresses while checking if the address passes the
 		// filter when needed.

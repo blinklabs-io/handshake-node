@@ -6,6 +6,7 @@ package txscript
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -63,6 +64,58 @@ func WitnessSignature(tx *wire.MsgTx, sigHashes *TxSigHashes, idx int, amt int64
 	return wire.TxWitness{sig, pkData}, nil
 }
 
+// AddressFromWitnessProgram parses a Bitcoin-style witness program script
+// (e.g., OP_0 + len + hash) back into a wire.Address.  An error is returned
+// when the script is malformed (too short, truncated, or contains an invalid
+// witness-version opcode).
+func AddressFromWitnessProgram(script []byte) (wire.Address, error) {
+	if len(script) < 2 {
+		return wire.Address{}, errors.New(
+			"AddressFromWitnessProgram: script too short to " +
+				"contain a witness program",
+		)
+	}
+	version := script[0]
+	if version == 0x00 {
+		version = 0
+	} else if version >= 0x51 && version <= 0x60 {
+		version = version - 0x50
+	} else {
+		return wire.Address{}, fmt.Errorf(
+			"AddressFromWitnessProgram: invalid witness "+
+				"version opcode 0x%02x", version,
+		)
+	}
+	hashLen := int(script[1])
+	if hashLen < 2 || hashLen > 40 {
+		return wire.Address{}, fmt.Errorf(
+			"AddressFromWitnessProgram: invalid witness "+
+				"program hash length %d (must be 2..40)",
+			hashLen,
+		)
+	}
+	if len(script) != 2+hashLen {
+		return wire.Address{}, fmt.Errorf(
+			"AddressFromWitnessProgram: script length %d does "+
+				"not match expected length %d for encoded "+
+				"hash length %d",
+			len(script), 2+hashLen, hashLen,
+		)
+	}
+	// wire.Address only permits 20- or 32-byte hashes at witness
+	// version 0 (P2WPKH and P2WSH respectively).
+	if version == 0 && hashLen != 20 && hashLen != 32 {
+		return wire.Address{}, fmt.Errorf(
+			"AddressFromWitnessProgram: invalid version-0 "+
+				"witness program length %d (must be 20 or 32)",
+			hashLen,
+		)
+	}
+	hash := make([]byte, hashLen)
+	copy(hash, script[2:2+hashLen])
+	return wire.Address{Version: version, Hash: hash}, nil
+}
+
 // RawTxInTaprootSignature returns a valid schnorr signature required to
 // perform a taproot key-spend of the specified input. If SigHashDefault was
 // specified, then the returned signature is 64-byte in length, as it omits the
@@ -72,9 +125,13 @@ func RawTxInTaprootSignature(tx *wire.MsgTx, sigHashes *TxSigHashes, idx int,
 	key *btcec.PrivateKey) ([]byte, error) {
 
 	// First, we'll start by compute the top-level taproot sighash.
+	addr, err := AddressFromWitnessProgram(pkScript)
+	if err != nil {
+		return nil, fmt.Errorf("RawTxInTaprootSignature: %w", err)
+	}
 	sigHash, err := calcTaprootSignatureHashRaw(
 		sigHashes, hashType, tx, idx,
-		NewCannedPrevOutputFetcher(pkScript, amt),
+		NewCannedPrevOutputFetcher(addr, amt),
 	)
 	if err != nil {
 		return nil, err
@@ -145,10 +202,14 @@ func RawTxInTapscriptSignature(tx *wire.MsgTx, sigHashes *TxSigHashes, idx int,
 	privKey *btcec.PrivateKey) ([]byte, error) {
 
 	// First, we'll start by compute the top-level taproot sighash.
+	addr, err := AddressFromWitnessProgram(pkScript)
+	if err != nil {
+		return nil, fmt.Errorf("RawTxInTapscriptSignature: %w", err)
+	}
 	tapLeafHash := tapLeaf.TapHash()
 	sigHash, err := calcTaprootSignatureHashRaw(
 		sigHashes, hashType, tx, idx,
-		NewCannedPrevOutputFetcher(pkScript, amt),
+		NewCannedPrevOutputFetcher(addr, amt),
 		WithBaseTapscriptVersion(blankCodeSepValue, tapLeafHash[:]),
 	)
 	if err != nil {

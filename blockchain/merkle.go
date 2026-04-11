@@ -205,7 +205,7 @@ func ExtractWitnessCommitment(tx *hnsutil.Tx) ([]byte, bool) {
 		// The public key script that contains the witness commitment
 		// must shared a prefix with the WitnessMagicBytes, and be at
 		// least 38 bytes.
-		pkScript := msgTx.TxOut[i].PkScript
+		pkScript := msgTx.TxOut[i].Address.WitnessProgram()
 		if len(pkScript) >= CoinbaseWitnessPkScriptLength &&
 			bytes.HasPrefix(pkScript, WitnessMagicBytes) {
 
@@ -215,7 +215,7 @@ func ExtractWitnessCommitment(tx *hnsutil.Tx) ([]byte, bool) {
 			// meaning.
 			start := len(WitnessMagicBytes)
 			end := CoinbaseWitnessPkScriptLength
-			return msgTx.TxOut[i].PkScript[start:end], true
+			return pkScript[start:end], true
 		}
 	}
 

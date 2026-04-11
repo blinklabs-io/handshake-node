@@ -789,7 +789,7 @@ type SearchRawTransactionsResult struct {
 	Size          string       `json:"size"`
 	Vsize         string       `json:"vsize"`
 	Weight        string       `json:"weight"`
-	Version       int32        `json:"version"`
+	Version       uint32       `json:"version"`
 	LockTime      uint32       `json:"locktime"`
 	Vin           []VinPrevOut `json:"vin"`
 	Vout          []Vout       `json:"vout"`
@@ -802,7 +802,7 @@ type SearchRawTransactionsResult struct {
 // TxRawDecodeResult models the data from the decoderawtransaction command.
 type TxRawDecodeResult struct {
 	Txid     string `json:"txid"`
-	Version  int32  `json:"version"`
+	Version  uint32 `json:"version"`
 	Locktime uint32 `json:"locktime"`
 	Vin      []Vin  `json:"vin"`
 	Vout     []Vout `json:"vout"`

@@ -41,7 +41,7 @@ type lastBlock struct {
 type estimateFeeTester struct {
 	ef      *FeeEstimator
 	t       *testing.T
-	version int32
+	version uint32
 	height  int32
 	last    *lastBlock
 }
