@@ -1588,7 +1588,7 @@ func TestWitnessForNonWitnessUtxo(t *testing.T) {
 			}},
 			TxOut: []*wire.TxOut{{
 				PkScript: outPkScript,
-				Value:    1.9 * hnsutil.SatoshiPerBitcoin,
+				Value:    1.9 * hnsutil.DooPerHNS,
 			}},
 		},
 		Inputs:  []PInput{{}},

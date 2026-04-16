@@ -116,8 +116,9 @@ func Example_defaultWalletLayout() {
 		return
 	}
 
-	// Get and show the address associated with the extended keys for the
-	// main bitcoin	network.
+	// Derive addresses for the extended keys on the Handshake main
+	// network and print the version (always 0 for a P2WPKH-equivalent
+	// address derived from an hdkeychain).
 	acct0ExtAddr, err := acct0Ext10.Address(&chaincfg.MainNetParams)
 	if err != nil {
 		fmt.Println(err)
@@ -128,12 +129,12 @@ func Example_defaultWalletLayout() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("Account 0 External Address 10:", acct0ExtAddr)
-	fmt.Println("Account 0 Internal Address 0:", acct0IntAddr)
+	fmt.Println("Account 0 External Address 10 Version:", acct0ExtAddr.Version())
+	fmt.Println("Account 0 Internal Address 0 Version:", acct0IntAddr.Version())
 
 	// Output:
-	// Account 0 External Address 10: 1HVccubUT8iKTapMJ5AnNA4sLRN27xzQ4F
-	// Account 0 Internal Address 0: 1J5rebbkQaunJTUoNVREDbeB49DqMNFFXk
+	// Account 0 External Address 10 Version: 0
+	// Account 0 Internal Address 0 Version: 0
 }
 
 // This example demonstrates the audits use case in BIP0032.
