@@ -1,3 +1,8 @@
+// Copyright (c) 2013, 2014 The btcsuite developers
+// Copyright (c) 2024-2026 The blinklabs-io developers
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package hnsutil_test
 
 import (
@@ -10,17 +15,17 @@ import (
 func ExampleAmount() {
 
 	a := hnsutil.Amount(0)
-	fmt.Println("Zero Satoshi:", a)
+	fmt.Println("Zero dollarydoos:", a)
 
-	a = hnsutil.Amount(1e8)
-	fmt.Println("100,000,000 Satoshis:", a)
+	a = hnsutil.Amount(1e6)
+	fmt.Println("1,000,000 dollarydoos:", a)
 
-	a = hnsutil.Amount(1e5)
-	fmt.Println("100,000 Satoshis:", a)
+	a = hnsutil.Amount(1e3)
+	fmt.Println("1,000 dollarydoos:", a)
 	// Output:
-	// Zero Satoshi: 0 BTC
-	// 100,000,000 Satoshis: 1 BTC
-	// 100,000 Satoshis: 0.00100000 BTC
+	// Zero dollarydoos: 0 HNS
+	// 1,000,000 dollarydoos: 1 HNS
+	// 1,000 dollarydoos: 0.001000 HNS
 }
 
 func ExampleNewAmount() {
@@ -31,7 +36,7 @@ func ExampleNewAmount() {
 	}
 	fmt.Println(amountOne) //Output 1
 
-	amountFraction, err := hnsutil.NewAmount(0.01234567)
+	amountFraction, err := hnsutil.NewAmount(0.012345)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -52,25 +57,23 @@ func ExampleNewAmount() {
 	}
 	fmt.Println(amountNaN) //Output 4
 
-	// Output: 1 BTC
-	// 0.01234567 BTC
-	// 0 BTC
-	// invalid bitcoin amount
+	// Output: 1 HNS
+	// 0.012345 HNS
+	// 0 HNS
+	// invalid HNS amount
 }
 
 func ExampleAmount_unitConversions() {
-	amount := hnsutil.Amount(44433322211100)
+	amount := hnsutil.Amount(444333222111)
 
-	fmt.Println("Satoshi to kBTC:", amount.Format(hnsutil.AmountKiloBTC))
-	fmt.Println("Satoshi to BTC:", amount)
-	fmt.Println("Satoshi to MilliBTC:", amount.Format(hnsutil.AmountMilliBTC))
-	fmt.Println("Satoshi to MicroBTC:", amount.Format(hnsutil.AmountMicroBTC))
-	fmt.Println("Satoshi to Satoshi:", amount.Format(hnsutil.AmountSatoshi))
+	fmt.Println("dollarydoo to kHNS:", amount.Format(hnsutil.AmountKiloHNS))
+	fmt.Println("dollarydoo to HNS:", amount)
+	fmt.Println("dollarydoo to MilliHNS:", amount.Format(hnsutil.AmountMilliHNS))
+	fmt.Println("dollarydoo to Doo:", amount.Format(hnsutil.AmountDoo))
 
 	// Output:
-	// Satoshi to kBTC: 444.333222111 kBTC
-	// Satoshi to BTC: 444333.22211100 BTC
-	// Satoshi to MilliBTC: 444333222.111 mBTC
-	// Satoshi to MicroBTC: 444333222111 μBTC
-	// Satoshi to Satoshi: 44433322211100 Satoshi
+	// dollarydoo to kHNS: 444.333222111 kHNS
+	// dollarydoo to HNS: 444333.222111 HNS
+	// dollarydoo to MilliHNS: 444333222.111 mHNS
+	// dollarydoo to Doo: 444333222111 Doo
 }
