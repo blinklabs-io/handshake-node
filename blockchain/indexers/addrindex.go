@@ -39,34 +39,56 @@ const (
 	// levelOffset is the offset in the level key which identifies the level.
 	levelOffset = levelKeySize - 1
 
-	// addrKeyTypePubKeyHash is the address type in an address key which
-	// represents both a pay-to-pubkey-hash and a pay-to-pubkey address.
-	// This is done because both are identical for the purposes of the
-	// address index.
+	// The address-key type constants below are split into two groups:
+	//
+	// Produced by addrToKey (live): addrKeyTypeWitnessPubKeyHash (v0,
+	// 20-byte hash), addrKeyTypeWitnessScriptHash (v0, 32-byte hash
+	// compressed to 20 via hash160), and addrKeyTypeWitnessVerBase+N
+	// (v1..v31, compressed to 20 via hash160 but keyed by a distinct
+	// type byte per version so addresses of different versions never
+	// collide).
+	//
+	// Reserved/legacy: addrKeyTypePubKeyHash, addrKeyTypeScriptHash,
+	// addrKeyTypeTaprootPubKey, and the former addrKeyTypeWitnessUnknown
+	// are no longer emitted by addrToKey but are retained for wire-level
+	// compatibility with existing (btcd-era) databases.  Operators
+	// upgrading from a btcd-descended datadir should reindex or drop the
+	// address index so that subsequent lookups use the unified v0/witness
+	// scheme above.
+
+	// Reserved: legacy pay-to-pubkey-hash / pay-to-pubkey bucket.  Not
+	// emitted by addrToKey; exists so old entries decode consistently.
 	addrKeyTypePubKeyHash = 0
 
-	// addrKeyTypeScriptHash is the address type in an address key which
-	// represents a pay-to-script-hash address.  This is necessary because
-	// the hash of a pubkey address might be the same as that of a script
-	// hash.
+	// Reserved: legacy pay-to-script-hash bucket.  Not emitted by
+	// addrToKey; exists so old entries decode consistently.
 	addrKeyTypeScriptHash = 1
 
-	// addrKeyTypePubKeyHash is the address type in an address key which
-	// represents a pay-to-witness-pubkey-hash address. This is required
-	// as the 20-byte data push of a p2wkh witness program may be the same
-	// data push used a p2pkh address.
+	// addrKeyTypeWitnessPubKeyHash is the bucket used for v0 / 20-byte
+	// Handshake addresses (P2WPKH equivalent).
 	addrKeyTypeWitnessPubKeyHash = 2
 
-	// addrKeyTypeScriptHash is the address type in an address key which
-	// represents a pay-to-witness-script-hash address. This is required,
-	// as p2wsh are distinct from p2sh addresses since they use a new
-	// script template, as well as a 32-byte data push.
+	// addrKeyTypeWitnessScriptHash is the bucket used for v0 / 32-byte
+	// Handshake addresses (P2WSH equivalent).  The 32-byte script hash is
+	// compressed to 20 bytes via hash160 before being placed in the key.
 	addrKeyTypeWitnessScriptHash = 3
 
-	// addrKeyTypeTaprootPubKey is the address type in an address key that
-	// represents a pay-to-taproot address. We use this to denote addresses
-	// related to the segwit v1 that are encoded in the bech32m format.
+	// Reserved: legacy taproot (v1 32-byte) bucket from btcd.  Not
+	// emitted by addrToKey.
 	addrKeyTypeTaprootPubKey = 4
+
+	// Reserved: legacy "witness unknown" catch-all bucket from btcd that
+	// collapsed every non-v0 witness version.  No longer emitted by
+	// addrToKey — the per-version buckets below disambiguate versions so
+	// addresses at different versions with the same hash cannot collide.
+	addrKeyTypeWitnessUnknown = 5
+
+	// addrKeyTypeWitnessVerBase is the type-byte base for
+	// version-discriminated witness buckets.  Versions 1..31 map to type
+	// bytes addrKeyTypeWitnessVerBase+1 .. addrKeyTypeWitnessVerBase+31,
+	// so two addresses with the same 20-byte hash160 but different
+	// witness versions live in distinct buckets.
+	addrKeyTypeWitnessVerBase = 16
 
 	// Size of a transaction entry.  It consists of 4 bytes block id + 4
 	// bytes offset + 4 bytes length.
@@ -539,58 +561,53 @@ func dbRemoveAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte,
 	return applyPending()
 }
 
-// addrToKey converts known address types to an addrindex key.  An error is
-// returned for unsupported types.
+// addrToKey converts a Handshake address to an addrindex key.  The key
+// format is a single type byte followed by 20 bytes of hash material; the
+// type byte uniquely identifies the (witness-version, hash-shape) tuple so
+// two addresses that hash to the same hash160 but live at different
+// witness versions cannot collide into the same bucket:
+//
+//	v0 / 20-byte hash  -> [addrKeyTypeWitnessPubKeyHash, hash]
+//	v0 / 32-byte hash  -> [addrKeyTypeWitnessScriptHash, hash160(hash)]
+//	vN (1..31)         -> [addrKeyTypeWitnessVerBase+N, hash160(hash)]
+//
+// Compressing longer hashes down to 20 bytes via hash160 keeps every
+// entry the same width so the addrKeySize-wide key layout is preserved.
+//
+// An error is returned for addresses that cannot be represented in the
+// fixed-size index key.
 func addrToKey(addr hnsutil.Address) ([addrKeySize]byte, error) {
-	switch addr := addr.(type) {
-	case *hnsutil.AddressPubKeyHash:
-		var result [addrKeySize]byte
-		result[0] = addrKeyTypePubKeyHash
-		copy(result[1:], addr.Hash160()[:])
-		return result, nil
+	if addr == nil {
+		return [addrKeySize]byte{}, errUnsupportedAddressType
+	}
 
-	case *hnsutil.AddressScriptHash:
-		var result [addrKeySize]byte
-		result[0] = addrKeyTypeScriptHash
-		copy(result[1:], addr.Hash160()[:])
-		return result, nil
+	var result [addrKeySize]byte
+	version := addr.Version()
+	hash := addr.ScriptAddress()
 
-	case *hnsutil.AddressPubKey:
-		var result [addrKeySize]byte
-		result[0] = addrKeyTypePubKeyHash
-		copy(result[1:], addr.AddressPubKeyHash().Hash160()[:])
-		return result, nil
-
-	case *hnsutil.AddressWitnessScriptHash:
-		var result [addrKeySize]byte
-		result[0] = addrKeyTypeWitnessScriptHash
-
-		// P2WSH outputs utilize a 32-byte data push created by hashing
-		// the script with sha256 instead of hash160. In order to keep
-		// all address entries within the database uniform and compact,
-		// we use a hash160 here to reduce the size of the salient data
-		// push to 20-bytes.
-		copy(result[1:], hnsutil.Hash160(addr.ScriptAddress()))
-		return result, nil
-
-	case *hnsutil.AddressWitnessPubKeyHash:
-		var result [addrKeySize]byte
+	switch {
+	case version == 0 && len(hash) == 20:
 		result[0] = addrKeyTypeWitnessPubKeyHash
-		copy(result[1:], addr.Hash160()[:])
+		copy(result[1:], hash)
 		return result, nil
-
-	case *hnsutil.AddressTaproot:
-		var result [addrKeySize]byte
-		result[0] = addrKeyTypeTaprootPubKey
-
-		// Taproot outputs are actually just the 32-byte public key.
-		// Similar to the P2WSH outputs, we'll map these to 20-bytes
-		// via the hash160.
-		copy(result[1:], hnsutil.Hash160(addr.ScriptAddress()))
+	case version == 0 && len(hash) == 32:
+		result[0] = addrKeyTypeWitnessScriptHash
+		// Reduce the 32-byte script hash down to 20 bytes so all
+		// address entries within the database remain uniform and
+		// compact.
+		copy(result[1:], hnsutil.Hash160(hash))
+		return result, nil
+	case version >= 1 && version <= hnsutil.MaxAddressVersion:
+		// Higher-version witness programs are squashed to 20 bytes
+		// via hash160 (same reason as the v0 script-hash branch),
+		// but the type byte carries the witness version so versions
+		// can never alias each other.
+		result[0] = byte(addrKeyTypeWitnessVerBase + int(version))
+		copy(result[1:], hnsutil.Hash160(hash))
 		return result, nil
 	}
 
-	return [addrKeySize]byte{}, errUnsupportedAddressType
+	return result, errUnsupportedAddressType
 }
 
 // AddrIndex implements a transaction by address index.  That is to say, it

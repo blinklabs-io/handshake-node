@@ -61,10 +61,22 @@ const (
 func calcMinRequiredTxRelayFee(serializedSize int64, minRelayTxFee hnsutil.Amount) int64 {
 	// Calculate the minimum fee for a transaction to be allowed into the
 	// mempool and relayed by scaling the base fee (which is the minimum
-	// free transaction relay fee).  minRelayTxFee is in Satoshi/kB so
-	// multiply by serializedSize (which is in bytes) and divide by 1000 to
-	// get minimum Satoshis.
-	minFee := (serializedSize * int64(minRelayTxFee)) / 1000
+	// free transaction relay fee).  minRelayTxFee is in doo/kB so multiply
+	// by serializedSize (which is in bytes) and divide by 1000 to get the
+	// minimum number of dollarydoos.
+	//
+	// Guard against int64 overflow before multiplying: if serializedSize *
+	// minRelayTxFee would exceed int64 we'd wrap negative and bypass the
+	// MaxDoo clamp below.  Compute the largest size for which the
+	// multiplication is safe and clamp to MaxDoo when we exceed it.
+	var minFee int64
+	if minRelayTxFee > 0 {
+		maxSafeSize := int64(hnsutil.MaxDoo) * 1000 / int64(minRelayTxFee)
+		if serializedSize >= maxSafeSize {
+			return hnsutil.MaxDoo
+		}
+		minFee = (serializedSize * int64(minRelayTxFee)) / 1000
+	}
 
 	if minFee == 0 && minRelayTxFee > 0 {
 		minFee = int64(minRelayTxFee)
@@ -72,8 +84,8 @@ func calcMinRequiredTxRelayFee(serializedSize int64, minRelayTxFee hnsutil.Amoun
 
 	// Set the minimum fee to the maximum possible value if the calculated
 	// fee is not in the valid range for monetary amounts.
-	if minFee < 0 || minFee > hnsutil.MaxSatoshi {
-		minFee = hnsutil.MaxSatoshi
+	if minFee < 0 || minFee > hnsutil.MaxDoo {
+		minFee = hnsutil.MaxDoo
 	}
 
 	return minFee

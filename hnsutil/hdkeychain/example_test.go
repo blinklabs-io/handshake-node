@@ -117,8 +117,9 @@ func Example_defaultWalletLayout() {
 	}
 
 	// Derive addresses for the extended keys on the Handshake main
-	// network and print the version (always 0 for a P2WPKH-equivalent
-	// address derived from an hdkeychain).
+	// network and print the full bech32 encoding (with "hs" HRP) so the
+	// example exercises the whole derivation -> Hash160 -> bech32 path
+	// and regresses if any step changes.
 	acct0ExtAddr, err := acct0Ext10.Address(&chaincfg.MainNetParams)
 	if err != nil {
 		fmt.Println(err)
@@ -129,12 +130,12 @@ func Example_defaultWalletLayout() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("Account 0 External Address 10 Version:", acct0ExtAddr.Version())
-	fmt.Println("Account 0 Internal Address 0 Version:", acct0IntAddr.Version())
+	fmt.Println("Account 0 External Address 10:", acct0ExtAddr)
+	fmt.Println("Account 0 Internal Address 0: ", acct0IntAddr)
 
 	// Output:
-	// Account 0 External Address 10 Version: 0
-	// Account 0 Internal Address 0 Version: 0
+	// Account 0 External Address 10: hs1qkn4kfrt57auztm30w9gm4ue3uklcyqff0tzdw0
+	// Account 0 Internal Address 0:  hs1qhdjn79g0f5yq7tl2snz937tc6jst753vxulxje
 }
 
 // This example demonstrates the audits use case in BIP0032.

@@ -71,8 +71,7 @@ var (
 // constructed via NewAddress, NewAddressPubKeyHash, NewAddressScriptHash,
 // DecodeAddress, or DecodeAddressAnyNet.  The interface exists primarily to
 // preserve the shape of the btcd-era API so call sites in the wider code
-// base do not have to be rewritten.  Additional methods on the concrete
-// implementation are exposed through the HandshakeAddress type assertion.
+// base do not have to be rewritten.
 type Address interface {
 	// EncodeAddress returns the bech32 string encoding of the payment
 	// address.
@@ -94,8 +93,7 @@ type Address interface {
 	// Version returns the witness-program version of the address.
 	Version() uint8
 
-	// Hash returns the raw hash bytes of the address.  Callers must not
-	// mutate the returned slice.
+	// Hash returns a copy of the raw hash bytes of the address.
 	Hash() []byte
 
 	// HRP returns the network-specific human-readable prefix of the
@@ -183,13 +181,19 @@ func validateAddress(version uint8, hash []byte) error {
 
 // DecodeAddress parses a bech32-encoded Handshake address string.  The HRP
 // of the encoded address must match the HRP of the supplied chain params.
-// To decode without enforcing a specific network, use DecodeAddressAnyNet.
+// A nil net is treated as an error; callers that intend to decode without
+// enforcing a particular network must use DecodeAddressAnyNet explicitly.
 func DecodeAddress(addr string, net *chaincfg.Params) (Address, error) {
+	if net == nil {
+		return nil, fmt.Errorf(
+			"DecodeAddress: nil chain params; use DecodeAddressAnyNet " +
+				"to decode without network enforcement")
+	}
 	decoded, err := DecodeAddressAnyNet(addr)
 	if err != nil {
 		return nil, err
 	}
-	if net != nil && decoded.HRP() != strings.ToLower(net.Bech32HRPSegwit) {
+	if decoded.HRP() != strings.ToLower(net.Bech32HRPSegwit) {
 		return nil, fmt.Errorf("%w: address HRP %q does not match network %q",
 			ErrUnknownHRP, decoded.HRP(), net.Bech32HRPSegwit)
 	}
@@ -235,9 +239,10 @@ func (a *handshakeAddress) Version() uint8 {
 	return a.version
 }
 
-// Hash returns the raw hash bytes of the address.
+// Hash returns a defensive copy of the raw hash bytes of the address so
+// callers cannot mutate the internal state.
 func (a *handshakeAddress) Hash() []byte {
-	return a.hash
+	return append([]byte(nil), a.hash...)
 }
 
 // HRP returns the human-readable part (network prefix) of the address.
@@ -262,10 +267,10 @@ func (a *handshakeAddress) EncodeAddress() string {
 	return encoded
 }
 
-// ScriptAddress returns the raw hash bytes to be embedded in a txout
-// script.  For Handshake this is identical to Hash().
+// ScriptAddress returns a defensive copy of the raw hash bytes to be
+// embedded in a txout script.  For Handshake this is identical to Hash().
 func (a *handshakeAddress) ScriptAddress() []byte {
-	return a.hash
+	return append([]byte(nil), a.hash...)
 }
 
 // IsForNet returns whether or not the address is associated with the passed

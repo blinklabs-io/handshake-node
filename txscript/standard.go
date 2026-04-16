@@ -569,7 +569,20 @@ func GetScriptClass(script []byte) ScriptClass {
 	}
 
 	const scriptVersionTaproot = 1
-	return typeOfScript(scriptVersionTaproot, script)
+	if class := typeOfScript(scriptVersionTaproot, script); class != NonStandardTy {
+		return class
+	}
+
+	// Fallback: any valid witness program with version in [1, 16] and a
+	// hash length that does not match the shapes above (e.g. v1 with a
+	// non-32-byte program, or v2-v16 entirely) is recognised as a
+	// WitnessUnknownTy rather than NonStandardTy so its address is
+	// preserved by ExtractPkScriptAddrs.
+	if version, _, valid := extractWitnessProgramInfo(script); valid &&
+		version >= 1 && version <= 16 {
+		return WitnessUnknownTy
+	}
+	return NonStandardTy
 }
 
 // NewScriptClass returns the ScriptClass corresponding to the string name
@@ -830,56 +843,37 @@ func payToPubKeyScript(serializedPubKey []byte) ([]byte, error) {
 		AddOp(OP_CHECKSIG).Script()
 }
 
-// PayToAddrScript creates a new script to pay a transaction output to a the
-// specified address.
+// PayToAddrScript creates a new script to pay a transaction output to the
+// specified Handshake address.  Handshake scripts encode an output as a
+// witness program: either OP_0 <20-byte hash> / OP_0 <32-byte hash> for
+// version 0 or OP_N <hash> (where N = 1..16) for higher versions.
 func PayToAddrScript(addr hnsutil.Address) ([]byte, error) {
-	const nilAddrErrStr = "unable to generate payment script for nil address"
-
-	switch addr := addr.(type) {
-	case *hnsutil.AddressPubKeyHash:
-		if addr == nil {
-			return nil, scriptError(ErrUnsupportedAddress,
-				nilAddrErrStr)
-		}
-		return payToPubKeyHashScript(addr.ScriptAddress())
-
-	case *hnsutil.AddressScriptHash:
-		if addr == nil {
-			return nil, scriptError(ErrUnsupportedAddress,
-				nilAddrErrStr)
-		}
-		return payToScriptHashScript(addr.ScriptAddress())
-
-	case *hnsutil.AddressPubKey:
-		if addr == nil {
-			return nil, scriptError(ErrUnsupportedAddress,
-				nilAddrErrStr)
-		}
-		return payToPubKeyScript(addr.ScriptAddress())
-
-	case *hnsutil.AddressWitnessPubKeyHash:
-		if addr == nil {
-			return nil, scriptError(ErrUnsupportedAddress,
-				nilAddrErrStr)
-		}
-		return payToWitnessPubKeyHashScript(addr.ScriptAddress())
-	case *hnsutil.AddressWitnessScriptHash:
-		if addr == nil {
-			return nil, scriptError(ErrUnsupportedAddress,
-				nilAddrErrStr)
-		}
-		return payToWitnessScriptHashScript(addr.ScriptAddress())
-	case *hnsutil.AddressTaproot:
-		if addr == nil {
-			return nil, scriptError(ErrUnsupportedAddress,
-				nilAddrErrStr)
-		}
-		return payToWitnessTaprootScript(addr.ScriptAddress())
+	if addr == nil {
+		return nil, scriptError(ErrUnsupportedAddress,
+			"unable to generate payment script for nil address")
 	}
 
-	str := fmt.Sprintf("unable to generate payment script for unsupported "+
-		"address type %T", addr)
-	return nil, scriptError(ErrUnsupportedAddress, str)
+	version := addr.Version()
+	hash := addr.ScriptAddress()
+
+	switch {
+	case version == 0 && len(hash) == 20:
+		return payToWitnessPubKeyHashScript(hash)
+	case version == 0 && len(hash) == 32:
+		return payToWitnessScriptHashScript(hash)
+	case version >= 1 && version <= 16:
+		// Generic witness program OP_N <hash>.  OP_1 through OP_16
+		// map to opcodes 0x51 through 0x60 so (OP_1 - 1 + version)
+		// yields the correct opcode byte for any version in [1, 16].
+		return NewScriptBuilder().
+			AddOp(OP_1 - 1 + version).
+			AddData(hash).
+			Script()
+	}
+
+	return nil, scriptError(ErrUnsupportedAddress,
+		fmt.Sprintf("unsupported address version %d with hash length %d",
+			version, len(hash)))
 }
 
 // NullDataScript creates a provably-prunable script containing OP_RETURN
@@ -895,11 +889,17 @@ func NullDataScript(data []byte) ([]byte, error) {
 	return NewScriptBuilder().AddOp(OP_RETURN).AddData(data).Script()
 }
 
-// MultiSigScript returns a valid script for a multisignature redemption where
-// nrequired of the keys in pubkeys are required to have signed the transaction
-// for success.  An Error with the error code ErrTooManyRequiredSigs will be
-// returned if nrequired is larger than the number of keys provided.
-func MultiSigScript(pubkeys []*hnsutil.AddressPubKey, nrequired int) ([]byte, error) {
+// MultiSigScript returns a valid script for a multisignature redemption
+// where nrequired of the supplied serialized public keys are required to
+// have signed the transaction for success.  The keys must be passed in
+// serialized (compressed or uncompressed) form.  An Error with the error
+// code ErrTooManyRequiredSigs will be returned if nrequired is larger
+// than the number of keys provided.
+//
+// NOTE: Handshake's native script system does not yet include a fleshed
+// out multisig policy — this function is retained as a low-level script
+// builder helper only.
+func MultiSigScript(pubkeys [][]byte, nrequired int) ([]byte, error) {
 	if len(pubkeys) < nrequired {
 		str := fmt.Sprintf("unable to generate multisig script with "+
 			"%d required signatures when there are only %d public "+
@@ -908,8 +908,14 @@ func MultiSigScript(pubkeys []*hnsutil.AddressPubKey, nrequired int) ([]byte, er
 	}
 
 	builder := NewScriptBuilder().AddInt64(int64(nrequired))
-	for _, key := range pubkeys {
-		builder.AddData(key.ScriptAddress())
+	for i, key := range pubkeys {
+		if !isStrictPubKeyEncoding(key) {
+			str := fmt.Sprintf("multisig pubkey at index %d is not "+
+				"a strictly-encoded compressed or uncompressed "+
+				"secp256k1 public key", i)
+			return nil, scriptError(ErrPubKeyType, str)
+		}
+		builder.AddData(key)
 	}
 	builder.AddInt64(int64(len(pubkeys)))
 	builder.AddOp(OP_CHECKMULTISIG)
@@ -937,72 +943,41 @@ func PushedData(script []byte) ([][]byte, error) {
 	return data, nil
 }
 
-// pubKeyHashToAddrs is a convenience function to attempt to convert the
-// passed hash to a pay-to-pubkey-hash address housed within an address
-// slice.  It is used to consolidate common code.
-func pubKeyHashToAddrs(hash []byte, params *chaincfg.Params) []hnsutil.Address {
-	// Skip the pubkey hash if it's invalid for some reason.
-	var addrs []hnsutil.Address
-	addr, err := hnsutil.NewAddressPubKeyHash(hash, params)
-	if err == nil {
-		addrs = append(addrs, addr)
-	}
-	return addrs
-}
-
-// scriptHashToAddrs is a convenience function to attempt to convert the passed
-// hash to a pay-to-script-hash address housed within an address slice.  It is
-// used to consolidate common code.
-func scriptHashToAddrs(hash []byte, params *chaincfg.Params) []hnsutil.Address {
-	// Skip the hash if it's invalid for some reason.
-	var addrs []hnsutil.Address
-	addr, err := hnsutil.NewAddressScriptHashFromHash(hash, params)
-	if err == nil {
-		addrs = append(addrs, addr)
-	}
-	return addrs
-}
-
 // ExtractPkScriptAddrs returns the type of script, addresses and required
-// signatures associated with the passed PkScript.  Note that it only works for
-// 'standard' transaction script types.  Any data such as public keys which are
-// invalid are omitted from the results.
+// signatures associated with the passed PkScript.  Note that it only works
+// for 'standard' transaction script types.  Any data such as public keys
+// which are invalid are omitted from the results.
+//
+// TODO(phase-1.7+): legacy Bitcoin script types (P2PKH, P2SH, P2PK and
+// bare multisig) are still recognised here as a temporary compatibility
+// shim; they will be replaced with Handshake-native script handling once
+// the covenants/script layer lands.
 func ExtractPkScriptAddrs(pkScript []byte,
 	chainParams *chaincfg.Params) (ScriptClass, []hnsutil.Address, int, error) {
 
-	// Check for pay-to-pubkey-hash script.
-	if hash := extractPubKeyHash(pkScript); hash != nil {
-		return PubKeyHashTy, pubKeyHashToAddrs(hash, chainParams), 1, nil
+	const scriptVersion = 0
+
+	// Check for pay-to-pubkey-hash script.  Legacy Bitcoin P2PKH cannot
+	// be expressed as a Handshake address any more, so we report the
+	// class but return no addresses.
+	if extractPubKeyHash(pkScript) != nil {
+		return PubKeyHashTy, nil, 1, nil
 	}
 
-	// Check for pay-to-script-hash.
-	if hash := extractScriptHash(pkScript); hash != nil {
-		return ScriptHashTy, scriptHashToAddrs(hash, chainParams), 1, nil
+	// Check for pay-to-script-hash.  Same caveat as above.
+	if extractScriptHash(pkScript) != nil {
+		return ScriptHashTy, nil, 1, nil
 	}
 
 	// Check for pay-to-pubkey script.
-	if data := extractPubKey(pkScript); data != nil {
-		var addrs []hnsutil.Address
-		addr, err := hnsutil.NewAddressPubKey(data, chainParams)
-		if err == nil {
-			addrs = append(addrs, addr)
-		}
-		return PubKeyTy, addrs, 1, nil
+	if extractPubKey(pkScript) != nil {
+		return PubKeyTy, nil, 1, nil
 	}
 
 	// Check for multi-signature script.
-	const scriptVersion = 0
 	details := extractMultisigScriptDetails(scriptVersion, pkScript, true)
 	if details.valid {
-		// Convert the public keys while skipping any that are invalid.
-		addrs := make([]hnsutil.Address, 0, len(details.pubKeys))
-		for _, pubkey := range details.pubKeys {
-			addr, err := hnsutil.NewAddressPubKey(pubkey, chainParams)
-			if err == nil {
-				addrs = append(addrs, addr)
-			}
-		}
-		return MultiSigTy, addrs, details.requiredSigs, nil
+		return MultiSigTy, nil, details.requiredSigs, nil
 	}
 
 	// Check for null data script.
@@ -1013,7 +988,7 @@ func ExtractPkScriptAddrs(pkScript []byte,
 
 	if hash := extractWitnessPubKeyHash(pkScript); hash != nil {
 		var addrs []hnsutil.Address
-		addr, err := hnsutil.NewAddressWitnessPubKeyHash(hash, chainParams)
+		addr, err := hnsutil.NewAddressPubKeyHash(hash, chainParams)
 		if err == nil {
 			addrs = append(addrs, addr)
 		}
@@ -1022,20 +997,34 @@ func ExtractPkScriptAddrs(pkScript []byte,
 
 	if hash := extractWitnessV0ScriptHash(pkScript); hash != nil {
 		var addrs []hnsutil.Address
-		addr, err := hnsutil.NewAddressWitnessScriptHash(hash, chainParams)
+		addr, err := hnsutil.NewAddressScriptHash(hash, chainParams)
 		if err == nil {
 			addrs = append(addrs, addr)
 		}
 		return WitnessV0ScriptHashTy, addrs, 1, nil
 	}
 
-	if rawKey := extractWitnessV1KeyBytes(pkScript); rawKey != nil {
+	if extractWitnessV1KeyBytes(pkScript) != nil {
+		// Handshake predates BIP-341 and does not support taproot
+		// outputs; recognise the script shape only as a legacy
+		// witness-v1 bucket without trying to decode an address.
+		return WitnessV1TaprootTy, nil, 1, nil
+	}
+
+	// Generic witness program fallback.  PayToAddrScript emits
+	// OP_N <hash> for any address version in [1, 16] with hash length
+	// [2, 40]; roundtrip those back to an hnsutil.Address so callers
+	// (e.g. createVoutList) don't silently drop addresses on the future
+	// witness versions Handshake already accepts on the wire.  v0 and the
+	// taproot-shaped v1 case are handled above.
+	if version, program, valid := extractWitnessProgramInfo(pkScript); valid &&
+		version >= 1 && version <= 16 {
 		var addrs []hnsutil.Address
-		addr, err := hnsutil.NewAddressTaproot(rawKey, chainParams)
+		addr, err := hnsutil.NewAddress(uint8(version), program, chainParams)
 		if err == nil {
 			addrs = append(addrs, addr)
 		}
-		return WitnessV1TaprootTy, addrs, 1, nil
+		return WitnessUnknownTy, addrs, 1, nil
 	}
 
 	// If none of the above passed, then the address must be non-standard.

@@ -52,7 +52,7 @@ var helpDescsEnUS = map[string]string{
 	"createrawtransaction-amounts":        "JSON object with the destination addresses as keys and amounts as values",
 	"createrawtransaction-amounts--key":   "address",
 	"createrawtransaction-amounts--value": "n.nnn",
-	"createrawtransaction-amounts--desc":  "The destination address as the key and the amount in BTC as the value",
+	"createrawtransaction-amounts--desc":  "The destination address as the key and the amount in HNS as the value",
 	"createrawtransaction-locktime":       "Locktime value; a non-zero value will also locktime-activate the inputs",
 	"createrawtransaction--result0":       "Hex-encoded bytes of the serialized transaction",
 

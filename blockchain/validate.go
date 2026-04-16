@@ -12,9 +12,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -41,7 +41,7 @@ const (
 
 	// baseSubsidy is the starting subsidy amount for mined blocks.  This
 	// value is halved every SubsidyHalvingInterval blocks.
-	baseSubsidy = 50 * hnsutil.SatoshiPerBitcoin
+	baseSubsidy = 50 * hnsutil.DooPerHNS
 
 	// coinbaseHeightAllocSize is the amount of bytes that the
 	// ScriptBuilder will allocate when validating the coinbase height.
@@ -236,39 +236,38 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 	// Ensure the transaction amounts are in range.  Each transaction
 	// output must not be negative or more than the max allowed per
 	// transaction.  Also, the total of all outputs must abide by the same
-	// restrictions.  All amounts in a transaction are in a unit value known
-	// as a satoshi.  One bitcoin is a quantity of satoshi as defined by the
-	// SatoshiPerBitcoin constant.
-	var totalSatoshi int64
+	// restrictions.  All amounts in a transaction are expressed in the
+	// Handshake base unit (dollarydoo); 1 HNS = DooPerHNS dollarydoos and
+	// the max permissible value is MaxDoo.
+	var totalDoo int64
 	for _, txOut := range msgTx.TxOut {
-		satoshi := txOut.Value
-		if satoshi < 0 {
+		doo := txOut.Value
+		if doo < 0 {
 			str := fmt.Sprintf("transaction output has negative "+
-				"value of %v", satoshi)
+				"value of %v", doo)
 			return ruleError(ErrBadTxOutValue, str)
 		}
-		if satoshi > hnsutil.MaxSatoshi {
+		if doo > hnsutil.MaxDoo {
 			str := fmt.Sprintf("transaction output value is "+
 				"higher than max allowed value: %v > %v ",
-				satoshi, hnsutil.MaxSatoshi)
+				doo, hnsutil.MaxDoo)
 			return ruleError(ErrBadTxOutValue, str)
 		}
 
 		// Two's complement int64 overflow guarantees that any overflow
-		// is detected and reported.  This is impossible for Bitcoin, but
-		// perhaps possible if an alt increases the total money supply.
-		totalSatoshi += satoshi
-		if totalSatoshi < 0 {
+		// is detected and reported.
+		totalDoo += doo
+		if totalDoo < 0 {
 			str := fmt.Sprintf("total value of all transaction "+
 				"outputs exceeds max allowed value of %v",
-				hnsutil.MaxSatoshi)
+				hnsutil.MaxDoo)
 			return ruleError(ErrBadTxOutValue, str)
 		}
-		if totalSatoshi > hnsutil.MaxSatoshi {
+		if totalDoo > hnsutil.MaxDoo {
 			str := fmt.Sprintf("total value of all transaction "+
 				"outputs is %v which is higher than max "+
-				"allowed value of %v", totalSatoshi,
-				hnsutil.MaxSatoshi)
+				"allowed value of %v", totalDoo,
+				hnsutil.MaxDoo)
 			return ruleError(ErrBadTxOutValue, str)
 		}
 	}
@@ -986,7 +985,7 @@ func CheckTransactionInputs(tx *hnsutil.Tx, txHeight int32, utxoView *UtxoViewpo
 		return 0, nil
 	}
 
-	var totalSatoshiIn int64
+	var totalDooIn int64
 	for txInIndex, txIn := range tx.MsgTx().TxIn {
 		// Ensure the referenced input transaction is available.
 		utxo := utxoView.LookupEntry(txIn.PreviousOutPoint)
@@ -1017,35 +1016,34 @@ func CheckTransactionInputs(tx *hnsutil.Tx, txHeight int32, utxoView *UtxoViewpo
 
 		// Ensure the transaction amounts are in range.  Each of the
 		// output values of the input transactions must not be negative
-		// or more than the max allowed per transaction.  All amounts in
-		// a transaction are in a unit value known as a satoshi.  One
-		// bitcoin is a quantity of satoshi as defined by the
-		// SatoshiPerBitcoin constant.
-		originTxSatoshi := utxo.Amount()
-		if originTxSatoshi < 0 {
+		// or more than the max allowed per transaction.  All amounts
+		// are expressed in dollarydoos — 1 HNS = DooPerHNS (1e6)
+		// dollarydoos; MaxDoo is the ceiling.
+		originTxDoo := utxo.Amount()
+		if originTxDoo < 0 {
 			str := fmt.Sprintf("transaction output has negative "+
-				"value of %v", hnsutil.Amount(originTxSatoshi))
+				"value of %v", hnsutil.Amount(originTxDoo))
 			return 0, ruleError(ErrBadTxOutValue, str)
 		}
-		if originTxSatoshi > hnsutil.MaxSatoshi {
+		if originTxDoo > hnsutil.MaxDoo {
 			str := fmt.Sprintf("transaction output value is "+
 				"higher than max allowed value: %v > %v ",
-				hnsutil.Amount(originTxSatoshi),
-				hnsutil.MaxSatoshi)
+				hnsutil.Amount(originTxDoo),
+				hnsutil.MaxDoo)
 			return 0, ruleError(ErrBadTxOutValue, str)
 		}
 
 		// The total of all outputs must not be more than the max
 		// allowed per transaction.  Also, we could potentially overflow
 		// the accumulator so check for overflow.
-		lastSatoshiIn := totalSatoshiIn
-		totalSatoshiIn += originTxSatoshi
-		if totalSatoshiIn < lastSatoshiIn ||
-			totalSatoshiIn > hnsutil.MaxSatoshi {
+		lastDooIn := totalDooIn
+		totalDooIn += originTxDoo
+		if totalDooIn < lastDooIn ||
+			totalDooIn > hnsutil.MaxDoo {
 			str := fmt.Sprintf("total value of all transaction "+
 				"inputs is %v which is higher than max "+
-				"allowed value of %v", totalSatoshiIn,
-				hnsutil.MaxSatoshi)
+				"allowed value of %v", totalDooIn,
+				hnsutil.MaxDoo)
 			return 0, ruleError(ErrBadTxOutValue, str)
 		}
 	}
@@ -1053,24 +1051,24 @@ func CheckTransactionInputs(tx *hnsutil.Tx, txHeight int32, utxoView *UtxoViewpo
 	// Calculate the total output amount for this transaction.  It is safe
 	// to ignore overflow and out of range errors here because those error
 	// conditions would have already been caught by checkTransactionSanity.
-	var totalSatoshiOut int64
+	var totalDooOut int64
 	for _, txOut := range tx.MsgTx().TxOut {
-		totalSatoshiOut += txOut.Value
+		totalDooOut += txOut.Value
 	}
 
 	// Ensure the transaction does not spend more than its inputs.
-	if totalSatoshiIn < totalSatoshiOut {
+	if totalDooIn < totalDooOut {
 		str := fmt.Sprintf("total value of all transaction inputs for "+
 			"transaction %v is %v which is less than the amount "+
-			"spent of %v", tx.Hash(), totalSatoshiIn, totalSatoshiOut)
+			"spent of %v", tx.Hash(), totalDooIn, totalDooOut)
 		return 0, ruleError(ErrSpendTooHigh, str)
 	}
 
-	// NOTE: bitcoind checks if the transaction fees are < 0 here, but that
-	// is an impossible condition because of the check above that ensures
-	// the inputs are >= the outputs.
-	txFeeInSatoshi := totalSatoshiIn - totalSatoshiOut
-	return txFeeInSatoshi, nil
+	// NOTE: the reference implementation checks if the transaction fees
+	// are < 0 here, but that is an impossible condition because of the
+	// check above that ensures the inputs are >= the outputs.
+	txFeeInDoo := totalDooIn - totalDooOut
+	return txFeeInDoo, nil
 }
 
 // checkConnectBlock performs several checks to confirm connecting the passed
@@ -1256,10 +1254,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 	// optimization because running the scripts is the most time consuming
 	// portion of block handling.
 	checkpoint := b.LatestCheckpoint()
-	runScripts := true
-	if checkpoint != nil && node.height <= checkpoint.Height {
-		runScripts = false
-	}
+	runScripts := !(checkpoint != nil && node.height <= checkpoint.Height)
 
 	// Blocks created after the BIP0016 activation time need to have the
 	// pay-to-script-hash checks enabled.

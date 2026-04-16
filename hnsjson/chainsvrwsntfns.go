@@ -246,13 +246,19 @@ func NewRescanProgressNtfn(hash string, height int32, time int64) *RescanProgres
 }
 
 // TxAcceptedNtfn defines the txaccepted JSON-RPC notification.
+//
+// NOTE: As of the HNS/dollarydoo amount migration, Amount is expressed in
+// HNS (6 decimal places), produced via hnsutil.Amount(doo).ToHNS().  This
+// is a breaking change from the previous btcd-era BTC-style 8-decimal
+// encoding; websocket consumers must update their parsers accordingly.
 type TxAcceptedNtfn struct {
 	TxID   string
 	Amount float64
 }
 
 // NewTxAcceptedNtfn returns a new instance which can be used to issue a
-// txaccepted JSON-RPC notification.
+// txaccepted JSON-RPC notification.  amount must already be in HNS (use
+// hnsutil.Amount(doo).ToHNS() to convert from integer dollarydoos).
 func NewTxAcceptedNtfn(txHash string, amount float64) *TxAcceptedNtfn {
 	return &TxAcceptedNtfn{
 		TxID:   txHash,

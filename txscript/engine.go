@@ -862,7 +862,7 @@ func (vm *Engine) DisasmScript(idx int) (string, error) {
 	tokenizer := MakeScriptTokenizer(vm.version, script)
 	var opcodeIdx int
 	for tokenizer.Next() {
-		disbuf.WriteString(fmt.Sprintf("%02x:%04x: ", idx, opcodeIdx))
+		fmt.Fprintf(&disbuf, "%02x:%04x: ", idx, opcodeIdx)
 		disasmOpcode(&disbuf, tokenizer.op, tokenizer.Data(), false)
 		disbuf.WriteByte('\n')
 		opcodeIdx++
@@ -919,7 +919,7 @@ func (vm *Engine) CheckErrorCondition(finalScript bool) error {
 			buf.WriteString("scripts failed:\n")
 			for i := range vm.scripts {
 				dis, _ := vm.DisasmScript(i)
-				buf.WriteString(fmt.Sprintf("script%d:\n", i))
+				fmt.Fprintf(&buf, "script%d:\n", i)
 				buf.WriteString(dis)
 			}
 			return buf.String()

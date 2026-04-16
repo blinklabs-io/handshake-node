@@ -499,7 +499,7 @@ func (r FutureSetTxFeeResult) Receive() error {
 //
 // See SetTxFee for the blocking version and more details.
 func (c *Client) SetTxFeeAsync(fee hnsutil.Amount) FutureSetTxFeeResult {
-	cmd := hnsjson.NewSetTxFeeCmd(fee.ToBTC())
+	cmd := hnsjson.NewSetTxFeeCmd(fee.ToHNS())
 	return c.SendCmd(cmd)
 }
 
@@ -538,7 +538,7 @@ func (r FutureSendToAddressResult) Receive() (*chainhash.Hash, error) {
 // See SendToAddress for the blocking version and more details.
 func (c *Client) SendToAddressAsync(address hnsutil.Address, amount hnsutil.Amount) FutureSendToAddressResult {
 	addr := address.EncodeAddress()
-	cmd := hnsjson.NewSendToAddressCmd(addr, amount.ToBTC(), nil, nil)
+	cmd := hnsjson.NewSendToAddressCmd(addr, amount.ToHNS(), nil, nil)
 	return c.SendCmd(cmd)
 }
 
@@ -564,7 +564,7 @@ func (c *Client) SendToAddressCommentAsync(address hnsutil.Address,
 	commentTo string) FutureSendToAddressResult {
 
 	addr := address.EncodeAddress()
-	cmd := hnsjson.NewSendToAddressCmd(addr, amount.ToBTC(), &comment,
+	cmd := hnsjson.NewSendToAddressCmd(addr, amount.ToHNS(), &comment,
 		&commentTo)
 	return c.SendCmd(cmd)
 }
@@ -617,7 +617,7 @@ func (r FutureSendFromResult) Receive() (*chainhash.Hash, error) {
 // See SendFrom for the blocking version and more details.
 func (c *Client) SendFromAsync(fromAccount string, toAddress hnsutil.Address, amount hnsutil.Amount) FutureSendFromResult {
 	addr := toAddress.EncodeAddress()
-	cmd := hnsjson.NewSendFromCmd(fromAccount, addr, amount.ToBTC(), nil,
+	cmd := hnsjson.NewSendFromCmd(fromAccount, addr, amount.ToHNS(), nil,
 		nil, nil)
 	return c.SendCmd(cmd)
 }
@@ -641,7 +641,7 @@ func (c *Client) SendFrom(fromAccount string, toAddress hnsutil.Address, amount 
 // See SendFromMinConf for the blocking version and more details.
 func (c *Client) SendFromMinConfAsync(fromAccount string, toAddress hnsutil.Address, amount hnsutil.Amount, minConfirms int) FutureSendFromResult {
 	addr := toAddress.EncodeAddress()
-	cmd := hnsjson.NewSendFromCmd(fromAccount, addr, amount.ToBTC(),
+	cmd := hnsjson.NewSendFromCmd(fromAccount, addr, amount.ToHNS(),
 		&minConfirms, nil, nil)
 	return c.SendCmd(cmd)
 }
@@ -670,7 +670,7 @@ func (c *Client) SendFromCommentAsync(fromAccount string,
 	comment, commentTo string) FutureSendFromResult {
 
 	addr := toAddress.EncodeAddress()
-	cmd := hnsjson.NewSendFromCmd(fromAccount, addr, amount.ToBTC(),
+	cmd := hnsjson.NewSendFromCmd(fromAccount, addr, amount.ToHNS(),
 		&minConfirms, &comment, &commentTo)
 	return c.SendCmd(cmd)
 }
@@ -726,7 +726,7 @@ func (r FutureSendManyResult) Receive() (*chainhash.Hash, error) {
 func (c *Client) SendManyAsync(fromAccount string, amounts map[hnsutil.Address]hnsutil.Amount) FutureSendManyResult {
 	convertedAmounts := make(map[string]float64, len(amounts))
 	for addr, amount := range amounts {
-		convertedAmounts[addr.EncodeAddress()] = amount.ToBTC()
+		convertedAmounts[addr.EncodeAddress()] = amount.ToHNS()
 	}
 	cmd := hnsjson.NewSendManyCmd(fromAccount, convertedAmounts, nil, nil)
 	return c.SendCmd(cmd)
@@ -755,7 +755,7 @@ func (c *Client) SendManyMinConfAsync(fromAccount string,
 
 	convertedAmounts := make(map[string]float64, len(amounts))
 	for addr, amount := range amounts {
-		convertedAmounts[addr.EncodeAddress()] = amount.ToBTC()
+		convertedAmounts[addr.EncodeAddress()] = amount.ToHNS()
 	}
 	cmd := hnsjson.NewSendManyCmd(fromAccount, convertedAmounts,
 		&minConfirms, nil)
@@ -789,7 +789,7 @@ func (c *Client) SendManyCommentAsync(fromAccount string,
 
 	convertedAmounts := make(map[string]float64, len(amounts))
 	for addr, amount := range amounts {
-		convertedAmounts[addr.EncodeAddress()] = amount.ToBTC()
+		convertedAmounts[addr.EncodeAddress()] = amount.ToHNS()
 	}
 	cmd := hnsjson.NewSendManyCmd(fromAccount, convertedAmounts,
 		&minConfirms, &comment)
@@ -1429,7 +1429,7 @@ func (r FutureMoveResult) Receive() (bool, error) {
 //
 // See Move for the blocking version and more details.
 func (c *Client) MoveAsync(fromAccount, toAccount string, amount hnsutil.Amount) FutureMoveResult {
-	cmd := hnsjson.NewMoveCmd(fromAccount, toAccount, amount.ToBTC(), nil,
+	cmd := hnsjson.NewMoveCmd(fromAccount, toAccount, amount.ToHNS(), nil,
 		nil)
 	return c.SendCmd(cmd)
 }
@@ -1450,7 +1450,7 @@ func (c *Client) Move(fromAccount, toAccount string, amount hnsutil.Amount) (boo
 func (c *Client) MoveMinConfAsync(fromAccount, toAccount string,
 	amount hnsutil.Amount, minConfirms int) FutureMoveResult {
 
-	cmd := hnsjson.NewMoveCmd(fromAccount, toAccount, amount.ToBTC(),
+	cmd := hnsjson.NewMoveCmd(fromAccount, toAccount, amount.ToHNS(),
 		&minConfirms, nil)
 	return c.SendCmd(cmd)
 }
@@ -1473,7 +1473,7 @@ func (c *Client) MoveMinConf(fromAccount, toAccount string, amount hnsutil.Amoun
 func (c *Client) MoveCommentAsync(fromAccount, toAccount string,
 	amount hnsutil.Amount, minConfirms int, comment string) FutureMoveResult {
 
-	cmd := hnsjson.NewMoveCmd(fromAccount, toAccount, amount.ToBTC(),
+	cmd := hnsjson.NewMoveCmd(fromAccount, toAccount, amount.ToHNS(),
 		&minConfirms, &comment)
 	return c.SendCmd(cmd)
 }

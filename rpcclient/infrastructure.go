@@ -26,8 +26,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/btcsuite/go-socks/socks"
 	"github.com/btcsuite/websocket"
 )
@@ -440,7 +440,7 @@ func (c *Client) handleMessage(msg []byte) {
 	c.trackRegisteredNtfns(request.cmd)
 
 	// Deliver the response.
-	result, err := in.rawResponse.result()
+	result, err := in.result()
 	request.responseChan <- &Response{result: result, err: err}
 }
 

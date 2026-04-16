@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -79,6 +79,64 @@ func parseWitnessStack(elements []interface{}) ([][]byte, error) {
 // parsing.  It is declared here so it only needs to be created once.
 var shortFormOps map[string]byte
 
+// mustParseShortForm is a helper that parses a short-form script string and
+// panics on error.  It is intended for use in tests and benchmarks where a
+// failure indicates a bug in the test itself.
+func mustParseShortForm(script string) []byte {
+	s, err := parseShortForm(script)
+	if err != nil {
+		panic("invalid short form script in test: " + err.Error())
+	}
+	return s
+}
+
+// scriptClassTest describes a pkScript (in short form) and the ScriptClass
+// it is expected to map to.  Handshake removed legacy Bitcoin address usage
+// (P2PKH, P2PK) at the address-format level, but the script-classification
+// logic in standard.go still recognises some legacy script shapes; in
+// particular the P2SH entry below maps to ScriptHashTy so that the
+// TestIsPayTo* script-class assertions in script_test.go exercise both the
+// SegWit (v0) and the retained ScriptHash branches.  This is purely for
+// script-class detection tests and does not imply Handshake supports
+// generating or spending those address forms.
+type scriptClassTest struct {
+	name   string
+	script string
+	class  ScriptClass
+}
+
+var scriptClassTests = []scriptClassTest{
+	{
+		name: "P2SH",
+		script: "HASH160 DATA_20 " +
+			"0x63bcc565f9e68ee0189dd5cc67f1b0e5f02f45cb EQUAL",
+		class: ScriptHashTy,
+	},
+	{
+		name: "P2WPKH",
+		script: "OP_0 DATA_20 " +
+			"0x0102030405060708090a0b0c0d0e0f1011121314",
+		class: WitnessV0PubKeyHashTy,
+	},
+	{
+		name: "P2WSH",
+		script: "OP_0 DATA_32 " +
+			"0x000102030405060708090a0b0c0d0e0f" +
+			"101112131415161718191a1b1c1d1e1f",
+		class: WitnessV0ScriptHashTy,
+	},
+	{
+		name:   "nulldata",
+		script: "RETURN 'data'",
+		class:  NullDataTy,
+	},
+	{
+		name:   "nonstandard",
+		script: "NOP",
+		class:  NonStandardTy,
+	},
+}
+
 // parseShortForm parses a string as as used in the Bitcoin Core reference tests
 // into the script it came from.
 //
@@ -117,8 +175,8 @@ func parseShortForm(script string) ([]byte, error) {
 	}
 
 	// Split only does one separator so convert all \n and tab into  space.
-	script = strings.Replace(script, "\n", " ", -1)
-	script = strings.Replace(script, "\t", " ", -1)
+	script = strings.ReplaceAll(script, "\n", " ")
+	script = strings.ReplaceAll(script, "\t", " ")
 	tokens := strings.Split(script, " ")
 	builder := NewScriptBuilder()
 

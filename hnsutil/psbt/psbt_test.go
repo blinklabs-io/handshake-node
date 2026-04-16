@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -1588,7 +1587,10 @@ func TestWitnessForNonWitnessUtxo(t *testing.T) {
 			}},
 			TxOut: []*wire.TxOut{{
 				PkScript: outPkScript,
-				Value:    1.9 * hnsutil.DooPerHNS,
+				// 190000000 base units; this is the exact value
+				// the fixture SIGHASH_ALL signatures below were
+				// generated against, so do not rescale.
+				Value: 190000000,
 			}},
 		},
 		Inputs:  []PInput{{}},

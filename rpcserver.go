@@ -28,18 +28,18 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
-	"github.com/blinklabs-io/handshake-node/hnsjson"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/mining/cpuminer"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/websocket"
 )
 
@@ -75,8 +75,9 @@ const (
 	// maxProtocolVersion is the max protocol version the server supports.
 	maxProtocolVersion = 70002
 
-	// defaultMaxFeeRate is the default value to use(0.1 BTC/kvB) when the
-	// `MaxFee` field is not set when calling `testmempoolaccept`.
+	// defaultMaxFeeRate is the default value to use (0.1 HNS/kvB, i.e.
+	// 100,000 doo/kvB) when the `MaxFee` field is not set when calling
+	// `testmempoolaccept`.
 	defaultMaxFeeRate = 0.1
 )
 
@@ -555,8 +556,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 	// some validity checks.
 	params := s.cfg.ChainParams
 	for encodedAddr, amount := range c.Amounts {
-		// Ensure amount is in the valid range for monetary amounts.
-		if amount <= 0 || amount*hnsutil.SatoshiPerBitcoin > hnsutil.MaxSatoshi {
+		if amount <= 0 {
 			return nil, &hnsjson.RPCError{
 				Code:    hnsjson.ErrRPCType,
 				Message: "Invalid amount",
@@ -572,27 +572,12 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 			}
 		}
 
-		// Ensure the address is a supported witness type and that
-		// the network encoded with the address matches the network the
-		// server is currently on.
-		var wireAddr wire.Address
-		switch a := addr.(type) {
-		case *hnsutil.AddressWitnessPubKeyHash:
-			wireAddr = wire.Address{
-				Version: a.WitnessVersion(),
-				Hash:    a.WitnessProgram(),
-			}
-		case *hnsutil.AddressWitnessScriptHash:
-			wireAddr = wire.Address{
-				Version: a.WitnessVersion(),
-				Hash:    a.WitnessProgram(),
-			}
-		default:
-			return nil, &hnsjson.RPCError{
-				Code:    hnsjson.ErrRPCInvalidAddressOrKey,
-				Message: "Invalid address or key: only witness addresses are supported",
-			}
-		}
+		// Ensure the network encoded with the address matches the
+		// network the server is currently on.  Handshake uses a single
+		// unified address shape (version + hash) so we copy those
+		// fields directly into the wire form.  DecodeAddress already
+		// validates the version/hash/HRP combination, so no further
+		// PayToAddrScript pre-flight is required here.
 		if !addr.IsForNet(params) {
 			return nil, &hnsjson.RPCError{
 				Code: hnsjson.ErrRPCInvalidAddressOrKey,
@@ -600,22 +585,28 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 					" is for the wrong network",
 			}
 		}
-
-		// Create a new script which pays to the provided address.
-		_, err = txscript.PayToAddrScript(addr)
-		if err != nil {
-			context := "Failed to generate pay-to-address script"
-			return nil, internalRPCError(err.Error(), context)
+		wireAddr := wire.Address{
+			Version: addr.Version(),
+			Hash:    addr.Hash(),
 		}
 
-		// Convert the amount to satoshi.
-		satoshi, err := hnsutil.NewAmount(amount)
+		// Convert the HNS amount to integer dollarydoos, then range-check
+		// against MaxDoo.  Doing the clamp on the converted integer
+		// avoids float rounding/overflow edge cases that a pre-conversion
+		// check misses.
+		doos, err := hnsutil.NewAmount(amount)
 		if err != nil {
 			context := "Failed to convert amount"
 			return nil, internalRPCError(err.Error(), context)
 		}
+		if int64(doos) > hnsutil.MaxDoo {
+			return nil, &hnsjson.RPCError{
+				Code:    hnsjson.ErrRPCType,
+				Message: "Invalid amount",
+			}
+		}
 
-		txOut := wire.NewTxOut(int64(satoshi), wireAddr, wire.Covenant{})
+		txOut := wire.NewTxOut(int64(doos), wireAddr, wire.Covenant{})
 		mtx.AddTxOut(txOut)
 	}
 
@@ -738,7 +729,7 @@ func createVoutList(mtx *wire.MsgTx, chainParams *chaincfg.Params, filterAddrMap
 
 		var vout hnsjson.Vout
 		vout.N = uint32(i)
-		vout.Value = hnsutil.Amount(v.Value).ToBTC()
+		vout.Value = hnsutil.Amount(v.Value).ToHNS()
 		vout.ScriptPubKey.Addresses = encodedAddrs
 		vout.ScriptPubKey.Asm = disbuf
 		vout.ScriptPubKey.Hex = hex.EncodeToString(wpScript)
@@ -855,7 +846,11 @@ func handleDecodeScript(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 	}
 
 	// Convert the script itself to a pay-to-script-hash address.
-	p2sh, err := hnsutil.NewAddressScriptHash(script, s.cfg.ChainParams)
+	// Handshake's NewAddressScriptHash takes a 32-byte SHA-256 hash of
+	// the redeem script directly, whereas the Bitcoin helper used to
+	// accept the raw script and hash it internally.
+	scriptSum := sha256.Sum256(script)
+	p2sh, err := hnsutil.NewAddressScriptHash(scriptSum[:], s.cfg.ChainParams)
 	if err != nil {
 		context := "Failed to convert script to pay-to-script-hash"
 		return nil, internalRPCError(err.Error(), context)
@@ -1323,7 +1318,7 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 		if ender, ok := deploymentDetails.DeploymentEnder.(*chaincfg.MedianTimeDeploymentEnder); ok {
 			endTime = ender.EndTime().Unix()
 		}
-		chainInfo.SoftForks.Bip9SoftForks[forkName] = &hnsjson.Bip9SoftForkDescription{
+		chainInfo.Bip9SoftForks[forkName] = &hnsjson.Bip9SoftForkDescription{
 			Status:              strings.ToLower(statusString),
 			Bit:                 deploymentDetails.BitNumber,
 			StartTime2:          startTime,
@@ -1660,26 +1655,19 @@ func (state *gbtWorkState) updateBlockTemplate(s *rpcServer, useCoinbaseValue bo
 		// mining addresses to be specified via the config, an error is
 		// returned if none have been specified.
 		if !useCoinbaseValue && !template.ValidPayAddress {
-			// Choose a payment address at random.
+			// Choose a payment address at random.  cfg.miningAddrs is
+			// populated from config via DecodeAddress, so elements are
+			// always non-nil valid hnsutil.Addresses — no extra nil
+			// guard is required.
 			payToAddr := cfg.miningAddrs[rand.Intn(len(cfg.miningAddrs))]
 
 			// Update the block coinbase output of the template to
 			// pay to the randomly selected payment address.
-			// Handshake TxOut uses Address instead of PkScript.
-			var wireAddr wire.Address
-			switch a := payToAddr.(type) {
-			case *hnsutil.AddressWitnessPubKeyHash:
-				wireAddr = wire.Address{
-					Version: a.WitnessVersion(),
-					Hash:    a.WitnessProgram(),
-				}
-			case *hnsutil.AddressWitnessScriptHash:
-				wireAddr = wire.Address{
-					Version: a.WitnessVersion(),
-					Hash:    a.WitnessProgram(),
-				}
-			default:
-				return internalRPCError("configured mining address is not convertible to wire.Address", "")
+			// Handshake TxOut uses Address instead of PkScript;
+			// convert the hnsutil.Address into the wire form.
+			wireAddr := wire.Address{
+				Version: payToAddr.Version(),
+				Hash:    payToAddr.Hash(),
 			}
 			template.Block.Transactions[0].TxOut[0].Address = wireAddr
 			template.ValidPayAddress = true
@@ -2007,7 +1995,7 @@ func handleGetBlockTemplateRequest(s *rpcServer, request *hnsjson.TemplateReques
 	if currentHeight != 0 && !s.cfg.SyncMgr.IsCurrent() {
 		return nil, &hnsjson.RPCError{
 			Code:    hnsjson.ErrRPCClientInInitialDownload,
-			Message: "Bitcoin is downloading blocks...",
+			Message: "Handshake is downloading blocks...",
 		}
 	}
 
@@ -2388,7 +2376,7 @@ func handleGetInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (in
 		Proxy:           cfg.Proxy,
 		Difficulty:      getDifficultyRatio(best.Bits, s.cfg.ChainParams),
 		TestNet:         cfg.RegressionTest,
-		RelayFee:        cfg.minRelayTxFee.ToBTC(),
+		RelayFee:        cfg.minRelayTxFee.ToHNS(),
 	}
 
 	return ret, nil
@@ -2866,7 +2854,7 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	txOutReply := &hnsjson.GetTxOutResult{
 		BestBlock:     bestBlockHash,
 		Confirmations: int64(confirmations),
-		Value:         hnsutil.Amount(value).ToBTC(),
+		Value:         hnsutil.Amount(value).ToHNS(),
 		ScriptPubKey: hnsjson.ScriptPubKeyResult{
 			Asm:       disbuf,
 			Hex:       hex.EncodeToString(pkScript),
@@ -3146,7 +3134,7 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 			vinListEntry := &vinList[len(vinList)-1]
 			vinListEntry.PrevOut = &hnsjson.PrevOut{
 				Addresses: encodedAddrs,
-				Value:     hnsutil.Amount(originTxOut.Value).ToBTC(),
+				Value:     hnsutil.Amount(originTxOut.Value).ToHNS(),
 			}
 		}
 	}
@@ -3596,7 +3584,11 @@ func handleSetGenerate(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 
 // Text used to signify that a signed message follows and to prevent
 // inadvertently signing a transaction.
-const messageSignatureHeader = "Bitcoin Signed Message:\n"
+// messageSignatureHeader is prepended to a message before it is hashed and
+// signed.  It matches the hsd reference implementation's
+// `handshake signed message:\n` magic so signatures round-trip with other
+// Handshake implementations.
+const messageSignatureHeader = "handshake signed message:\n"
 
 // handleSignMessageWithPrivKey implements the signmessagewithprivkey command.
 func handleSignMessageWithPrivKey(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
@@ -3691,36 +3683,16 @@ func handleValidateAddress(s *rpcServer, cmd interface{}, closeChan <-chan struc
 		return result, nil
 	}
 
-	switch addr := addr.(type) {
-	case *hnsutil.AddressPubKeyHash:
-		result.IsScript = hnsjson.Bool(false)
-		result.IsWitness = hnsjson.Bool(false)
-
-	case *hnsutil.AddressScriptHash:
-		result.IsScript = hnsjson.Bool(true)
-		result.IsWitness = hnsjson.Bool(false)
-
-	case *hnsutil.AddressPubKey:
-		result.IsScript = hnsjson.Bool(false)
-		result.IsWitness = hnsjson.Bool(false)
-
-	case *hnsutil.AddressWitnessPubKeyHash:
-		result.IsScript = hnsjson.Bool(false)
-		result.IsWitness = hnsjson.Bool(true)
-		result.WitnessVersion = hnsjson.Int32(int32(addr.WitnessVersion()))
-		result.WitnessProgram = hnsjson.String(hex.EncodeToString(addr.WitnessProgram()))
-
-	case *hnsutil.AddressWitnessScriptHash:
-		result.IsScript = hnsjson.Bool(true)
-		result.IsWitness = hnsjson.Bool(true)
-		result.WitnessVersion = hnsjson.Int32(int32(addr.WitnessVersion()))
-		result.WitnessProgram = hnsjson.String(hex.EncodeToString(addr.WitnessProgram()))
-
-	default:
-		// Handle the case when a new Address is supported by hnsutil, but none
-		// of the cases were matched in the switch block. The current behaviour
-		// is to do nothing, and only populate the Address and IsValid fields.
-	}
+	// All Handshake addresses are witness programs.  Version-0 addresses
+	// with a 32-byte hash are the P2WSH equivalent (script output), and
+	// everything else is treated as non-script for this RPC field.
+	version := addr.Version()
+	hashLen := len(addr.Hash())
+	isScript := version == 0 && hashLen == 32
+	result.IsScript = hnsjson.Bool(isScript)
+	result.IsWitness = hnsjson.Bool(true)
+	result.WitnessVersion = hnsjson.Int32(int32(version))
+	result.WitnessProgram = hnsjson.String(hex.EncodeToString(addr.Hash()))
 
 	result.Address = addr.EncodeAddress()
 	result.IsValid = true
@@ -3793,8 +3765,9 @@ func handleVerifyMessage(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 		}
 	}
 
-	// Only P2PKH addresses are valid for signing.
-	if _, ok := addr.(*hnsutil.AddressPubKeyHash); !ok {
+	// Only version-0 20-byte (P2WPKH-equivalent) addresses are valid
+	// for signing.
+	if addr.Version() != 0 || len(addr.Hash()) != 20 {
 		return nil, &hnsjson.RPCError{
 			Code:    hnsjson.ErrRPCType,
 			Message: "Address is not a pay-to-pubkey-hash address",
@@ -3824,14 +3797,17 @@ func handleVerifyMessage(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 		return false, nil
 	}
 
-	// Reconstruct the pubkey hash.
+	// Reconstruct the pubkey hash and turn it into a Handshake version 0
+	// address so we can compare it to the one supplied by the caller.
 	var serializedPK []byte
 	if wasCompressed {
 		serializedPK = pk.SerializeCompressed()
 	} else {
 		serializedPK = pk.SerializeUncompressed()
 	}
-	address, err := hnsutil.NewAddressPubKey(serializedPK, params)
+	address, err := hnsutil.NewAddressPubKeyHash(
+		hnsutil.Hash160(serializedPK), params,
+	)
 	if err != nil {
 		// Again mirror Bitcoin Core behavior, which treats error in public key
 		// reconstruction as invalid signature.
@@ -3994,16 +3970,16 @@ func handleGetTxSpendingPrevOut(s *rpcServer, cmd interface{},
 
 // validateFeeRate checks that the fee rate used by transaction doesn't exceed
 // the max fee rate specified.
-func validateFeeRate(feeSats hnsutil.Amount, txSize int64,
+func validateFeeRate(feeDoo hnsutil.Amount, txSize int64,
 	maxFeeRate float64) (*hnsjson.TestMempoolAcceptFees, bool) {
 
-	// Calculate fee rate in sats/kvB.
-	feeRateSatsPerKVB := feeSats * 1e3 / hnsutil.Amount(txSize)
+	// Calculate fee rate in doo/kvB.
+	feeRateDooPerKVB := feeDoo * 1e3 / hnsutil.Amount(txSize)
 
-	// Convert sats/vB to BTC/kvB.
-	feeRate := feeRateSatsPerKVB.ToBTC()
+	// Convert doo/vB to HNS/kvB.
+	feeRate := feeRateDooPerKVB.ToHNS()
 
-	// Get the max fee rate, if not provided, default to 0.1 BTC/kvB.
+	// If not provided, default to 0.1 HNS/kvB (100,000 doo/kvB).
 	if maxFeeRate == 0 {
 		maxFeeRate = defaultMaxFeeRate
 	}
@@ -4014,7 +3990,7 @@ func validateFeeRate(feeSats hnsutil.Amount, txSize int64,
 	}
 
 	return &hnsjson.TestMempoolAcceptFees{
-		Base:             feeSats.ToBTC(),
+		Base:             feeDoo.ToHNS(),
 		EffectiveFeeRate: feeRate,
 	}, true
 }
@@ -4458,7 +4434,7 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 			//
 			// RPC quirks can be enabled by the user to avoid compatibility issues
 			// with software relying on Core's behavior.
-			if req.ID == nil && !(cfg.RPCQuirks && req.Jsonrpc == "") {
+			if req.ID == nil && (!cfg.RPCQuirks || req.Jsonrpc != "") {
 				return
 			}
 			resp = s.processRequest(&req, isAdmin, closeChan)

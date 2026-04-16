@@ -164,7 +164,7 @@ func TestBIP0113Activation(t *testing.T) {
 	defer r.TearDown()
 
 	// Create a fresh output for usage within the test below.
-	const outputValue = hnsutil.SatoshiPerBitcoin
+	const outputValue = hnsutil.DooPerHNS
 	outputKey, testOutput, testPkScript, err := makeTestOutput(r, t,
 		outputValue)
 	if err != nil {
@@ -463,7 +463,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	assertSoftForkStatus(r, t, csvKey, blockchain.ThresholdStarted)
 
 	const (
-		outputAmt         = hnsutil.SatoshiPerBitcoin
+		outputAmt         = hnsutil.DooPerHNS
 		relativeBlockLock = 10
 	)
 

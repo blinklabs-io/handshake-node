@@ -9,8 +9,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -62,7 +62,7 @@ func (eft *estimateFeeTester) testTx(fee hnsutil.Amount) *TxDesc {
 
 func expectedFeePerKilobyte(t *TxDesc) BtcPerKilobyte {
 	size := float64(t.TxDesc.Tx.MsgTx().SerializeSize())
-	fee := float64(t.TxDesc.Fee)
+	fee := float64(t.Fee)
 
 	return SatoshiPerByte(fee / size).ToBtcPerKb()
 }
@@ -302,7 +302,7 @@ func (eft *estimateFeeTester) round(txHistory [][]*TxDesc,
 	i := uint32(0)
 	newBlockList := make([]*wire.MsgTx, 0, txPerBlock)
 	for _, t := range mempool {
-		newBlockList = append(newBlockList, t.TxDesc.Tx.MsgTx())
+		newBlockList = append(newBlockList, t.Tx.MsgTx())
 		i++
 
 		if i == txPerBlock {

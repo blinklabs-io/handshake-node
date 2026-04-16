@@ -53,7 +53,7 @@ func testSendOutputs(r *Harness, t *testing.T) {
 
 	// First, generate a small spend which will require only a single
 	// input.
-	txid := genSpend(hnsutil.Amount(5 * hnsutil.SatoshiPerBitcoin))
+	txid := genSpend(hnsutil.Amount(5 * hnsutil.DooPerHNS))
 
 	// Generate a single block, the transaction the wallet created should
 	// be found in this block.
@@ -65,7 +65,7 @@ func testSendOutputs(r *Harness, t *testing.T) {
 
 	// Next, generate a spend much greater than the block reward. This
 	// transaction should also have been mined properly.
-	txid = genSpend(hnsutil.Amount(500 * hnsutil.SatoshiPerBitcoin))
+	txid = genSpend(hnsutil.Amount(500 * hnsutil.DooPerHNS))
 	blockHashes, err = r.Client.Generate(1)
 	if err != nil {
 		t.Fatalf("unable to generate single block: %v", err)
@@ -312,7 +312,7 @@ func testJoinBlocks(r *Harness, t *testing.T) {
 
 func testGenerateAndSubmitBlock(r *Harness, t *testing.T) {
 	// Generate a few test spend transactions.
-	output := wire.NewTxOut(hnsutil.SatoshiPerBitcoin, wire.Address{}, wire.Covenant{})
+	output := wire.NewTxOut(hnsutil.DooPerHNS, wire.Address{}, wire.Covenant{})
 
 	const numTxns = 5
 	txns := make([]*hnsutil.Tx, 0, numTxns)
@@ -371,7 +371,7 @@ func testGenerateAndSubmitBlock(r *Harness, t *testing.T) {
 func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	t *testing.T) {
 	// Generate a few test spend transactions.
-	output := wire.NewTxOut(hnsutil.SatoshiPerBitcoin, wire.Address{}, wire.Covenant{})
+	output := wire.NewTxOut(hnsutil.DooPerHNS, wire.Address{}, wire.Covenant{})
 
 	const numTxns = 5
 	txns := make([]*hnsutil.Tx, 0, numTxns)
@@ -450,7 +450,7 @@ func testMemWalletReorg(r *Harness, t *testing.T) {
 	defer harness.TearDown()
 
 	// The internal wallet of this harness should now have 250 BTC.
-	expectedBalance := hnsutil.Amount(250 * hnsutil.SatoshiPerBitcoin)
+	expectedBalance := hnsutil.Amount(250 * hnsutil.DooPerHNS)
 	walletBalance := harness.ConfirmedBalance()
 	if expectedBalance != walletBalance {
 		t.Fatalf("wallet balance incorrect: expected %v, got %v",
@@ -483,7 +483,7 @@ func testMemWalletLockedOutputs(r *Harness, t *testing.T) {
 	startingBalance := r.ConfirmedBalance()
 
 	// First, create a signed transaction spending some outputs.
-	outputAmt := hnsutil.Amount(50 * hnsutil.SatoshiPerBitcoin)
+	outputAmt := hnsutil.Amount(50 * hnsutil.DooPerHNS)
 	output := wire.NewTxOut(int64(outputAmt), wire.Address{}, wire.Covenant{})
 	tx, err := r.CreateTransaction([]*wire.TxOut{output}, 10, true)
 	if err != nil {
@@ -571,7 +571,7 @@ func TestHarness(t *testing.T) {
 	t.Skip("Skipping: integration test requires running node with Handshake PoW; CPU miner not yet updated")
 	// We should have (numMatureOutputs * 50 BTC) of mature unspendable
 	// outputs.
-	expectedBalance := hnsutil.Amount(numMatureOutputs * 50 * hnsutil.SatoshiPerBitcoin)
+	expectedBalance := hnsutil.Amount(numMatureOutputs * 50 * hnsutil.DooPerHNS)
 	harnessBalance := mainHarness.ConfirmedBalance()
 	if harnessBalance != expectedBalance {
 		t.Fatalf("expected wallet balance of %v instead have %v",

@@ -29,7 +29,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/websocket"
-	"golang.org/x/crypto/ripemd160"
 )
 
 const (
@@ -253,15 +252,11 @@ func (m *wsNotificationManager) NotifyMempoolTx(tx *hnsutil.Tx, isNew bool) {
 type wsClientFilter struct {
 	mu sync.Mutex
 
-	// Implemented fast paths for address lookup.
-	pubKeyHashes        map[[ripemd160.Size]byte]struct{}
-	scriptHashes        map[[ripemd160.Size]byte]struct{}
-	compressedPubKeys   map[[33]byte]struct{}
-	uncompressedPubKeys map[[65]byte]struct{}
-
-	// A fallback address lookup map in case a fast path doesn't exist.
-	// Only exists for completeness.  If using this shows up in a profile,
-	// there's a good chance a fast path should be added.
+	// Address lookup map.  Handshake uses a single unified address
+	// shape (version + hash), so the btcd-era "fast path" maps (20-byte
+	// pubkey/script hash, 33-byte compressed pubkey, 65-byte
+	// uncompressed pubkey) have all collapsed into this one map keyed
+	// by the bech32 string form of the address.
 	otherAddresses map[string]struct{}
 
 	// Outpoints of unspent outputs.
@@ -274,12 +269,8 @@ type wsClientFilter struct {
 // NOTE: This extension was ported from github.com/decred/dcrd
 func newWSClientFilter(addresses []string, unspentOutPoints []wire.OutPoint, params *chaincfg.Params) *wsClientFilter {
 	filter := &wsClientFilter{
-		pubKeyHashes:        map[[ripemd160.Size]byte]struct{}{},
-		scriptHashes:        map[[ripemd160.Size]byte]struct{}{},
-		compressedPubKeys:   map[[33]byte]struct{}{},
-		uncompressedPubKeys: map[[65]byte]struct{}{},
-		otherAddresses:      map[string]struct{}{},
-		unspent:             make(map[wire.OutPoint]struct{}, len(unspentOutPoints)),
+		otherAddresses: map[string]struct{}{},
+		unspent:        make(map[wire.OutPoint]struct{}, len(unspentOutPoints)),
 	}
 
 	for _, s := range addresses {
@@ -292,34 +283,15 @@ func newWSClientFilter(addresses []string, unspentOutPoints []wire.OutPoint, par
 	return filter
 }
 
-// addAddress adds an address to a wsClientFilter, treating it correctly based
-// on the type of address passed as an argument.
+// addAddress adds a Handshake address to a wsClientFilter.  Because all
+// Handshake addresses share a single unified shape (version + hash), we
+// simply index by the bech32 string encoding.
 //
 // NOTE: This extension was ported from github.com/decred/dcrd
 func (f *wsClientFilter) addAddress(a hnsutil.Address) {
-	switch a := a.(type) {
-	case *hnsutil.AddressPubKeyHash:
-		f.pubKeyHashes[*a.Hash160()] = struct{}{}
+	if a == nil {
 		return
-	case *hnsutil.AddressScriptHash:
-		f.scriptHashes[*a.Hash160()] = struct{}{}
-		return
-	case *hnsutil.AddressPubKey:
-		serializedPubKey := a.ScriptAddress()
-		switch len(serializedPubKey) {
-		case 33: // compressed
-			var compressedPubKey [33]byte
-			copy(compressedPubKey[:], serializedPubKey)
-			f.compressedPubKeys[compressedPubKey] = struct{}{}
-			return
-		case 65: // uncompressed
-			var uncompressedPubKey [65]byte
-			copy(uncompressedPubKey[:], serializedPubKey)
-			f.uncompressedPubKeys[uncompressedPubKey] = struct{}{}
-			return
-		}
 	}
-
 	f.otherAddresses[a.EncodeAddress()] = struct{}{}
 }
 
@@ -343,35 +315,9 @@ func (f *wsClientFilter) addAddressStr(s string, params *chaincfg.Params) {
 //
 // NOTE: This extension was ported from github.com/decred/dcrd
 func (f *wsClientFilter) existsAddress(a hnsutil.Address) bool {
-	switch a := a.(type) {
-	case *hnsutil.AddressPubKeyHash:
-		_, ok := f.pubKeyHashes[*a.Hash160()]
-		return ok
-	case *hnsutil.AddressScriptHash:
-		_, ok := f.scriptHashes[*a.Hash160()]
-		return ok
-	case *hnsutil.AddressPubKey:
-		serializedPubKey := a.ScriptAddress()
-		switch len(serializedPubKey) {
-		case 33: // compressed
-			var compressedPubKey [33]byte
-			copy(compressedPubKey[:], serializedPubKey)
-			_, ok := f.compressedPubKeys[compressedPubKey]
-			if !ok {
-				_, ok = f.pubKeyHashes[*a.AddressPubKeyHash().Hash160()]
-			}
-			return ok
-		case 65: // uncompressed
-			var uncompressedPubKey [65]byte
-			copy(uncompressedPubKey[:], serializedPubKey)
-			_, ok := f.uncompressedPubKeys[uncompressedPubKey]
-			if !ok {
-				_, ok = f.pubKeyHashes[*a.AddressPubKeyHash().Hash160()]
-			}
-			return ok
-		}
+	if a == nil {
+		return false
 	}
-
 	_, ok := f.otherAddresses[a.EncodeAddress()]
 	return ok
 }
@@ -381,29 +327,9 @@ func (f *wsClientFilter) existsAddress(a hnsutil.Address) bool {
 //
 // NOTE: This extension was ported from github.com/decred/dcrd
 func (f *wsClientFilter) removeAddress(a hnsutil.Address) {
-	switch a := a.(type) {
-	case *hnsutil.AddressPubKeyHash:
-		delete(f.pubKeyHashes, *a.Hash160())
+	if a == nil {
 		return
-	case *hnsutil.AddressScriptHash:
-		delete(f.scriptHashes, *a.Hash160())
-		return
-	case *hnsutil.AddressPubKey:
-		serializedPubKey := a.ScriptAddress()
-		switch len(serializedPubKey) {
-		case 33: // compressed
-			var compressedPubKey [33]byte
-			copy(compressedPubKey[:], serializedPubKey)
-			delete(f.compressedPubKeys, compressedPubKey)
-			return
-		case 65: // uncompressed
-			var uncompressedPubKey [65]byte
-			copy(uncompressedPubKey[:], serializedPubKey)
-			delete(f.uncompressedPubKeys, uncompressedPubKey)
-			return
-		}
 	}
-
 	delete(f.otherAddresses, a.EncodeAddress())
 }
 
@@ -830,7 +756,7 @@ func (m *wsNotificationManager) notifyForNewTx(clients map[chan struct{}]*wsClie
 		amount += txOut.Value
 	}
 
-	ntfn := hnsjson.NewTxAcceptedNtfn(txHashStr, hnsutil.Amount(amount).ToBTC())
+	ntfn := hnsjson.NewTxAcceptedNtfn(txHashStr, hnsutil.Amount(amount).ToHNS())
 	marshalledJSON, err := hnsjson.MarshalCmd(hnsjson.RpcVersion1, nil, ntfn)
 	if err != nil {
 		rpcsLog.Errorf("Failed to marshal tx notification: %s", err.Error())

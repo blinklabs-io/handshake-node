@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	secp_ecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
@@ -621,12 +622,28 @@ func TestExtendedKeyAPI(t *testing.T) {
 			continue
 		}
 
-		// Sanity-check that Address() succeeds and returns an
-		// hs-family bech32 string.  The concrete address bytes are
-		// validated by hnsutil.Address tests.
-		if _, err := key.Address(&chaincfg.MainNetParams); err != nil {
+		// Verify concrete derivation: the address must be version 0,
+		// live on mainnet, and wrap Hash160 of the compressed pubkey.
+		addr, err := key.Address(&chaincfg.MainNetParams)
+		if err != nil {
 			t.Errorf("Address #%d (%s): unexpected error: %v", i,
 				test.name, err)
+			continue
+		}
+		if addr.Version() != 0 {
+			t.Errorf("Address #%d (%s): version -- got %d, want 0",
+				i, test.name, addr.Version())
+			continue
+		}
+		if !addr.IsForNet(&chaincfg.MainNetParams) {
+			t.Errorf("Address #%d (%s): not for mainnet (HRP %q)",
+				i, test.name, addr.HRP())
+			continue
+		}
+		wantHash := hnsutil.Hash160(pubKey.SerializeCompressed())
+		if !bytes.Equal(addr.Hash(), wantHash) {
+			t.Errorf("Address #%d (%s): hash mismatch -- got %x, "+
+				"want %x", i, test.name, addr.Hash(), wantHash)
 			continue
 		}
 		_ = test.address
@@ -855,12 +872,10 @@ func TestZero(t *testing.T) {
 			return false
 		}
 
-		// Sanity-check that Address() succeeds.  The concrete
-		// address bytes are validated by the hnsutil.Address tests
-		// in the parent module.
-		if _, err := key.Address(&chaincfg.MainNetParams); err != nil {
-			t.Errorf("Address #%d (%s): unexpected error: %v", i,
-				testName, err)
+		// A zeroed key must not produce a usable address.
+		if _, err := key.Address(&chaincfg.MainNetParams); err == nil {
+			t.Errorf("Address #%d (%s): expected error from zeroed "+
+				"key, got nil", i, testName)
 			return false
 		}
 

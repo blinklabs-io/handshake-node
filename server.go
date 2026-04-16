@@ -25,12 +25,12 @@ import (
 	"github.com/blinklabs-io/handshake-node/addrmgr"
 	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/hnsutil/bloom"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/connmgr"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/hnsutil/bloom"
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/mining/cpuminer"
@@ -1259,7 +1259,7 @@ func (sp *serverPeer) enforceNodeBloomFlag(cmd string) bool {
 // disconnected if an invalid fee filter value is provided.
 func (sp *serverPeer) OnFeeFilter(_ *peer.Peer, msg *wire.MsgFeeFilter) {
 	// Check that the passed minimum fee is a valid amount.
-	if msg.MinFee < 0 || msg.MinFee > hnsutil.MaxSatoshi {
+	if msg.MinFee < 0 || msg.MinFee > hnsutil.MaxDoo {
 		peerLog.Debugf("Peer %v sent an invalid feefilter '%v' -- "+
 			"disconnecting", sp, hnsutil.Amount(msg.MinFee))
 		sp.Disconnect()
@@ -2285,7 +2285,7 @@ func (s *server) peerDoneHandler(sp *serverPeer) {
 	// If this is an outbound peer and the shouldDowngradeToV1 bool is set
 	// on the underlying Peer, trigger a reconnect using the OG v1
 	// connection scheme.
-	if !sp.Inbound() && sp.Peer.ShouldDowngradeToV1() {
+	if !sp.Inbound() && sp.ShouldDowngradeToV1() {
 		srvrLog.Infof("Peer %s indicated v2->v1 downgrade. "+
 			"Marking for next attempt as v1.", sp.Addr())
 

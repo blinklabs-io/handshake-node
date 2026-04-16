@@ -553,9 +553,16 @@ func (k *ExtendedKey) ECPrivKey() (*btcec.PrivateKey, error) {
 }
 
 // Address converts the extended key to a Handshake version 0 (P2WPKH
-// equivalent) address for the passed network.
+// equivalent) address for the passed network.  Returns an error if the
+// extended key has been zeroed (or otherwise has no valid public key
+// material) so callers cannot accidentally derive a usable address from
+// wiped key state.
 func (k *ExtendedKey) Address(net *chaincfg.Params) (hnsutil.Address, error) {
-	pkHash := hnsutil.Hash160(k.pubKeyBytes())
+	pubKey := k.pubKeyBytes()
+	if len(pubKey) == 0 {
+		return nil, errors.New("extended key has no public key material")
+	}
+	pkHash := hnsutil.Hash160(pubKey)
 	return hnsutil.NewAddressPubKeyHash(pkHash, net)
 }
 

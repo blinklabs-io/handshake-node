@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/connmgr"
 	"github.com/blinklabs-io/handshake-node/database"
 	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -422,7 +422,7 @@ func loadConfig() (*config, []string, error) {
 		DbType:               defaultDbType,
 		RPCKey:               defaultRPCKeyFile,
 		RPCCert:              defaultRPCCertFile,
-		MinRelayTxFee:        mempool.DefaultMinRelayTxFee.ToBTC(),
+		MinRelayTxFee:        mempool.DefaultMinRelayTxFee.ToHNS(),
 		FreeTxRelayLimit:     defaultFreeTxRelayLimit,
 		TrickleInterval:      defaultTrickleInterval,
 		BlockMinSize:         defaultBlockMinSize,
@@ -544,7 +544,7 @@ func loadConfig() (*config, []string, error) {
 
 	// If mainnet is active, then we won't allow the stall handler to be
 	// disabled.
-	if activeNetParams.Params.Net == wire.MainNet && cfg.DisableStallHandler {
+	if activeNetParams.Net == wire.MainNet && cfg.DisableStallHandler {
 		str := "%s: stall handler cannot be disabled on mainnet"
 		err := fmt.Errorf(str, funcName)
 		fmt.Fprintln(os.Stderr, err)
