@@ -1,4 +1,5 @@
 // Copyright (c) 2014-2016 The btcsuite developers
+// Copyright (c) 2024-2026 Blink Labs Software
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -11,11 +12,8 @@ import (
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
-// genesisCoinbaseTx is the coinbase transaction for the genesis blocks for
-// the main network, regression test network, and test network (version 3).
-//
-// TODO(phase1.5): This contains placeholder data. Replace with the real
-// Handshake genesis transaction when network parameters are finalized.
+// genesisCoinbaseTx is the coinbase transaction for the Handshake mainnet
+// genesis block.  Parsed from the real mainnet block_0.raw (452 bytes).
 var genesisCoinbaseTx = wire.MsgTx{
 	Version: 0,
 	TxIn: []*wire.TxIn{
@@ -25,189 +23,113 @@ var genesisCoinbaseTx = wire.MsgTx{
 				Index: 0xffffffff,
 			},
 			Sequence: 0xffffffff,
+			Witness: wire.TxWitness{
+				{ // 32 bytes: tree root proof
+					0x50, 0xb8, 0x93, 0x7f, 0xc5, 0xde, 0xf0, 0x8f,
+					0x9f, 0x3c, 0xbd, 0xa7, 0xe5, 0xf0, 0x8c, 0x70,
+					0x6e, 0xdb, 0x80, 0xab, 0xa5, 0x88, 0x0c, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				},
+				{ // 32 bytes
+					0x2d, 0x5d, 0xe5, 0x86, 0x09, 0xd4, 0x97, 0x0f,
+					0xb5, 0x48, 0xf8, 0x5a, 0xd0, 0x7a, 0x87, 0xdb,
+					0x40, 0xe0, 0x54, 0xe3, 0x4c, 0xc8, 0x1c, 0x95,
+					0x1c, 0xa9, 0x95, 0xa5, 0x8f, 0x67, 0x4d, 0xb7,
+				},
+				{ // 32 bytes
+					0x10, 0xd7, 0x48, 0xed, 0xa1, 0xb9, 0xc6, 0x7b,
+					0x94, 0xd3, 0x24, 0x4e, 0x02, 0x11, 0x67, 0x76,
+					0x18, 0xa9, 0xb4, 0xb3, 0x29, 0xe8, 0x96, 0xad,
+					0x90, 0x43, 0x1f, 0x9f, 0x48, 0x03, 0x4b, 0xad,
+				},
+				{ // 32 bytes
+					0xe2, 0xc0, 0x29, 0x9a, 0x1e, 0x46, 0x67, 0x73,
+					0x51, 0x66, 0x55, 0xf0, 0x9a, 0x64, 0xb1, 0xe1,
+					0x6b, 0x25, 0x79, 0x53, 0x0d, 0xe6, 0xc4, 0xa5,
+					0x9c, 0xe5, 0x65, 0x4d, 0xea, 0x45, 0x18, 0x0f,
+				},
+			},
 		},
 	},
 	TxOut: []*wire.TxOut{
 		{
-			Value:    0x12a05f200,
-			Address:  wire.Address{},
-			Covenant: wire.Covenant{},
+			Value: 2002210000, // Genesis reward
+			Address: wire.Address{
+				Version: 0,
+				Hash: []byte{
+					0xf0, 0x23, 0x7a, 0xe2, 0xe8, 0xf8, 0x60, 0xf7,
+					0xd7, 0x91, 0x24, 0xfc, 0x51, 0x3f, 0x01, 0x2e,
+					0x5a, 0xaa, 0x8d, 0x23,
+				},
+			},
+			Covenant: wire.Covenant{Type: 0},
 		},
 	},
 	LockTime: 0,
 }
 
-// genesisHash is computed from the genesis block header so it stays
-// consistent with any merkle-root changes during the refactor.
-//
-// TODO(phase1.5): Replace with the real Handshake mainnet genesis hash once
-// network parameters and PoW constants are finalized.
-var genesisHash chainhash.Hash // set by init()
+// genesisMerkleRoot is the merkle root from the real Handshake mainnet genesis
+// block header (from block_0.raw).  This is hardcoded rather than computed
+// because Handshake's merkle tree construction differs from a simple TxHash.
+var genesisMerkleRoot = chainhash.Hash{
+	0x8e, 0x4c, 0x97, 0x56, 0xfe, 0xf2, 0xad, 0x10,
+	0x37, 0x5f, 0x36, 0x0e, 0x05, 0x60, 0xfc, 0xc7,
+	0x58, 0x7e, 0xb5, 0x22, 0x3d, 0xdf, 0x8c, 0xd7,
+	0xc7, 0xe0, 0x6e, 0x60, 0xa1, 0x14, 0x0b, 0x15,
+}
 
-// genesisMerkleRoot is the hash of the first transaction in the genesis block
-// for the main network.  For a single-transaction block, the merkle root is
-// simply the transaction hash.
-var genesisMerkleRoot = genesisCoinbaseTx.TxHash()
-
-// genesisBlock defines the genesis block of the block chain which serves as the
-// public transaction ledger for the main network.
+// genesisBlock defines the genesis block of the Handshake mainnet.
+// Parsed from blockchain/testdata/handshake/block_0.raw.
 var genesisBlock = wire.MsgBlock{
 	Header: wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  chainhash.Hash{},         // 0000000000000000000000000000000000000000000000000000000000000000
-		MerkleRoot: genesisMerkleRoot,         // computed from genesisCoinbaseTx.TxHash()
-		Timestamp:  time.Unix(0x495fab29, 0), // 2009-01-03 18:15:05 +0000 UTC
-		Bits:       0x1d00ffff,               // 486604799 [00000000ffff0000000000000000000000000000000000000000000000000000]
-		Nonce:      0x7c2bac1d,               // 2083236893
+		Version:      0,
+		PrevBlock:    chainhash.Hash{},
+		MerkleRoot:   genesisMerkleRoot,
+		Timestamp:    time.Unix(1580745078, 0), // 2020-02-03 15:51:18 UTC
+		Bits:         0x1c00ffff,
+		Nonce:        0,
+		NameRoot:     [32]byte{},
+		ExtraNonce:   [24]byte{},
+		ReservedRoot: [32]byte{},
+		WitnessRoot: [32]byte{
+			0x1a, 0x2c, 0x60, 0xb9, 0x43, 0x92, 0x06, 0x93,
+			0x8f, 0x8d, 0x78, 0x23, 0x78, 0x2a, 0xbd, 0xb8,
+			0xb2, 0x11, 0xa5, 0x74, 0x31, 0xe9, 0xc9, 0xb6,
+			0xa6, 0x36, 0x5d, 0x8d, 0x42, 0x89, 0x33, 0x51,
+		},
+		Mask: [32]byte{},
 	},
 	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
 }
 
-// regTestGenesisHash is computed from the regtest genesis block header.
-var regTestGenesisHash chainhash.Hash // set by init()
+// genesisHash is the hash of the mainnet genesis block header.
+var genesisHash = genesisBlock.Header.BlockHash()
 
-// regTestGenesisMerkleRoot is the hash of the first transaction in the genesis
-// block for the regression test network.  It is the same as the merkle root for
-// the main network.
-var regTestGenesisMerkleRoot = genesisMerkleRoot
-
-// regTestGenesisBlock defines the genesis block of the block chain which serves
-// as the public transaction ledger for the regression test network.
+// regTestGenesisBlock defines the genesis block for the regression test
+// network.  Same coinbase TX as mainnet but with trivial PoW difficulty
+// and a timestamp 2 seconds later.
+// Matches hsd regtest genesis data from genesis-data.json.
 var regTestGenesisBlock = wire.MsgBlock{
 	Header: wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  chainhash.Hash{},         // 0000000000000000000000000000000000000000000000000000000000000000
-		MerkleRoot: regTestGenesisMerkleRoot,  // computed from genesisCoinbaseTx.TxHash()
-		Timestamp:  time.Unix(1296688602, 0),  // 2011-02-02 23:16:42 +0000 UTC
-		Bits:       0x207fffff,                // 545259519 [7fffff0000000000000000000000000000000000000000000000000000000000]
-		Nonce:      2,
-	},
-	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
-}
-
-// testNet3GenesisHash is computed from the testnet3 genesis block header.
-var testNet3GenesisHash chainhash.Hash // set by init()
-
-// testNet3GenesisMerkleRoot is the hash of the first transaction in the genesis
-// block for the test network (version 3).  It is the same as the merkle root
-// for the main network.
-var testNet3GenesisMerkleRoot = genesisMerkleRoot
-
-// testNet3GenesisBlock defines the genesis block of the block chain which
-// serves as the public transaction ledger for the test network (version 3).
-var testNet3GenesisBlock = wire.MsgBlock{
-	Header: wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  chainhash.Hash{},          // 0000000000000000000000000000000000000000000000000000000000000000
-		MerkleRoot: testNet3GenesisMerkleRoot, // computed from genesisCoinbaseTx.TxHash()
-		Timestamp:  time.Unix(1296688602, 0),  // 2011-02-02 23:16:42 +0000 UTC
-		Bits:       0x1d00ffff,                // 486604799 [00000000ffff0000000000000000000000000000000000000000000000000000]
-		Nonce:      0x18aea41a,                // 414098458
-	},
-	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
-}
-
-// testNet4GenesisTx is the transaction for the genesis blocks for test network (version 4).
-//
-// TODO(phase1.5): This contains placeholder data. Replace with the real
-// Handshake testnet4 genesis transaction when network parameters are finalized.
-var testNet4GenesisTx = wire.MsgTx{
-	Version: 0,
-	TxIn: []*wire.TxIn{
-		{
-			PreviousOutPoint: wire.OutPoint{
-				Hash:  chainhash.Hash{},
-				Index: 0xffffffff,
-			},
-			Sequence: 0xffffffff,
+		Version:      0,
+		PrevBlock:    chainhash.Hash{},
+		MerkleRoot:   genesisMerkleRoot,
+		Timestamp:    time.Unix(1580745080, 0), // 2020-02-03 15:51:20 UTC
+		Bits:         0x207fffff,
+		Nonce:        0,
+		NameRoot:     [32]byte{},
+		ExtraNonce:   [24]byte{},
+		ReservedRoot: [32]byte{},
+		WitnessRoot: [32]byte{
+			0x1a, 0x2c, 0x60, 0xb9, 0x43, 0x92, 0x06, 0x93,
+			0x8f, 0x8d, 0x78, 0x23, 0x78, 0x2a, 0xbd, 0xb8,
+			0xb2, 0x11, 0xa5, 0x74, 0x31, 0xe9, 0xc9, 0xb6,
+			0xa6, 0x36, 0x5d, 0x8d, 0x42, 0x89, 0x33, 0x51,
 		},
-	},
-	TxOut: []*wire.TxOut{
-		{
-			Value:    0x12a05f200,
-			Address:  wire.Address{},
-			Covenant: wire.Covenant{},
-		},
-	},
-	LockTime: 0,
-}
-
-// testNet4GenesisHash is computed from the testnet4 genesis block header.
-var testNet4GenesisHash chainhash.Hash // set by init()
-
-// testNet4GenesisMerkleRoot is the hash of the first transaction in the genesis
-// block for the test network (version 4).  For a single-transaction block, the
-// merkle root is simply the transaction hash.
-var testNet4GenesisMerkleRoot = testNet4GenesisTx.TxHash()
-
-// testNet4GenesisBlock defines the genesis block of the block chain which
-// serves as the public transaction ledger for the test network (version 3).
-var testNet4GenesisBlock = wire.MsgBlock{
-	Header: wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  chainhash.Hash{},          // 0000000000000000000000000000000000000000000000000000000000000000
-		MerkleRoot: testNet4GenesisMerkleRoot, // computed from testNet4GenesisTx.TxHash()
-		Timestamp:  time.Unix(1714777860, 0),  // 2024-05-03 23:11:00 +0000 UTC
-		Bits:       0x1d00ffff,                // 486604799 [00000000ffff0000000000000000000000000000000000000000000000000000]
-		Nonce:      0x17780cbb,                // 393743547
-	},
-	Transactions: []*wire.MsgTx{&testNet4GenesisTx},
-}
-
-// simNetGenesisHash is computed from the simnet genesis block header.
-var simNetGenesisHash chainhash.Hash // set by init()
-
-// simNetGenesisMerkleRoot is the hash of the first transaction in the genesis
-// block for the simulation test network.  It is the same as the merkle root for
-// the main network.
-var simNetGenesisMerkleRoot = genesisMerkleRoot
-
-// simNetGenesisBlock defines the genesis block of the block chain which serves
-// as the public transaction ledger for the simulation test network.
-var simNetGenesisBlock = wire.MsgBlock{
-	Header: wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  chainhash.Hash{},         // 0000000000000000000000000000000000000000000000000000000000000000
-		MerkleRoot: simNetGenesisMerkleRoot,  // computed from genesisCoinbaseTx.TxHash()
-		Timestamp:  time.Unix(1401292357, 0), // 2014-05-28 15:52:37 +0000 UTC
-		Bits:       0x207fffff,               // 545259519 [7fffff0000000000000000000000000000000000000000000000000000000000]
-		Nonce:      2,
+		Mask: [32]byte{},
 	},
 	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
 }
 
-// sigNetGenesisHash is computed from the signet genesis block header.
-var sigNetGenesisHash chainhash.Hash // set by init()
-
-// sigNetGenesisMerkleRoot is the hash of the first transaction in the genesis
-// block for the signet test network. It is the same as the merkle root for
-// the main network.
-var sigNetGenesisMerkleRoot = genesisMerkleRoot
-
-// sigNetGenesisBlock defines the genesis block of the block chain which serves
-// as the public transaction ledger for the signet test network.
-var sigNetGenesisBlock = wire.MsgBlock{
-	Header: wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  chainhash.Hash{},         // 0000000000000000000000000000000000000000000000000000000000000000
-		MerkleRoot: sigNetGenesisMerkleRoot,  // computed from genesisCoinbaseTx.TxHash()
-		Timestamp:  time.Unix(1598918400, 0), // 2020-09-01 00:00:00 +0000 UTC
-		Bits:       0x1e0377ae,               // 503543726 [00000377ae000000000000000000000000000000000000000000000000000000]
-		Nonce:      52613770,
-	},
-	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
-}
-
-// init computes genesis block hashes from the block headers so they stay
-// consistent with any transaction format changes during the refactor.
-//
-// TODO(phase1.5): Replace with real Handshake genesis hashes once network
-// parameters and PoW constants are finalized.
-func init() {
-	genesisHash = genesisBlock.Header.BlockHash()
-	regTestGenesisHash = regTestGenesisBlock.Header.BlockHash()
-	testNet3GenesisHash = testNet3GenesisBlock.Header.BlockHash()
-	testNet4GenesisHash = testNet4GenesisBlock.Header.BlockHash()
-	simNetGenesisHash = simNetGenesisBlock.Header.BlockHash()
-	sigNetGenesisHash = sigNetGenesisBlock.Header.BlockHash()
-}
+// regTestGenesisHash is the hash of the regtest genesis block header.
+var regTestGenesisHash = regTestGenesisBlock.Header.BlockHash()
