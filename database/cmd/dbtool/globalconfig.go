@@ -5,7 +5,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/database"
 	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
-	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 var (
@@ -35,9 +33,6 @@ type config struct {
 	DataDir        string `short:"b" long:"datadir" description:"Location of the handshake-node data directory"`
 	DbType         string `long:"dbtype" description:"Database backend to use for the Block Chain"`
 	RegressionTest bool   `long:"regtest" description:"Use the regression test network"`
-	SimNet         bool   `long:"simnet" description:"Use the simulation test network"`
-	TestNet3       bool   `long:"testnet" description:"Use the test network"`
-	TestNet4       bool   `long:"testnet4" description:"Use the test network (version 4)"`
 }
 
 // fileExists reports whether the named file or directory exists.
@@ -55,51 +50,18 @@ func validDbType(dbType string) bool {
 	return slices.Contains(knownDbTypes, dbType)
 }
 
-// netName returns the name used when referring to a bitcoin network.  At the
-// time of writing, btcd currently places blocks for testnet version 3 in the
-// data and log directory "testnet", which does not match the Name field of the
-// chaincfg parameters.  This function can be used to override this directory name
-// as "testnet" when the passed active network matches wire.TestNet3.
-//
-// A proper upgrade to move the data and log directories for this network to
-// "testnet3" is planned for the future, at which point this function can be
-// removed and the network parameter's name used instead.
+// netName returns the name used when referring to a Handshake network.
 func netName(chainParams *chaincfg.Params) string {
-	switch chainParams.Net {
-	case wire.TestNet3:
-		return "testnet"
-	default:
-		return chainParams.Name
-	}
+	return chainParams.Name
 }
 
 // setupGlobalConfig examine the global configuration options for any conditions
 // which are invalid as well as performs any addition setup necessary after the
 // initial parse.
 func setupGlobalConfig() error {
-	// Multiple networks can't be selected simultaneously.
-	// Count number of network flags passed; assign active network params
-	// while we're at it
-	numNets := 0
-	if cfg.TestNet3 {
-		numNets++
-		activeNetParams = &chaincfg.TestNet3Params
-	}
-	if cfg.TestNet4 {
-		numNets++
-		activeNetParams = &chaincfg.TestNet4Params
-	}
+	// Use the regression test network if specified.
 	if cfg.RegressionTest {
-		numNets++
 		activeNetParams = &chaincfg.RegressionNetParams
-	}
-	if cfg.SimNet {
-		numNets++
-		activeNetParams = &chaincfg.SimNetParams
-	}
-	if numNets > 1 {
-		return errors.New("The testnet, regtest, and simnet params " +
-			"can't be used together -- choose one of the three")
 	}
 
 	// Validate database type.

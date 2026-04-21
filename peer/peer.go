@@ -249,7 +249,7 @@ type Config struct {
 
 	// ChainParams identifies which chain parameters the peer is associated
 	// with.  It is highly recommended to specify this field, however it can
-	// be omitted in which case the test network will be used.
+	// be omitted in which case the regression test network will be used.
 	ChainParams *chaincfg.Params
 
 	// Services specifies which services to advertise as supported by the
@@ -281,7 +281,7 @@ type Config struct {
 
 	// DisableStallHandler if true, then the stall handler that attempts to
 	// disconnect from peers that appear to be taking too long to respond
-	// to requests won't be activated. This can be useful in certain simnet
+	// to requests won't be activated. This can be useful in certain regtest
 	// scenarios where the stall behavior isn't important to the system
 	// under test.
 	DisableStallHandler bool
@@ -2391,9 +2391,9 @@ func newPeerBase(origCfg *Config, inbound bool) *Peer {
 		cfg.ProtocolVersion = MaxProtocolVersion
 	}
 
-	// Set the chain parameters to testnet if the caller did not specify any.
+	// Set the chain parameters to regtest if the caller did not specify any.
 	if cfg.ChainParams == nil {
-		cfg.ChainParams = &chaincfg.TestNet3Params
+		cfg.ChainParams = &chaincfg.RegressionNetParams
 	}
 
 	// Set the trickle interval if a non-positive value is specified.

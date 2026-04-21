@@ -6,7 +6,6 @@
 package chaincfg
 
 import (
-	"encoding/hex"
 	"errors"
 	"math"
 	"math/big"
@@ -27,7 +26,7 @@ var (
 	// mainPowLimit is the highest proof of work value a Handshake block can
 	// have for the main network.  This is the value represented by compact
 	// bits 0x1c00ffff: 0x0000000000ffff00...
-	mainPowLimit, _ = new(big.Int).SetString("0000000000ffff0000000000000000000000000000000000000000000000000000", 16)
+	mainPowLimit, _ = new(big.Int).SetString("0000000000ffff00000000000000000000000000000000000000000000000000", 16)
 
 	// regressionPowLimit is the highest proof of work value a Handshake
 	// block can have for the regression test network.  It is the value
@@ -288,9 +287,7 @@ var MainNetParams = Params{
 	GenerateSupported:        false,
 
 	// Checkpoints ordered from oldest to newest.
-	Checkpoints: []Checkpoint{
-		{258026, newHashFromStr("0000000000000001a32c1debc5855f4ab34b3fc39b32dbc07c1fca074c0d0b55")},
-	},
+	Checkpoints: nil,
 
 	// Consensus rule change deployments.
 	// Handshake does not use BIP9 soft-fork deployments, but the
@@ -562,7 +559,3 @@ func init() {
 	mustRegister(&MainNetParams)
 	mustRegister(&RegressionNetParams)
 }
-
-// Ensure hex import is used (needed for DefaultSignetChallenge in btcd,
-// kept for potential future use).
-var _ = hex.DecodeString

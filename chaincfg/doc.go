@@ -37,9 +37,9 @@
 //	func main() {
 //	        flag.Parse()
 //
-//	        // Modify active network parameters if operating on testnet.
-//	        if *testnet {
-//	                chainParams = &chaincfg.TestNet3Params
+//	        // Modify active network parameters if operating on regtest.
+//	        if *regtest {
+//	                chainParams = &chaincfg.RegressionNetParams
 //	        }
 //
 //	        // later...
@@ -53,9 +53,8 @@
 //	        fmt.Println(addr)
 //	}
 //
-// If an application does not use one of the three standard Bitcoin networks,
+// If an application does not use one of the standard Handshake networks,
 // a new Params struct may be created which defines the parameters for the
 // non-standard network.  As a general rule of thumb, all network parameters
-// should be unique to the network, but parameter collisions can still occur
-// (unfortunately, this is the case with regtest and testnet3 sharing magics).
+// should be unique to the network.
 package chaincfg

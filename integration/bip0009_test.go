@@ -374,7 +374,7 @@ func TestBIP0009Mining(t *testing.T) {
 	t.Parallel()
 
 	// Initialize the primary mining node with only the genesis block.
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, nil, "")
+	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, nil, "")
 	if err != nil {
 		t.Fatalf("unable to create primary harness: %v", err)
 	}

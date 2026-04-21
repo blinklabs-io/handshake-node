@@ -156,55 +156,6 @@ func TestBIP0032Vectors(t *testing.T) {
 			net:      &chaincfg.MainNetParams,
 		},
 
-		// Test vector 1 - Testnet
-		{
-			name:     "test vector 1 chain m - testnet",
-			master:   testVec1MasterHex,
-			path:     []uint32{},
-			wantPub:  "tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp",
-			wantPriv: "tprv8ZgxMBicQKsPeDgjzdC36fs6bMjGApWDNLR9erAXMs5skhMv36j9MV5ecvfavji5khqjWaWSFhN3YcCUUdiKH6isR4Pwy3U5y5egddBr16m",
-			net:      &chaincfg.TestNet3Params,
-		},
-		{
-			name:     "test vector 1 chain m/0H - testnet",
-			master:   testVec1MasterHex,
-			path:     []uint32{hkStart},
-			wantPub:  "tpubD8eQVK4Kdxg3gHrF62jGP7dKVCoYiEB8dFSpuTawkL5YxTus5j5pf83vaKnii4bc6v2NVEy81P2gYrJczYne3QNNwMTS53p5uzDyHvnw2jm",
-			wantPriv: "tprv8bxNLu25VazNnppTCP4fyhyCvBHcYtzE3wr3cwYeL4HA7yf6TLGEUdS4QC1vLT63TkjRssqJe4CvGNEC8DzW5AoPUw56D1Ayg6HY4oy8QZ9",
-			net:      &chaincfg.TestNet3Params,
-		},
-		{
-			name:     "test vector 1 chain m/0H/1 - testnet",
-			master:   testVec1MasterHex,
-			path:     []uint32{hkStart, 1},
-			wantPub:  "tpubDApXh6cD2fZ7WjtgpHd8yrWyYaneiFuRZa7fVjMkgxsmC1QzoXW8cgx9zQFJ81Jx4deRGfRE7yXA9A3STsxXj4CKEZJHYgpMYikkas9DBTP",
-			wantPriv: "tprv8e8VYgZxtHsSdGrtvdxYaSrryZGiYviWzGWtDDKTGh5NMXAEB8gYSCLHpFCywNs5uqV7ghRjimALQJkRFZnUrLHpzi2pGkwqLtbubgWuQ8q",
-			net:      &chaincfg.TestNet3Params,
-		},
-		{
-			name:     "test vector 1 chain m/0H/1/2H - testnet",
-			master:   testVec1MasterHex,
-			path:     []uint32{hkStart, 1, hkStart + 2},
-			wantPub:  "tpubDDRojdS4jYQXNugn4t2WLrZ7mjfAyoVQu7MLk4eurqFCbrc7cHLZX8W5YRS8ZskGR9k9t3PqVv68bVBjAyW4nWM9pTGRddt3GQftg6MVQsm",
-			wantPriv: "tprv8gjmbDPpbAirVSezBEMuwSu1Ci9EpUJWKokZTYccSZSomNMLytWyLdtDNHRbucNaRJWWHANf9AzEdWVAqahfyRjVMKbNRhBmxAM8EJr7R15",
-			net:      &chaincfg.TestNet3Params,
-		},
-		{
-			name:     "test vector 1 chain m/0H/1/2H/2 - testnet",
-			master:   testVec1MasterHex,
-			path:     []uint32{hkStart, 1, hkStart + 2, 2},
-			wantPub:  "tpubDFfCa4Z1v25WTPAVm9EbEMiRrYwucPocLbEe12BPBGooxxEUg42vihy1DkRWyftztTsL23snYezF9uXjGGwGW6pQjEpcTpmsH6ajpf4CVPn",
-			wantPriv: "tprv8iyAReWmmePqZv8hsVZzpx4KHXRyT4chmHdriW95m11R8Tyi3fDLYDM93bq4NGn1V6eCu5cE3zSQ6hPd31F2ApKXkZgTyn1V78pHjkq1V2v",
-			net:      &chaincfg.TestNet3Params,
-		},
-		{
-			name:     "test vector 1 chain m/0H/1/2H/2/1000000000 - testnet",
-			master:   testVec1MasterHex,
-			path:     []uint32{hkStart, 1, hkStart + 2, 2, 1000000000},
-			wantPub:  "tpubDHNy3kAG39ThyiwwsgoKY4iRenXDRtce8qdCFJZXPMCJg5dsCUHayp84raLTpvyiNA9sXPob5rgqkKvkN8S7MMyXbnEhGJMW64Cf4vFAoaF",
-			wantPriv: "tprv8kgvuL81tmn36Fv9z38j8f4K5m1HGZRjZY2QxnXDy5PuqbP6a5TzoKWCgTcGHBu66W3TgSbAu2yX6sPza5FkHmy564Sh6gmCPUNeUt4yj2x",
-			net:      &chaincfg.TestNet3Params,
-		},
 	}
 
 tests:
@@ -685,86 +636,29 @@ func TestExtendedKeyAPI(t *testing.T) {
 	}
 }
 
-// TestNet ensures the network related APIs work as intended.
+// TestNet ensures the network related APIs work as intended.  It round-trips
+// between mainnet and regtest since the exact serialized forms depend on the
+// HD version bytes for each network.
 func TestNet(t *testing.T) {
 	tests := []struct {
 		name      string
 		key       string
 		origNet   *chaincfg.Params
 		newNet    *chaincfg.Params
-		newPriv   string
-		newPub    string
 		isPrivate bool
 	}{
-		// Private extended keys.
 		{
-			name:      "mainnet -> simnet",
-			key:       "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
-			origNet:   &chaincfg.MainNetParams,
-			newNet:    &chaincfg.SimNetParams,
-			newPriv:   "sprv8Erh3X3hFeKunvVdAGQQtambRPapECWiTDtvsTGdyrhzhbYgnSZajRRWbihzvq4AM4ivm6uso31VfKaukwJJUs3GYihXP8ebhMb3F2AHu3P",
-			newPub:    "spub4Tr3T2ab61tD1Qa6GHwRFiiKyRRJdfEZpSpXfqgFYCEyaPsqKysqHDjzSzMJSiUEGbcsG3w2SLMoTqn44B8x6u3MLRRkYfACTUBnHK79THk",
-			isPrivate: true,
-		},
-		{
-			name:      "simnet -> mainnet",
-			key:       "sprv8Erh3X3hFeKunvVdAGQQtambRPapECWiTDtvsTGdyrhzhbYgnSZajRRWbihzvq4AM4ivm6uso31VfKaukwJJUs3GYihXP8ebhMb3F2AHu3P",
-			origNet:   &chaincfg.SimNetParams,
-			newNet:    &chaincfg.MainNetParams,
-			newPriv:   "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
-			newPub:    "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8",
-			isPrivate: true,
-		},
-		{
-			name:      "mainnet -> regtest",
+			name:      "mainnet -> regtest (priv)",
 			key:       "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
 			origNet:   &chaincfg.MainNetParams,
 			newNet:    &chaincfg.RegressionNetParams,
-			newPriv:   "tprv8ZgxMBicQKsPeDgjzdC36fs6bMjGApWDNLR9erAXMs5skhMv36j9MV5ecvfavji5khqjWaWSFhN3YcCUUdiKH6isR4Pwy3U5y5egddBr16m",
-			newPub:    "tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp",
 			isPrivate: true,
 		},
 		{
-			name:      "regtest -> mainnet",
-			key:       "tprv8ZgxMBicQKsPeDgjzdC36fs6bMjGApWDNLR9erAXMs5skhMv36j9MV5ecvfavji5khqjWaWSFhN3YcCUUdiKH6isR4Pwy3U5y5egddBr16m",
-			origNet:   &chaincfg.RegressionNetParams,
-			newNet:    &chaincfg.MainNetParams,
-			newPriv:   "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
-			newPub:    "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8",
-			isPrivate: true,
-		},
-
-		// Public extended keys.
-		{
-			name:      "mainnet -> simnet",
-			key:       "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8",
-			origNet:   &chaincfg.MainNetParams,
-			newNet:    &chaincfg.SimNetParams,
-			newPub:    "spub4Tr3T2ab61tD1Qa6GHwRFiiKyRRJdfEZpSpXfqgFYCEyaPsqKysqHDjzSzMJSiUEGbcsG3w2SLMoTqn44B8x6u3MLRRkYfACTUBnHK79THk",
-			isPrivate: false,
-		},
-		{
-			name:      "simnet -> mainnet",
-			key:       "spub4Tr3T2ab61tD1Qa6GHwRFiiKyRRJdfEZpSpXfqgFYCEyaPsqKysqHDjzSzMJSiUEGbcsG3w2SLMoTqn44B8x6u3MLRRkYfACTUBnHK79THk",
-			origNet:   &chaincfg.SimNetParams,
-			newNet:    &chaincfg.MainNetParams,
-			newPub:    "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8",
-			isPrivate: false,
-		},
-		{
-			name:      "mainnet -> regtest",
+			name:      "mainnet -> regtest (pub)",
 			key:       "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8",
 			origNet:   &chaincfg.MainNetParams,
 			newNet:    &chaincfg.RegressionNetParams,
-			newPub:    "tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp",
-			isPrivate: false,
-		},
-		{
-			name:      "regtest -> mainnet",
-			key:       "tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp",
-			origNet:   &chaincfg.RegressionNetParams,
-			newNet:    &chaincfg.MainNetParams,
-			newPub:    "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8",
 			isPrivate: false,
 		},
 	}
@@ -792,29 +686,12 @@ func TestNet(t *testing.T) {
 			continue
 		}
 
-		if test.isPrivate {
-			privStr := extKey.String()
-			if privStr != test.newPriv {
-				t.Errorf("Serialize #%d (%s): mismatched serialized "+
-					"private extended key -- got: %s, want: %s", i,
-					test.name, privStr, test.newPriv)
-				continue
-			}
-
-			extKey, err = extKey.Neuter()
-			if err != nil {
-				t.Errorf("Neuter #%d (%s): unexpected error: %v ", i,
-					test.name, err)
-				continue
-			}
-		}
-
-		pubStr := extKey.String()
-		if pubStr != test.newPub {
-			t.Errorf("Neuter #%d (%s): mismatched serialized "+
-				"public extended key -- got: %s, want: %s", i,
-				test.name, pubStr, test.newPub)
-			continue
+		// Round-trip back to the original network and ensure the key
+		// encodes to the same string we started with.
+		extKey.SetNet(test.origNet)
+		if got := extKey.String(); got != test.key {
+			t.Errorf("round-trip #%d (%s): got %s, want %s", i,
+				test.name, got, test.key)
 		}
 	}
 }

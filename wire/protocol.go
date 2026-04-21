@@ -178,10 +178,10 @@ type BitcoinNet uint32
 // better idea to simply disconnect clients that are misbehaving over TCP.
 const (
 	// MainNet represents the Handshake mainnet.
-	MainNet BitcoinNet = 1533997779 // 0x5B6EF2D3
+	MainNet BitcoinNet = 0x5B6EF2D3
 
 	// TestNet represents the regression test network.
-	TestNet BitcoinNet = 2922943951 // 0xAE34C04F
+	TestNet BitcoinNet = 0xAE3895CF
 )
 
 // bnStrings is a map of networks back to their constant names for

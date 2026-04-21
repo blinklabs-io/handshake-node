@@ -121,7 +121,7 @@ func TestHaveBlock(t *testing.T) {
 // combinations of inputs to the CalcSequenceLock function in order to ensure
 // the returned SequenceLocks are correct for each test instance.
 func TestCalcSequenceLock(t *testing.T) {
-	netParams := &chaincfg.SimNetParams
+	netParams := &chaincfg.RegressionNetParams
 
 	// We need to activate CSV in order to test the processing logic, so
 	// manually craft the block version that's used to signal the soft-fork
@@ -1305,7 +1305,7 @@ func TestIsAncestor(t *testing.T) {
 	}
 
 	// Is a block from another chain an ancestor of 1b?
-	fakeChain := newFakeChain(&chaincfg.TestNet3Params)
+	fakeChain := newFakeChain(&chaincfg.RegressionNetParams)
 	shouldBeFalse = branch2Nodes[0].IsAncestor(fakeChain.bestChain.Genesis())
 	if shouldBeFalse {
 		t.Errorf("TestIsAncestor fail. Node %s is in a different chain than "+

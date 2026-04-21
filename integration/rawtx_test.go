@@ -28,7 +28,7 @@ func TestTestMempoolAccept(t *testing.T) {
 
 	// Boilerplate codetestDir to make a pruned node.
 	hnsCfg := []string{"--rejectnonstd", "--debuglevel=debug"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, hnsCfg, "")
+	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, hnsCfg, "")
 	require.NoError(t, err)
 
 	// Setup the node.

@@ -472,9 +472,9 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 	// Update the address manager with the advertised services for outbound
 	// connections in case they have changed.  This is not done for inbound
 	// connections to help prevent malicious behavior and is skipped when
-	// running on the simulation test network since it is only intended to
-	// connect to specified peers and actively avoids advertising and
-	// connecting to discovered peers.
+	// running in regression test mode since it is only intended to connect
+	// to specified peers and actively avoids advertising and connecting to
+	// discovered peers.
 	//
 	// NOTE: This is done before rejecting peers that are too old to ensure
 	// it is updated regardless in the case a new minimum protocol version is
@@ -482,7 +482,7 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 	isInbound := sp.Inbound()
 	remoteAddr := sp.NA()
 	addrManager := sp.server.addrManager
-	if !cfg.SimNet && !isInbound {
+	if !cfg.RegressionTest && !isInbound {
 		addrManager.SetServices(remoteAddr, msg.Services)
 	}
 
@@ -504,7 +504,7 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 		return wire.NewMsgReject(msg.Command(), wire.RejectNonstandard, reason)
 	}
 
-	if !cfg.SimNet && !isInbound {
+	if !cfg.RegressionTest && !isInbound {
 		// After soft-fork activation, only make outbound
 		// connection to peers if they flag that they're segwit
 		// enabled.
@@ -1332,11 +1332,11 @@ func (sp *serverPeer) OnFilterLoad(_ *peer.Peer, msg *wire.MsgFilterLoad) {
 // and is used to provide the peer with known addresses from the address
 // manager.
 func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.MsgGetAddr) {
-	// Don't return any addresses when running on the simulation test
-	// network.  This helps prevent the network from becoming another
-	// public test network since it will not be able to learn about other
-	// peers that have not specifically been provided.
-	if cfg.SimNet {
+	// Don't return any addresses when running in regression test mode.
+	// This helps prevent the network from becoming another public test
+	// network since it will not be able to learn about other peers that
+	// have not specifically been provided.
+	if cfg.RegressionTest {
 		return
 	}
 
@@ -1367,11 +1367,11 @@ func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.MsgGetAddr) {
 // OnAddr is invoked when a peer receives an addr bitcoin message and is
 // used to notify the server about advertised addresses.
 func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
-	// Ignore addresses when running on the simulation test network.  This
-	// helps prevent the network from becoming another public test network
-	// since it will not be able to learn about other peers that have not
+	// Ignore addresses when running in regression test mode.  This helps
+	// prevent the network from becoming another public test network since
+	// it will not be able to learn about other peers that have not
 	// specifically been provided.
-	if cfg.SimNet {
+	if cfg.RegressionTest {
 		return
 	}
 
@@ -1424,8 +1424,9 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 // OnAddrV2 is invoked when a peer receives an addrv2 bitcoin message and is
 // used to notify the server about advertised addresses.
 func (sp *serverPeer) OnAddrV2(_ *peer.Peer, msg *wire.MsgAddrV2) {
-	// Ignore if simnet for the same reasons as the regular addr message.
-	if cfg.SimNet {
+	// Ignore in regression test mode for the same reasons as the regular
+	// addr message.
+	if cfg.RegressionTest {
 		return
 	}
 
@@ -1834,11 +1835,11 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 	s.syncManager.NewPeer(sp.Peer)
 
 	// Update the address manager and request known addresses from the
-	// remote peer for outbound connections. This is skipped when running on
-	// the simulation test network since it is only intended to connect to
+	// remote peer for outbound connections. This is skipped when running
+	// in regression test mode since it is only intended to connect to
 	// specified peers and actively avoids advertising and connecting to
 	// discovered peers.
-	if !cfg.SimNet && !sp.Inbound() {
+	if !cfg.RegressionTest && !sp.Inbound() {
 		// Advertise the local address when the server accepts incoming
 		// connections and it believes itself to be close to the best
 		// known tip.
@@ -3030,13 +3031,13 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	})
 
 	// Only setup a function to return new addresses to connect to when
-	// not running in connect-only mode.  The simulation network is always
+	// not running in connect-only mode.  Regression test mode is always
 	// in connect-only mode since it is only intended to connect to
 	// specified peers and actively avoid advertising and connecting to
 	// discovered peers in order to prevent it from becoming a public test
 	// network.
 	var newAddressFunc func() (net.Addr, error)
-	if !cfg.SimNet && len(cfg.ConnectPeers) == 0 {
+	if !cfg.RegressionTest && len(cfg.ConnectPeers) == 0 {
 		newAddressFunc = func() (net.Addr, error) {
 			for tries := 0; tries < 100; tries++ {
 				addr := s.addrManager.GetAddress()
