@@ -118,14 +118,14 @@ func TestAddresses(t *testing.T) {
 				[ripemd160.Size]byte{
 					0x78, 0xb3, 0x16, 0xa0, 0x86, 0x47, 0xd5, 0xb7, 0x72, 0x83,
 					0xe5, 0x12, 0xd3, 0x60, 0x3f, 0x1f, 0x1c, 0x8d, 0xe6, 0x8f},
-				chaincfg.TestNet3Params.PubKeyHashAddrID),
+				chaincfg.RegressionNetParams.PubKeyHashAddrID),
 			f: func() (hnsutil.Address, error) {
 				pkHash := []byte{
 					0x78, 0xb3, 0x16, 0xa0, 0x86, 0x47, 0xd5, 0xb7, 0x72, 0x83,
 					0xe5, 0x12, 0xd3, 0x60, 0x3f, 0x1f, 0x1c, 0x8d, 0xe6, 0x8f}
-				return hnsutil.NewAddressPubKeyHash(pkHash, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressPubKeyHash(pkHash, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 
 		// Negative P2PKH tests.
@@ -239,14 +239,14 @@ func TestAddresses(t *testing.T) {
 				[ripemd160.Size]byte{
 					0xc5, 0x79, 0x34, 0x2c, 0x2c, 0x4c, 0x92, 0x20, 0x20, 0x5e,
 					0x2c, 0xdc, 0x28, 0x56, 0x17, 0x04, 0x0c, 0x92, 0x4a, 0x0a},
-				chaincfg.TestNet3Params.ScriptHashAddrID),
+				chaincfg.RegressionNetParams.ScriptHashAddrID),
 			f: func() (hnsutil.Address, error) {
 				hash := []byte{
 					0xc5, 0x79, 0x34, 0x2c, 0x2c, 0x4c, 0x92, 0x20, 0x20, 0x5e,
 					0x2c, 0xdc, 0x28, 0x56, 0x17, 0x04, 0x0c, 0x92, 0x4a, 0x0a}
-				return hnsutil.NewAddressScriptHashFromHash(hash, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressScriptHashFromHash(hash, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 
 		// Negative P2SH tests.
@@ -349,16 +349,16 @@ func TestAddresses(t *testing.T) {
 					0x69, 0xc2, 0xe7, 0x79, 0x01, 0x57, 0x3d, 0x8d, 0x79, 0x03,
 					0xc3, 0xeb, 0xec, 0x3a, 0x95, 0x77, 0x24, 0x89, 0x5d, 0xca,
 					0x52, 0xc6, 0xb4},
-				hnsutil.PKFCompressed, chaincfg.TestNet3Params.PubKeyHashAddrID),
+				hnsutil.PKFCompressed, chaincfg.RegressionNetParams.PubKeyHashAddrID),
 			f: func() (hnsutil.Address, error) {
 				serializedPubKey := []byte{
 					0x02, 0x19, 0x2d, 0x74, 0xd0, 0xcb, 0x94, 0x34, 0x4c, 0x95,
 					0x69, 0xc2, 0xe7, 0x79, 0x01, 0x57, 0x3d, 0x8d, 0x79, 0x03,
 					0xc3, 0xeb, 0xec, 0x3a, 0x95, 0x77, 0x24, 0x89, 0x5d, 0xca,
 					0x52, 0xc6, 0xb4}
-				return hnsutil.NewAddressPubKey(serializedPubKey, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressPubKey(serializedPubKey, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 		{
 			name:    "testnet p2pk compressed (0x03)",
@@ -371,16 +371,16 @@ func TestAddresses(t *testing.T) {
 					0xe9, 0x86, 0xe8, 0x84, 0x18, 0x5c, 0x61, 0xcf, 0x43, 0xe0,
 					0x01, 0xf9, 0x13, 0x7f, 0x23, 0xc2, 0xc4, 0x09, 0x27, 0x3e,
 					0xb1, 0x6e, 0x65},
-				hnsutil.PKFCompressed, chaincfg.TestNet3Params.PubKeyHashAddrID),
+				hnsutil.PKFCompressed, chaincfg.RegressionNetParams.PubKeyHashAddrID),
 			f: func() (hnsutil.Address, error) {
 				serializedPubKey := []byte{
 					0x03, 0xb0, 0xbd, 0x63, 0x42, 0x34, 0xab, 0xbb, 0x1b, 0xa1,
 					0xe9, 0x86, 0xe8, 0x84, 0x18, 0x5c, 0x61, 0xcf, 0x43, 0xe0,
 					0x01, 0xf9, 0x13, 0x7f, 0x23, 0xc2, 0xc4, 0x09, 0x27, 0x3e,
 					0xb1, 0x6e, 0x65}
-				return hnsutil.NewAddressPubKey(serializedPubKey, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressPubKey(serializedPubKey, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 		{
 			name: "testnet p2pk uncompressed (0x04)",
@@ -397,7 +397,7 @@ func TestAddresses(t *testing.T) {
 					0xf9, 0x74, 0x44, 0x64, 0xf8, 0x2e, 0x16, 0x0b, 0xfa, 0x9b,
 					0x8b, 0x64, 0xf9, 0xd4, 0xc0, 0x3f, 0x99, 0x9b, 0x86, 0x43,
 					0xf6, 0x56, 0xb4, 0x12, 0xa3},
-				hnsutil.PKFUncompressed, chaincfg.TestNet3Params.PubKeyHashAddrID),
+				hnsutil.PKFUncompressed, chaincfg.RegressionNetParams.PubKeyHashAddrID),
 			f: func() (hnsutil.Address, error) {
 				serializedPubKey := []byte{
 					0x04, 0x11, 0xdb, 0x93, 0xe1, 0xdc, 0xdb, 0x8a, 0x01, 0x6b,
@@ -407,9 +407,9 @@ func TestAddresses(t *testing.T) {
 					0xf9, 0x74, 0x44, 0x64, 0xf8, 0x2e, 0x16, 0x0b, 0xfa, 0x9b,
 					0x8b, 0x64, 0xf9, 0xd4, 0xc0, 0x3f, 0x99, 0x9b, 0x86, 0x43,
 					0xf6, 0x56, 0xb4, 0x12, 0xa3}
-				return hnsutil.NewAddressPubKey(serializedPubKey, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressPubKey(serializedPubKey, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 		// Segwit address tests.
 		{
@@ -464,14 +464,14 @@ func TestAddresses(t *testing.T) {
 				[20]byte{
 					0x75, 0x1e, 0x76, 0xe8, 0x19, 0x91, 0x96, 0xd4, 0x54, 0x94,
 					0x1c, 0x45, 0xd1, 0xb3, 0xa3, 0x23, 0xf1, 0x43, 0x3b, 0xd6},
-				chaincfg.TestNet3Params.Bech32HRPSegwit),
+				chaincfg.RegressionNetParams.Bech32HRPSegwit),
 			f: func() (hnsutil.Address, error) {
 				pkHash := []byte{
 					0x75, 0x1e, 0x76, 0xe8, 0x19, 0x91, 0x96, 0xd4, 0x54, 0x94,
 					0x1c, 0x45, 0xd1, 0xb3, 0xa3, 0x23, 0xf1, 0x43, 0x3b, 0xd6}
-				return hnsutil.NewAddressWitnessPubKeyHash(pkHash, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressWitnessPubKeyHash(pkHash, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 		{
 			name:    "segwit testnet p2wsh v0",
@@ -485,16 +485,16 @@ func TestAddresses(t *testing.T) {
 					0x04, 0xbd, 0x19, 0x20, 0x33, 0x56, 0xda, 0x13,
 					0x6c, 0x98, 0x56, 0x78, 0xcd, 0x4d, 0x27, 0xa1,
 					0xb8, 0xc6, 0x32, 0x96, 0x04, 0x90, 0x32, 0x62},
-				chaincfg.TestNet3Params.Bech32HRPSegwit),
+				chaincfg.RegressionNetParams.Bech32HRPSegwit),
 			f: func() (hnsutil.Address, error) {
 				scriptHash := []byte{
 					0x18, 0x63, 0x14, 0x3c, 0x14, 0xc5, 0x16, 0x68,
 					0x04, 0xbd, 0x19, 0x20, 0x33, 0x56, 0xda, 0x13,
 					0x6c, 0x98, 0x56, 0x78, 0xcd, 0x4d, 0x27, 0xa1,
 					0xb8, 0xc6, 0x32, 0x96, 0x04, 0x90, 0x32, 0x62}
-				return hnsutil.NewAddressWitnessScriptHash(scriptHash, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressWitnessScriptHash(scriptHash, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 		{
 			name:    "segwit testnet p2wsh witness v0",
@@ -508,16 +508,16 @@ func TestAddresses(t *testing.T) {
 					0x21, 0xb2, 0xa1, 0x87, 0x90, 0x5e, 0x52, 0x66,
 					0x36, 0x2b, 0x99, 0xd5, 0xe9, 0x1c, 0x6c, 0xe2,
 					0x4d, 0x16, 0x5d, 0xab, 0x93, 0xe8, 0x64, 0x33},
-				chaincfg.TestNet3Params.Bech32HRPSegwit),
+				chaincfg.RegressionNetParams.Bech32HRPSegwit),
 			f: func() (hnsutil.Address, error) {
 				scriptHash := []byte{
 					0x00, 0x00, 0x00, 0xc4, 0xa5, 0xca, 0xd4, 0x62,
 					0x21, 0xb2, 0xa1, 0x87, 0x90, 0x5e, 0x52, 0x66,
 					0x36, 0x2b, 0x99, 0xd5, 0xe9, 0x1c, 0x6c, 0xe2,
 					0x4d, 0x16, 0x5d, 0xab, 0x93, 0xe8, 0x64, 0x33}
-				return hnsutil.NewAddressWitnessScriptHash(scriptHash, &chaincfg.TestNet3Params)
+				return hnsutil.NewAddressWitnessScriptHash(scriptHash, &chaincfg.RegressionNetParams)
 			},
-			net: &chaincfg.TestNet3Params,
+			net: &chaincfg.RegressionNetParams,
 		},
 		{
 			name:    "segwit litecoin mainnet p2wpkh v0",
@@ -586,7 +586,7 @@ func TestAddresses(t *testing.T) {
 			name:  "segwit v1 testnet bech32 instead of bech32m",
 			addr:  "tb1z0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqglt7rf",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit v1 mainnet bech32 instead of bech32m upper case",
@@ -604,7 +604,7 @@ func TestAddresses(t *testing.T) {
 			name:  "segwit v1 testnet bech32 instead of bech32m second test",
 			addr:  "tb1q0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vq24jc47",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit v1 mainnet bech32m invalid character in checksum",
@@ -634,7 +634,7 @@ func TestAddresses(t *testing.T) {
 			name:  "segwit v1 testnet bech32m mixed case",
 			addr:  "tb1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vq47Zagq",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit v1 mainnet bech32m zero padding of more than 4 bits",
@@ -646,7 +646,7 @@ func TestAddresses(t *testing.T) {
 			name:  "segwit v1 mainnet bech32m non-zero padding in 8-to-5-conversion",
 			addr:  "tb1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vpggkg4j",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit v1 mainnet bech32m empty data section",
@@ -673,7 +673,7 @@ func TestAddresses(t *testing.T) {
 			name:  "segwit invalid hrp",
 			addr:  "tc1qw508d6qejxtdg4y5r3zarvary0c5xw7kg3g4ty",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit invalid checksum",
@@ -709,19 +709,19 @@ func TestAddresses(t *testing.T) {
 			name:  "segwit mixed case",
 			addr:  "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sL5k7",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit zero padding of more than 4 bits",
 			addr:  "tb1pw508d6qejxtdg4y5r3zarqfsj6c3",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 		{
 			name:  "segwit non-zero padding in 8-to-5 conversion",
 			addr:  "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3pjxtptv",
 			valid: false,
-			net:   &chaincfg.TestNet3Params,
+			net:   &chaincfg.RegressionNetParams,
 		},
 	}
 

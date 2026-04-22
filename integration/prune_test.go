@@ -21,7 +21,7 @@ func TestPrune(t *testing.T) {
 
 	// Boilerplate code to make a pruned node.
 	hnsCfg := []string{"--prune=1536"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, hnsCfg, "")
+	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, hnsCfg, "")
 	require.NoError(t, err)
 
 	if err := r.SetUp(false, 0); err != nil {

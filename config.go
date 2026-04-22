@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -123,14 +122,14 @@ type config struct {
 	DropCfIndex          bool          `long:"dropcfindex" description:"Deletes the index used for committed filtering (CF) support from the database on start up and then exits."`
 	DropTxIndex          bool          `long:"droptxindex" description:"Deletes the hash-based transaction index from the database on start up and then exits."`
 	ExternalIPs          []string      `long:"externalip" description:"Add an ip to the list of local addresses we claim to listen on to peers"`
-	Generate             bool          `long:"generate" description:"Generate (mine) bitcoins using the CPU"`
+	Generate             bool          `long:"generate" description:"Generate (mine) coins using the CPU"`
 	FreeTxRelayLimit     float64       `long:"limitfreerelay" description:"Limit relay of transactions with no transaction fee to the given amount in thousands of bytes per minute"`
-	Listeners            []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces port: 8333, testnet: 18333)"`
+	Listeners            []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces on the default port for the active network)"`
 	LogDir               string        `long:"logdir" description:"Directory to log output."`
 	MaxOrphanTxs         int           `long:"maxorphantx" description:"Max number of orphan transactions to keep in memory"`
 	MaxPeers             int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
 	MiningAddrs          []string      `long:"miningaddr" description:"Add the specified payment address to the list of addresses to use for generated blocks -- At least one address is required if the generate option is set"`
-	MinRelayTxFee        float64       `long:"minrelaytxfee" description:"The minimum transaction fee in BTC/kB to be considered a non-zero fee."`
+	MinRelayTxFee        float64       `long:"minrelaytxfee" description:"The minimum transaction fee in HNS/kB to be considered a non-zero fee."`
 	DisableBanning       bool          `long:"nobanning" description:"Disable banning of misbehaving peers"`
 	NoCFilters           bool          `long:"nocfilters" description:"Disable committed filtering (CF) support"`
 	DisableCheckpoints   bool          `long:"nocheckpoints" description:"Disable built-in checkpoints.  Don't do this unless you know what you're doing."`
@@ -141,7 +140,7 @@ type config struct {
 	NoRelayPriority      bool          `long:"norelaypriority" description:"Do not require free or low-fee transactions to have high priority for relaying"`
 	NoWinService         bool          `long:"nowinservice" description:"Do not start as a background service on Windows -- NOTE: This flag only works on the command line, not in the config file"`
 	DisableRPC           bool          `long:"norpc" description:"Disable built-in RPC server -- NOTE: The RPC server is disabled by default if no rpcuser/rpcpass or rpclimituser/rpclimitpass is specified"`
-	DisableStallHandler  bool          `long:"nostalldetect" description:"Disables the stall handler system for each peer, useful in simnet/regtest integration tests frameworks"`
+	DisableStallHandler  bool          `long:"nostalldetect" description:"Disables the stall handler system for each peer, useful in regtest integration tests frameworks"`
 	DisableTLS           bool          `long:"notls" description:"Disable TLS for the RPC server -- NOTE: This is only allowed if the RPC server is bound to localhost"`
 	OnionProxy           string        `long:"onion" description:"Connect to tor hidden services via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
 	OnionProxyPass       string        `long:"onionpass" default-mask:"-" description:"Password for onion proxy server"`
@@ -159,7 +158,7 @@ type config struct {
 	RPCKey               string        `long:"rpckey" description:"File containing the certificate key"`
 	RPCLimitPass         string        `long:"rpclimitpass" default-mask:"-" description:"Password for limited RPC connections"`
 	RPCLimitUser         string        `long:"rpclimituser" description:"Username for limited RPC connections"`
-	RPCListeners         []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port: 8334, testnet: 18334)"`
+	RPCListeners         []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port for the active network)"`
 	RPCMaxClients        int           `long:"rpcmaxclients" description:"Max number of RPC clients for standard connections"`
 	RPCMaxConcurrentReqs int           `long:"rpcmaxconcurrentreqs" description:"Max number of concurrent RPC requests that may be processed concurrently"`
 	RPCMaxWebsockets     int           `long:"rpcmaxwebsockets" description:"Max number of RPC websocket connections"`
@@ -167,12 +166,6 @@ type config struct {
 	RPCPass              string        `short:"P" long:"rpcpass" default-mask:"-" description:"Password for RPC connections"`
 	RPCUser              string        `short:"u" long:"rpcuser" description:"Username for RPC connections"`
 	SigCacheMaxSize      uint          `long:"sigcachemaxsize" description:"The maximum number of entries in the signature verification cache"`
-	SimNet               bool          `long:"simnet" description:"Use the simulation test network"`
-	SigNet               bool          `long:"signet" description:"Use the signet test network"`
-	SigNetChallenge      string        `long:"signetchallenge" description:"Connect to a custom signet network defined by this challenge instead of using the global default signet test network -- Can be specified multiple times"`
-	SigNetSeedNode       []string      `long:"signetseednode" description:"Specify a seed node for the signet network instead of using the global default signet network seed nodes"`
-	TestNet3             bool          `long:"testnet" description:"Use the test network (version 3)"`
-	TestNet4             bool          `long:"testnet4" description:"Use the test network (version 4)"`
 	TorIsolation         bool          `long:"torisolation" description:"Enable Tor stream isolation by randomizing user credentials for each connection."`
 	TrickleInterval      time.Duration `long:"trickleinterval" description:"Minimum time between attempts to send new inventory to a connected peer"`
 	UtxoCacheMaxSizeMiB  uint          `long:"utxocachemaxsize" description:"The maximum size in MiB of the UTXO cache"`
@@ -486,7 +479,7 @@ func loadConfig() (*config, []string, error) {
 	// Load additional config from file.
 	var configFileError error
 	parser := newConfigParser(&cfg, &serviceOpts, flags.Default)
-	if !(preCfg.RegressionTest || preCfg.SimNet || preCfg.SigNet) ||
+	if !preCfg.RegressionTest ||
 		preCfg.ConfigFile != defaultConfigFile {
 
 		if _, err := os.Stat(preCfg.ConfigFile); os.IsNotExist(err) {
@@ -509,8 +502,9 @@ func loadConfig() (*config, []string, error) {
 		}
 	}
 
-	// Don't add peers from the config file when in regression test mode.
-	if preCfg.RegressionTest && len(cfg.AddPeers) > 0 {
+	// Don't add peers from the config file when in regression test mode,
+	// regardless of whether regtest was set via CLI or the config file.
+	if (preCfg.RegressionTest || cfg.RegressionTest) && len(cfg.AddPeers) > 0 {
 		cfg.AddPeers = nil
 	}
 
@@ -543,75 +537,9 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	// Multiple networks can't be selected simultaneously.
-	numNets := 0
-	// Count number of network flags passed; assign active network params
-	// while we're at it
-	if cfg.TestNet3 {
-		numNets++
-		activeNetParams = &testNet3Params
-	}
-	if cfg.TestNet4 {
-		numNets++
-		activeNetParams = &testNet4Params
-	}
+	// Use the regression test network if specified.
 	if cfg.RegressionTest {
-		numNets++
 		activeNetParams = &regressionNetParams
-	}
-	if cfg.SimNet {
-		numNets++
-		// Also disable dns seeding on the simulation test network.
-		activeNetParams = &simNetParams
-		cfg.DisableDNSSeed = true
-	}
-	if cfg.SigNet {
-		numNets++
-		activeNetParams = &sigNetParams
-
-		// Let the user overwrite the default signet parameters. The
-		// challenge defines the actual signet network to join and the
-		// seed nodes are needed for network discovery.
-		sigNetChallenge := chaincfg.DefaultSignetChallenge
-		sigNetSeeds := chaincfg.DefaultSignetDNSSeeds
-		if cfg.SigNetChallenge != "" {
-			challenge, err := hex.DecodeString(cfg.SigNetChallenge)
-			if err != nil {
-				str := "%s: Invalid signet challenge, hex " +
-					"decode failed: %v"
-				err := fmt.Errorf(str, funcName, err)
-				fmt.Fprintln(os.Stderr, err)
-				fmt.Fprintln(os.Stderr, usageMessage)
-				return nil, nil, err
-			}
-			sigNetChallenge = challenge
-		}
-
-		if len(cfg.SigNetSeedNode) > 0 {
-			sigNetSeeds = make(
-				[]chaincfg.DNSSeed, len(cfg.SigNetSeedNode),
-			)
-			for idx, seed := range cfg.SigNetSeedNode {
-				sigNetSeeds[idx] = chaincfg.DNSSeed{
-					Host:         seed,
-					HasFiltering: false,
-				}
-			}
-		}
-
-		chainParams := chaincfg.CustomSignetParams(
-			sigNetChallenge, sigNetSeeds,
-		)
-		activeNetParams.Params = &chainParams
-	}
-	if numNets > 1 {
-		str := "%s: The testnet, regtest, segnet, signet and simnet " +
-			"params can't be used together -- choose one of the " +
-			"five"
-		err := fmt.Errorf(str, funcName)
-		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, usageMessage)
-		return nil, nil, err
 	}
 
 	// If mainnet is active, then we won't allow the stall handler to be

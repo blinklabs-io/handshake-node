@@ -6,7 +6,6 @@ package main
 
 import (
 	"github.com/blinklabs-io/handshake-node/chaincfg"
-	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // activeNetParams is a pointer to the parameters specific to the
@@ -41,50 +40,7 @@ var regressionNetParams = params{
 	rpcPort: "18334",
 }
 
-// testNet3Params contains parameters specific to the test network (version 3)
-// (wire.TestNet3).  NOTE: The RPC port is intentionally different from the
-// reference implementation - see the mainNetParams comment for details.
-var testNet3Params = params{
-	Params:  &chaincfg.TestNet3Params,
-	rpcPort: "18334",
-}
-
-// testNet4Params contains parameters specific to the test network (version 4)
-// (wire.TestNet4).  NOTE: The RPC port is intentionally different from the
-// reference implementation - see the mainNetParams comment for details.
-var testNet4Params = params{
-	Params:  &chaincfg.TestNet4Params,
-	rpcPort: "48334",
-}
-
-// simNetParams contains parameters specific to the simulation test network
-// (wire.SimNet).
-var simNetParams = params{
-	Params:  &chaincfg.SimNetParams,
-	rpcPort: "18556",
-}
-
-// sigNetParams contains parameters specific to the Signet network
-// (wire.SigNet).
-var sigNetParams = params{
-	Params:  &chaincfg.SigNetParams,
-	rpcPort: "38332",
-}
-
-// netName returns the name used when referring to a bitcoin network.  At the
-// time of writing, handshake-node currently places blocks for testnet version 3 in the
-// data and log directory "testnet", which does not match the Name field of the
-// chaincfg parameters.  This function can be used to override this directory
-// name as "testnet" when the passed active network matches wire.TestNet3.
-//
-// A proper upgrade to move the data and log directories for this network to
-// "testnet3" is planned for the future, at which point this function can be
-// removed and the network parameter's name used instead.
+// netName returns the name used when referring to a Handshake network.
 func netName(chainParams *params) string {
-	switch chainParams.Net {
-	case wire.TestNet3:
-		return "testnet"
-	default:
-		return chainParams.Name
-	}
+	return chainParams.Name
 }

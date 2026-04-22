@@ -14,7 +14,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/database"
 	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
-	"github.com/blinklabs-io/handshake-node/wire"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -41,9 +40,6 @@ type config struct {
 	UseGoOutput    bool   `short:"g" long:"gooutput" description:"Display the candidates using Go syntax that is ready to insert into the btcchain checkpoint list"`
 	NumCandidates  int    `short:"n" long:"numcandidates" description:"Max num of checkpoint candidates to show {1-20}"`
 	RegressionTest bool   `long:"regtest" description:"Use the regression test network"`
-	SimNet         bool   `long:"simnet" description:"Use the simulation test network"`
-	TestNet3       bool   `long:"testnet" description:"Use the test network (version 3)"`
-	TestNet4       bool   `long:"testnet4" description:"Use the test network (version 4)"`
 }
 
 // validDbType returns whether or not dbType is a supported database type.
@@ -51,22 +47,9 @@ func validDbType(dbType string) bool {
 	return slices.Contains(knownDbTypes, dbType)
 }
 
-// netName returns the name used when referring to a bitcoin network.  At the
-// time of writing, handshake-node currently places blocks for testnet version 3 in the
-// data and log directory "testnet", which does not match the Name field of the
-// chaincfg parameters.  This function can be used to override this directory name
-// as "testnet" when the passed active network matches wire.TestNet3.
-//
-// A proper upgrade to move the data and log directories for this network to
-// "testnet3" is planned for the future, at which point this function can be
-// removed and the network parameter's name used instead.
+// netName returns the name used when referring to a Handshake network.
 func netName(chainParams *chaincfg.Params) string {
-	switch chainParams.Net {
-	case wire.TestNet3:
-		return "testnet"
-	default:
-		return chainParams.Name
-	}
+	return chainParams.Name
 }
 
 // loadConfig initializes and parses the config using command line options.
@@ -88,34 +71,9 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	// Multiple networks can't be selected simultaneously.
-	funcName := "loadConfig"
-	numNets := 0
-	// Count number of network flags passed; assign active network params
-	// while we're at it
-	if cfg.TestNet3 {
-		numNets++
-		activeNetParams = &chaincfg.TestNet3Params
-	}
-	if cfg.TestNet4 {
-		numNets++
-		activeNetParams = &chaincfg.TestNet4Params
-	}
+	// Use the regression test network if specified.
 	if cfg.RegressionTest {
-		numNets++
 		activeNetParams = &chaincfg.RegressionNetParams
-	}
-	if cfg.SimNet {
-		numNets++
-		activeNetParams = &chaincfg.SimNetParams
-	}
-	if numNets > 1 {
-		str := "%s: The testnet, regtest, and simnet params can't be " +
-			"used together -- choose one of the three"
-		err := fmt.Errorf(str, funcName)
-		fmt.Fprintln(os.Stderr, err)
-		parser.WriteHelp(os.Stderr)
-		return nil, nil, err
 	}
 
 	// Validate database type.

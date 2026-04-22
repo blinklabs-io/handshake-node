@@ -127,7 +127,7 @@ func TestElementWire(t *testing.T) {
 		},
 		{
 			MainNet,
-			[]byte{0xf9, 0xbe, 0xb4, 0xd9},
+			[]byte{0xd3, 0xf2, 0x6e, 0x5b}, // Handshake mainnet magic 0x5B6EF2D3 LE
 		},
 		// Type not supported by the "fast" path and requires reflection.
 		{

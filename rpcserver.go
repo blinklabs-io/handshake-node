@@ -1992,14 +1992,13 @@ func handleGetBlockTemplateRequest(s *rpcServer, request *hnsjson.TemplateReques
 
 	// Return an error if there are no peers connected since there is no
 	// way to relay a found block or receive transactions to work on.
-	// However, allow this state when running in the regression test or
-	// simulation test mode.
-	if !(cfg.RegressionTest || cfg.SimNet) &&
+	// However, allow this state when running in regression test mode.
+	if !cfg.RegressionTest &&
 		s.cfg.ConnMgr.ConnectedCount() == 0 {
 
 		return nil, &hnsjson.RPCError{
 			Code:    hnsjson.ErrRPCClientNotConnected,
-			Message: "Bitcoin is not connected",
+			Message: "Handshake is not connected",
 		}
 	}
 
@@ -2388,7 +2387,7 @@ func handleGetInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (in
 		Connections:     s.cfg.ConnMgr.ConnectedCount(),
 		Proxy:           cfg.Proxy,
 		Difficulty:      getDifficultyRatio(best.Bits, s.cfg.ChainParams),
-		TestNet:         cfg.TestNet3 || cfg.TestNet4,
+		TestNet:         cfg.RegressionTest,
 		RelayFee:        cfg.minRelayTxFee.ToBTC(),
 	}
 
@@ -2443,7 +2442,7 @@ func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 		HashesPerSec:       s.cfg.CPUMiner.HashesPerSecond(),
 		NetworkHashPS:      networkHashesPerSec,
 		PooledTx:           uint64(s.cfg.TxMemPool.Count()),
-		TestNet:            cfg.TestNet3 || cfg.TestNet4,
+		TestNet:            cfg.RegressionTest,
 	}
 	return &result, nil
 }
@@ -4853,7 +4852,7 @@ type rpcserverConfig struct {
 	//
 	// Generator produces block templates and the CPUMiner solves them using
 	// the CPU.  CPU mining is typically only useful for test purposes when
-	// doing regression or simulation testing.
+	// doing regression testing.
 	Generator *mining.BlkTmplGenerator
 	CPUMiner  *cpuminer.CPUMiner
 

@@ -104,11 +104,7 @@ type config struct {
 	RPCPassword    string `short:"P" long:"rpcpass" default-mask:"-" description:"RPC password"`
 	RPCServer      string `short:"s" long:"rpcserver" description:"RPC server to connect to"`
 	RPCUser        string `short:"u" long:"rpcuser" description:"RPC username"`
-	SimNet         bool   `long:"simnet" description:"Connect to the simulation test network"`
 	TLSSkipVerify  bool   `long:"skipverify" description:"Do not verify tls certificates (not recommended!)"`
-	TestNet3       bool   `long:"testnet" description:"Connect to testnet (version 3)"`
-	TestNet4       bool   `long:"testnet4" description:"Connect to testnet (version 4)"`
-	SigNet         bool   `long:"signet" description:"Connect to signet"`
 	ShowVersion    bool   `short:"V" long:"version" description:"Display version information and exit"`
 	Wallet         bool   `long:"wallet" description:"Connect to wallet"`
 }
@@ -120,37 +116,13 @@ func normalizeAddress(addr string, chain *chaincfg.Params, useWallet bool) (stri
 	if err != nil {
 		var defaultPort string
 		switch chain {
-		case &chaincfg.TestNet3Params:
-			if useWallet {
-				defaultPort = "18332"
-			} else {
-				defaultPort = "18334"
-			}
-		case &chaincfg.TestNet4Params:
-			if useWallet {
-				defaultPort = "48332"
-			} else {
-				defaultPort = "48334"
-			}
-		case &chaincfg.SimNetParams:
-			if useWallet {
-				defaultPort = "18554"
-			} else {
-				defaultPort = "18556"
-			}
 		case &chaincfg.RegressionNetParams:
 			if useWallet {
-				// TODO: add port once regtest is supported in btcwallet
-				paramErr := fmt.Errorf("cannot use -wallet with -regtest, btcwallet not yet compatible with regtest")
+				// TODO: add port once regtest is supported in wallet
+				paramErr := fmt.Errorf("cannot use -wallet with -regtest, wallet not yet compatible with regtest")
 				return "", paramErr
 			} else {
 				defaultPort = "18334"
-			}
-		case &chaincfg.SigNetParams:
-			if useWallet {
-				defaultPort = "38332"
-			} else {
-				defaultPort = "38334"
 			}
 		default:
 			if useWallet {
@@ -273,35 +245,9 @@ func loadConfig() (*config, []string, error) {
 	// default network is mainnet
 	network := &chaincfg.MainNetParams
 
-	// Multiple networks can't be selected simultaneously.
-	numNets := 0
-	if cfg.TestNet3 {
-		numNets++
-		network = &chaincfg.TestNet3Params
-	}
-	if cfg.TestNet4 {
-		numNets++
-		network = &chaincfg.TestNet4Params
-	}
-	if cfg.SimNet {
-		numNets++
-		network = &chaincfg.SimNetParams
-	}
+	// Use the regression test network if specified.
 	if cfg.RegressionTest {
-		numNets++
 		network = &chaincfg.RegressionNetParams
-	}
-	if cfg.SigNet {
-		numNets++
-		network = &chaincfg.SigNetParams
-	}
-
-	if numNets > 1 {
-		str := "%s: Multiple network params can't be used " +
-			"together -- choose one"
-		err := fmt.Errorf(str, "loadConfig")
-		fmt.Fprintln(os.Stderr, err)
-		return nil, nil, err
 	}
 
 	// Override the RPC certificate if the --wallet flag was specified and

@@ -154,7 +154,7 @@ func TestBIP0113Activation(t *testing.T) {
 	t.Parallel()
 
 	hnsCfg := []string{"--rejectnonstd"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, hnsCfg, "")
+	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, hnsCfg, "")
 	if err != nil {
 		t.Fatal("unable to create primary harness: ", err)
 	}
@@ -451,7 +451,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	// relative lock times.
 
 	hnsCfg := []string{"--rejectnonstd"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, hnsCfg, "")
+	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, hnsCfg, "")
 	if err != nil {
 		t.Fatal("unable to create primary harness: ", err)
 	}

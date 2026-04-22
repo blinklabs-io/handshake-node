@@ -84,7 +84,7 @@ type HarnessTestCase func(r *Harness, t *testing.T)
 
 // Harness fully encapsulates an active handshake-node process to provide a unified
 // platform for creating rpc driven integration tests involving handshake-node. The
-// active handshake-node node will typically be run in simnet mode in order to allow for
+// active handshake-node node will typically be run in regtest mode in order to allow for
 // easy generation of test blockchains.  The active handshake-node process is fully
 // managed by Harness, which handles the necessary initialization, and teardown
 // of the process along with any temporary directories created as a result.
@@ -135,12 +135,8 @@ func New(activeNet *chaincfg.Params, handlers *rpcclient.NotificationHandlers,
 	switch activeNet.Net {
 	case wire.MainNet:
 		// No extra flags since mainnet is the default
-	case wire.TestNet3:
-		extraArgs = append(extraArgs, "--testnet")
 	case wire.TestNet:
 		extraArgs = append(extraArgs, "--regtest")
-	case wire.SimNet:
-		extraArgs = append(extraArgs, "--simnet")
 	default:
 		return nil, fmt.Errorf("rpctest.New must be called with one " +
 			"of the supported chain networks")
@@ -180,7 +176,7 @@ func New(activeNet *chaincfg.Params, handlers *rpcclient.NotificationHandlers,
 	// Generate p2p+rpc listening addresses.
 	config.listen, config.rpcListen = ListenAddressGenerator()
 
-	// Create the testing node bounded to the simnet.
+	// Create the testing node bounded to regtest.
 	node, err := newNode(config, nodeTestData)
 	if err != nil {
 		return nil, err
@@ -236,7 +232,7 @@ func New(activeNet *chaincfg.Params, handlers *rpcclient.NotificationHandlers,
 }
 
 // SetUp initializes the rpc test state. Initialization includes: starting up a
-// simnet node, creating a websockets client and connecting to the started
+// regtest node, creating a websockets client and connecting to the started
 // node, and finally: optionally generating and submitting a testchain with a
 // configurable number of mature coinbase outputs coinbase outputs.
 //
@@ -462,7 +458,7 @@ func (h *Harness) P2PAddress() string {
 }
 
 // GenerateAndSubmitBlock creates a block whose contents include the passed
-// transactions and submits it to the running simnet node. For generating
+// transactions and submits it to the running regtest node. For generating
 // blocks with only a coinbase tx, callers can simply pass nil instead of
 // transactions to be mined. Additionally, a custom block version can be set by
 // the caller. A blockVersion of -1 indicates that the current default block
@@ -478,7 +474,7 @@ func (h *Harness) GenerateAndSubmitBlock(txns []*hnsutil.Tx, blockVersion int32,
 
 // GenerateAndSubmitBlockWithCustomCoinbaseOutputs creates a block whose
 // contents include the passed coinbase outputs and transactions and submits
-// it to the running simnet node. For generating blocks with only a coinbase tx,
+// it to the running regtest node. For generating blocks with only a coinbase tx,
 // callers can simply pass nil instead of transactions to be mined.
 // Additionally, a custom block version can be set by the caller. A blockVersion
 // of -1 indicates that the current default block version should be used. An
@@ -519,7 +515,7 @@ func (h *Harness) GenerateAndSubmitBlockWithCustomCoinbaseOutputs(
 		return nil, err
 	}
 
-	// Submit the block to the simnet node.
+	// Submit the block to the regtest node.
 	if err := h.Client.SubmitBlock(newBlock, nil); err != nil {
 		return nil, err
 	}

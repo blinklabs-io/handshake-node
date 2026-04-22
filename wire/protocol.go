@@ -168,43 +168,27 @@ func (f ServiceFlag) String() string {
 	return s
 }
 
-// BitcoinNet represents which bitcoin network a message belongs to.
+// BitcoinNet represents which Handshake network a message belongs to.
+// The type name is kept for btcd API compatibility.
 type BitcoinNet uint32
 
-// Constants used to indicate the message bitcoin network. They can also be
+// Constants used to indicate the message network.  They can also be
 // used to seek to the next message when a stream's state is unknown, but
 // this package does not provide that functionality since it's generally a
 // better idea to simply disconnect clients that are misbehaving over TCP.
 const (
-	// MainNet represents the main bitcoin network.
-	MainNet BitcoinNet = 0xd9b4bef9
+	// MainNet represents the Handshake mainnet.
+	MainNet BitcoinNet = 0x5B6EF2D3
 
 	// TestNet represents the regression test network.
-	TestNet BitcoinNet = 0xdab5bffa
-
-	// TestNet3 represents the test network (version 3).
-	TestNet3 BitcoinNet = 0x0709110b
-
-	// TestNet4 represents the test network (version 4).
-	TestNet4 BitcoinNet = 0x283f161c
-
-	// SigNet represents the public default SigNet. For custom signets,
-	// see CustomSignetParams.
-	SigNet BitcoinNet = 0x40CF030A
-
-	// SimNet represents the simulation test network.
-	SimNet BitcoinNet = 0x12141c16
+	TestNet BitcoinNet = 0xAE3895CF
 )
 
-// bnStrings is a map of bitcoin networks back to their constant names for
+// bnStrings is a map of networks back to their constant names for
 // pretty printing.
 var bnStrings = map[BitcoinNet]string{
-	MainNet:  "MainNet",
-	TestNet:  "TestNet",
-	TestNet3: "TestNet3",
-	TestNet4: "TestNet4",
-	SigNet:   "SigNet",
-	SimNet:   "SimNet",
+	MainNet: "MainNet",
+	TestNet: "RegTest",
 }
 
 // String returns the BitcoinNet in human-readable form.

@@ -79,7 +79,7 @@ func signAndCheck(msg string, tx *wire.MsgTx, idx int, inputAmt int64, pkScript 
 	hashType SigHashType, kdb KeyDB, sdb ScriptDB,
 	previousScript []byte) error {
 
-	sigScript, err := SignTxOutput(&chaincfg.TestNet3Params, tx, idx,
+	sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams, tx, idx,
 		pkScript, hashType, kdb, sdb, nil)
 	if err != nil {
 		return fmt.Errorf("failed to sign output %s: %v", msg, err)
@@ -157,7 +157,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -193,7 +193,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -206,7 +206,7 @@ func TestSignTxOutput(t *testing.T) {
 					"for %s: %v", msg, err)
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
@@ -219,7 +219,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
@@ -253,7 +253,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -291,7 +291,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -304,7 +304,7 @@ func TestSignTxOutput(t *testing.T) {
 					"for %s: %v", msg, err)
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
@@ -317,7 +317,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
@@ -352,7 +352,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -390,7 +390,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -403,7 +403,7 @@ func TestSignTxOutput(t *testing.T) {
 					"for %s: %v", msg, err)
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
@@ -416,7 +416,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
@@ -450,7 +450,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -488,7 +488,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -501,7 +501,7 @@ func TestSignTxOutput(t *testing.T) {
 					"for %s: %v", msg, err)
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
@@ -514,7 +514,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, pkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
@@ -549,7 +549,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -564,7 +564,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -605,7 +605,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -620,7 +620,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -635,7 +635,7 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
@@ -650,13 +650,13 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
-				}), nil)
+				}), sigScript)
 			if err != nil {
 				t.Errorf("failed to sign output %s a "+
 					"second time: %v", msg, err)
@@ -687,7 +687,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -701,7 +701,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -743,7 +743,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKeyHash(
-				hnsutil.Hash160(pk), &chaincfg.TestNet3Params)
+				hnsutil.Hash160(pk), &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -757,7 +757,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -772,7 +772,7 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
@@ -787,13 +787,13 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
-				}), nil)
+				}), sigScript)
 			if err != nil {
 				t.Errorf("failed to sign output %s a "+
 					"second time: %v", msg, err)
@@ -824,7 +824,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -838,7 +838,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -880,7 +880,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeUncompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -894,7 +894,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -908,7 +908,7 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
@@ -923,13 +923,13 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
-				}), nil)
+				}), sigScript)
 			if err != nil {
 				t.Errorf("failed to sign output %s a "+
 					"second time: %v", msg, err)
@@ -960,7 +960,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -974,7 +974,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -1015,7 +1015,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk := key.PubKey().SerializeCompressed()
 			address, err := hnsutil.NewAddressPubKey(pk,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -1029,7 +1029,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -1043,7 +1043,7 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
@@ -1058,13 +1058,13 @@ func TestSignTxOutput(t *testing.T) {
 
 			// by the above loop, this should be valid, now sign
 			// again and merge.
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
-				}), nil)
+				}), sigScript)
 			if err != nil {
 				t.Errorf("failed to sign output %s a "+
 					"second time: %v", msg, err)
@@ -1095,7 +1095,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk1 := key1.PubKey().SerializeCompressed()
 			address1, err := hnsutil.NewAddressPubKey(pk1,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -1111,7 +1111,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk2 := key2.PubKey().SerializeCompressed()
 			address2, err := hnsutil.NewAddressPubKey(pk2,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address 2 for %s: %v",
 					msg, err)
@@ -1127,7 +1127,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -1169,7 +1169,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk1 := key1.PubKey().SerializeCompressed()
 			address1, err := hnsutil.NewAddressPubKey(pk1,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -1185,7 +1185,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk2 := key2.PubKey().SerializeCompressed()
 			address2, err := hnsutil.NewAddressPubKey(pk2,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address 2 for %s: %v",
 					msg, err)
@@ -1201,7 +1201,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -1215,7 +1215,7 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address1.EncodeAddress(): {key1, true},
@@ -1236,7 +1236,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			// Sign with the other key and merge
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address2.EncodeAddress(): {key2, true},
@@ -1273,7 +1273,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk1 := key1.PubKey().SerializeCompressed()
 			address1, err := hnsutil.NewAddressPubKey(pk1,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -1289,7 +1289,7 @@ func TestSignTxOutput(t *testing.T) {
 
 			pk2 := key2.PubKey().SerializeCompressed()
 			address2, err := hnsutil.NewAddressPubKey(pk2,
-				&chaincfg.TestNet3Params)
+				&chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make address 2 for %s: %v",
 					msg, err)
@@ -1305,7 +1305,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			scriptAddr, err := hnsutil.NewAddressScriptHash(
-				pkScript, &chaincfg.TestNet3Params)
+				pkScript, &chaincfg.RegressionNetParams)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
 					msg, err)
@@ -1319,7 +1319,7 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err := SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address1.EncodeAddress(): {key1, true},
@@ -1340,7 +1340,7 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			// Sign with the other key and merge
-			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
+			sigScript, err = SignTxOutput(&chaincfg.RegressionNetParams,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
 					address1.EncodeAddress(): {key1, true},

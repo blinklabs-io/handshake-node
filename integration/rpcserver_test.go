@@ -309,7 +309,7 @@ func TestMain(m *testing.M) {
 	// mempool or relayed.
 	hnsCfg := []string{"--rejectnonstd"}
 	primaryHarness, err = rpctest.New(
-		&chaincfg.SimNetParams, nil, hnsCfg, "",
+		&chaincfg.RegressionNetParams, nil, hnsCfg, "",
 	)
 	if err != nil {
 		fmt.Println("unable to create primary harness: ", err)
