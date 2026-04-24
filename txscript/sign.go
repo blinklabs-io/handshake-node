@@ -325,41 +325,13 @@ func sign(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 	}
 
 	switch class {
-	case PubKeyTy:
-		// look up key for address
-		key, _, err := kdb.GetKey(addresses[0])
-		if err != nil {
-			return nil, class, nil, 0, err
-		}
-
-		script, err := p2pkSignatureScript(tx, idx, subScript, hashType,
-			key)
-		if err != nil {
-			return nil, class, nil, 0, err
-		}
-
-		return script, class, addresses, nrequired, nil
-	case PubKeyHashTy:
-		// look up key for address
-		key, compressed, err := kdb.GetKey(addresses[0])
-		if err != nil {
-			return nil, class, nil, 0, err
-		}
-
-		script, err := SignatureScript(tx, idx, subScript, hashType,
-			key, compressed)
-		if err != nil {
-			return nil, class, nil, 0, err
-		}
-
-		return script, class, addresses, nrequired, nil
-	case ScriptHashTy:
-		script, err := sdb.GetScript(addresses[0])
-		if err != nil {
-			return nil, class, nil, 0, err
-		}
-
-		return script, class, addresses, nrequired, nil
+	case PubKeyTy, PubKeyHashTy, ScriptHashTy:
+		// Handshake doesn't expose decodable addresses for these
+		// legacy Bitcoin script classes (ExtractPkScriptAddrs returns
+		// nil addresses for them), so we cannot look up signing
+		// material.  Refuse rather than panic on addresses[0].
+		return nil, class, nil, 0, fmt.Errorf(
+			"signing %s scripts is not supported in Handshake", class)
 	case MultiSigTy:
 		script, _ := signMultiSig(tx, idx, subScript, hashType,
 			addresses, nrequired, kdb)
@@ -418,52 +390,36 @@ func mergeMultiSig(tx *wire.MsgTx, idx int, addresses []hnsutil.Address,
 		return sigScript
 	}
 
-	// Now we need to match the signatures to pubkeys, the only real way to
-	// do that is to try to verify them all and match it to the pubkey
-	// that verifies it. we then can go through the addresses in order
-	// to build our script. Anything that doesn't parse or doesn't verify we
-	// throw away.
+	// In Bitcoin this loop matches signatures to pubkeys by trying to
+	// verify each signature against each address's pubkey; only
+	// verifying signatures are accepted.  Handshake addresses are bare
+	// hashes with no recoverable pubkey, so that verification cannot be
+	// performed here.  ExtractPkScriptAddrs also returns nil addresses
+	// for MultiSigTy in Handshake, which means the inner address loop
+	// below executes zero times and addrToSig stays empty — the merged
+	// script therefore contains only OP_FALSE padding and no unverified
+	// signatures can leak in.  Keep the skeleton so behaviour is
+	// identical if/when the covenants/script layer restores pubkey-bearing
+	// multisig addresses; at that point cryptographic verification must
+	// be added before assigning into addrToSig.
 	addrToSig := make(map[string][]byte)
 sigLoop:
 	for _, sig := range possibleSigs {
-
-		// can't have a valid signature that doesn't at least have a
-		// hashtype, in practise it is even longer than this. but
-		// that'll be checked next.
 		if len(sig) < 1 {
 			continue
 		}
 		tSig := sig[:len(sig)-1]
-		hashType := SigHashType(sig[len(sig)-1])
-
-		pSig, err := ecdsa.ParseDERSignature(tSig)
-		if err != nil {
+		if _, err := ecdsa.ParseDERSignature(tSig); err != nil {
 			continue
 		}
-
-		// We have to do this each round since hash types may vary
-		// between signatures and so the hash will vary. We can,
-		// however, assume no sigs etc are in the script since that
-		// would make the transaction nonstandard and thus not
-		// MultiSigTy, so we just need to hash the full thing.
-		hash := calcSignatureHash(pkScript, hashType, tx, idx)
-
 		for _, addr := range addresses {
-			// All multisig addresses should be pubkey addresses
-			// it is an error to call this internal function with
-			// bad input.
-			pkaddr := addr.(*hnsutil.AddressPubKey)
-
-			pubKey := pkaddr.PubKey()
-
-			// If it matches we put it in the map. We only
-			// can take one signature per public key so if we
-			// already have one, we can throw this away.
-			if pSig.Verify(hash, pubKey) {
-				aStr := addr.EncodeAddress()
-				if _, ok := addrToSig[aStr]; !ok {
-					addrToSig[aStr] = sig
-				}
+			aStr := addr.EncodeAddress()
+			if _, ok := addrToSig[aStr]; !ok {
+				addrToSig[aStr] = sig
+				// Move on to the next signature only after we
+				// actually assigned this one; otherwise we'd
+				// trap every sig against the first address and
+				// leave all others unfilled.
 				continue sigLoop
 			}
 		}

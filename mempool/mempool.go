@@ -146,8 +146,8 @@ type Policy struct {
 	// fraction of the max signature operations for a block.
 	MaxSigOpCostPerTx int
 
-	// MinRelayTxFee defines the minimum transaction fee in BTC/kB to be
-	// considered a non-zero fee.
+	// MinRelayTxFee defines the minimum transaction fee in HNS/kB
+	// (expressed in dollarydoos) to be considered a non-zero fee.
 	MinRelayTxFee hnsutil.Amount
 
 	// RejectReplacement, if true, rejects accepting replacement
@@ -952,8 +952,8 @@ func (mp *TxPool) maybeAcceptTransaction(tx *hnsutil.Tx, isNew, rateLimit,
 	// mempool. If it ended up replacing any transactions, we'll remove them
 	// first.
 	for _, conflict := range r.Conflicts {
-		log.Debugf("Replacing transaction %v (fee_rate=%v sat/kb) "+
-			"with %v (fee_rate=%v sat/kb)\n", conflict.Hash(),
+		log.Debugf("Replacing transaction %v (fee_rate=%v doo/kb) "+
+			"with %v (fee_rate=%v doo/kb)\n", conflict.Hash(),
 			mp.pool[*conflict.Hash()].FeePerKB, tx.Hash(),
 			int64(r.TxFee)*1000/r.TxSize)
 
@@ -1248,7 +1248,7 @@ func (mp *TxPool) RawMempoolVerbose() map[string]*hnsjson.GetRawMempoolVerboseRe
 			Size:             int32(tx.MsgTx().SerializeSize()),
 			Vsize:            int32(GetTxVirtualSize(tx)),
 			Weight:           int32(blockchain.GetTransactionWeight(tx)),
-			Fee:              hnsutil.Amount(desc.Fee).ToBTC(),
+			Fee:              hnsutil.Amount(desc.Fee).ToHNS(),
 			Time:             desc.Added.Unix(),
 			Height:           int64(desc.Height),
 			StartingPriority: desc.StartingPriority,
@@ -1279,7 +1279,7 @@ func (mp *TxPool) LastUpdated() time.Time {
 
 // MempoolAcceptResult holds the result from mempool acceptance check.
 type MempoolAcceptResult struct {
-	// TxFee is the fees paid in satoshi.
+	// TxFee is the fees paid in dollarydoos.
 	TxFee hnsutil.Amount
 
 	// TxSize is the virtual size(vb) of the tx.

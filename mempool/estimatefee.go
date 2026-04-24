@@ -16,8 +16,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mining"
 )
 
@@ -496,7 +496,7 @@ func (b *estimateFeeSet) estimateFee(confirmations int) SatoshiPerByte {
 		return 0
 	}
 
-	var min, max int = 0, 0
+	var min, max = 0, 0
 	for i := 0; i < confirmations-1; i++ {
 		min += int(b.bin[i])
 	}

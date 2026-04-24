@@ -83,7 +83,7 @@ func (b *addrIndexBucket) printLevels(addrKey [addrKeySize]byte) string {
 		for i := 0; i < numEntries; i++ {
 			start := i * txEntrySize
 			num := byteOrder.Uint32(data[start:])
-			_, _ = levelBuf.WriteString(fmt.Sprintf("%02d ", num))
+			_, _ = fmt.Fprintf(&levelBuf, "%02d ", num)
 		}
 		for i := numEntries; i < maxEntries; i++ {
 			_, _ = levelBuf.WriteString("_  ")

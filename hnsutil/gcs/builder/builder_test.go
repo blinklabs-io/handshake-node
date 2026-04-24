@@ -9,10 +9,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/hnsutil/gcs"
 	"github.com/blinklabs-io/handshake-node/hnsutil/gcs/builder"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -45,7 +43,12 @@ var (
 
 	testHash = "000000000000000000496d7ff9bd2c96154a8d64260e8b3b411e625712abb14c"
 
-	testAddr = "3Nxwenay9Z8Lc9JBiywExpnEFiLp6Afp8v"
+	// 20-byte version-0 Handshake address hash (arbitrary test data).
+	testAddrHash = []byte{
+		0xe8, 0x48, 0x95, 0xcc, 0x93, 0xc0, 0x56, 0xcb,
+		0x2a, 0x23, 0x2e, 0xeb, 0xce, 0x8a, 0x51, 0xc2,
+		0x58, 0x00, 0xc6, 0x28,
+	}
 
 	witness = [][]byte{
 		{0x4c, 0xb1, 0xab, 0x12, 0x57, 0x62, 0x1e, 0x41,
@@ -76,14 +79,11 @@ func TestUseBlockHash(t *testing.T) {
 		Index: 4321,
 	}
 
-	// hnsutil.Address
-	addr, err := hnsutil.DecodeAddress(testAddr, &chaincfg.MainNetParams)
-	if err != nil {
-		t.Fatalf("Address decode failed: %s", err.Error())
-	}
+	// Build a witness-program script from a Handshake version-0 address hash.
+	// OP_0 <20-byte-hash>
 	addrBytes, err := txscript.NewScriptBuilder().
-		AddOp(txscript.OP_HASH160).AddData(addr.ScriptAddress()).
-		AddOp(txscript.OP_EQUAL).Script()
+		AddOp(txscript.OP_0).AddData(testAddrHash).
+		Script()
 	if err != nil {
 		t.Fatalf("Address script build failed: %s", err.Error())
 	}

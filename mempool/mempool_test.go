@@ -310,14 +310,16 @@ func newPoolHarness(chainParams *chaincfg.Params) (*poolHarness, []spendableOutp
 	}
 	signKey, signPub := btcec.PrivKeyFromBytes(keyBytes)
 
-	// Generate associated pay-to-script-hash address and resulting payment
-	// script.
+	// Generate associated pay-to-pubkey-hash address and resulting payment
+	// script.  Handshake only has a single unified address type, so we
+	// hash the compressed pubkey down to 20 bytes directly.
 	pubKeyBytes := signPub.SerializeCompressed()
-	payPubKeyAddr, err := hnsutil.NewAddressPubKey(pubKeyBytes, chainParams)
+	payAddr, err := hnsutil.NewAddressPubKeyHash(
+		hnsutil.Hash160(pubKeyBytes), chainParams,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	payAddr := payPubKeyAddr.AddressPubKeyHash()
 	pkScript, err := txscript.PayToAddrScript(payAddr)
 	if err != nil {
 		return nil, nil, err
@@ -347,7 +349,7 @@ func newPoolHarness(chainParams *chaincfg.Params) (*poolHarness, []spendableOutp
 				MaxOrphanTxs:         5,
 				MaxOrphanTxSize:      1000,
 				MaxSigOpCostPerTx:    blockchain.MaxBlockSigOpsCost / 4,
-				MinRelayTxFee:        1000, // 1 Satoshi per byte
+				MinRelayTxFee:        1000, // 1 doo per byte
 				MaxTxVersion:         1,
 			},
 			ChainParams:      chainParams,
@@ -1483,7 +1485,7 @@ func TestAncestorsDescendants(t *testing.T) {
 func TestRBF(t *testing.T) {
 	t.Parallel()
 
-	const defaultFee = hnsutil.SatoshiPerBitcoin
+	const defaultFee = hnsutil.DooPerHNS
 
 	testCases := []struct {
 		name  string

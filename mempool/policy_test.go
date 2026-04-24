@@ -47,8 +47,8 @@ func TestCalcMinRequiredTxRelayFee(t *testing.T) {
 		{
 			"max standard tx size with max satoshi relay fee",
 			maxStandardTxWeight / 4,
-			hnsutil.MaxSatoshi,
-			hnsutil.MaxSatoshi,
+			hnsutil.MaxDoo,
+			hnsutil.MaxDoo,
 		},
 		{
 			"1500 bytes with 5000 relay fee",
@@ -245,8 +245,8 @@ func TestDust(t *testing.T) {
 		{
 			// Maximum allowed value is never dust.
 			"max satoshi amount is never dust",
-			wire.TxOut{Value: hnsutil.MaxSatoshi, Address: stdAddr},
-			hnsutil.MaxSatoshi,
+			wire.TxOut{Value: hnsutil.MaxDoo, Address: stdAddr},
+			hnsutil.MaxDoo,
 			false,
 		},
 		{

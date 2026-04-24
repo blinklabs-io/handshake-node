@@ -552,10 +552,17 @@ func (k *ExtendedKey) ECPrivKey() (*btcec.PrivateKey, error) {
 	return privKey, nil
 }
 
-// Address converts the extended key to a standard bitcoin pay-to-pubkey-hash
-// address for the passed network.
-func (k *ExtendedKey) Address(net *chaincfg.Params) (*hnsutil.AddressPubKeyHash, error) {
-	pkHash := hnsutil.Hash160(k.pubKeyBytes())
+// Address converts the extended key to a Handshake version 0 (P2WPKH
+// equivalent) address for the passed network.  Returns an error if the
+// extended key has been zeroed (or otherwise has no valid public key
+// material) so callers cannot accidentally derive a usable address from
+// wiped key state.
+func (k *ExtendedKey) Address(net *chaincfg.Params) (hnsutil.Address, error) {
+	pubKey := k.pubKeyBytes()
+	if len(pubKey) == 0 {
+		return nil, errors.New("extended key has no public key material")
+	}
+	pkHash := hnsutil.Hash160(pubKey)
 	return hnsutil.NewAddressPubKeyHash(pkHash, net)
 }
 

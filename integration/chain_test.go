@@ -105,7 +105,7 @@ func TestGetTxSpendingPrevOut(t *testing.T) {
 // createTxInMempool creates a tx and puts it in the mempool.
 func createTxInMempool(t *testing.T, r *rpctest.Harness) *wire.MsgTx {
 	// Create a fresh output for usage within the test below.
-	const outputValue = hnsutil.SatoshiPerBitcoin
+	const outputValue = hnsutil.DooPerHNS
 	outputKey, testOutput, testPkScript, err := makeTestOutput(
 		r, t, outputValue,
 	)

@@ -156,10 +156,10 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 
 	// We mock the third call to `CheckMempoolAcceptance` to return a
 	// result saying the tx allowed.
-	const feeSats = hnsutil.Amount(1000)
+	const feeDoo = hnsutil.Amount(1000)
 	mm.On("CheckMempoolAcceptance", tx3).Return(
 		&mempool.MempoolAcceptResult{
-			TxFee:  feeSats,
+			TxFee:  feeDoo,
 			TxSize: 100,
 		}, nil,
 	).Once()
@@ -171,12 +171,12 @@ func TestHandleTestMempoolAcceptMixedResults(t *testing.T) {
 		Allowed: true,
 		Vsize:   100,
 		Fees: &hnsjson.TestMempoolAcceptFees{
-			Base:             feeSats.ToBTC(),
-			EffectiveFeeRate: feeSats.ToBTC() * 1e3 / 100,
+			Base:             feeDoo.ToHNS(),
+			EffectiveFeeRate: feeDoo.ToHNS() * 1e3 / 100,
 		},
 	}
 
-	// Create a mock request with default max fee rate of 0.1 BTC/KvB.
+	// Create a mock request with default max fee rate of 0.1 HNS/KvB.
 	cmd := hnsjson.NewTestMempoolAcceptCmd(
 		[]string{txHex1, txHex2, txHex3}, 0.1,
 	)
@@ -197,22 +197,22 @@ func TestValidateFeeRate(t *testing.T) {
 	t.Parallel()
 
 	const (
-		// testFeeRate is in BTC/kvB.
+		// testFeeRate is in HNS/kvB.
 		testFeeRate = 0.1
 
 		// testTxSize is in vb.
 		testTxSize = 100
 
-		// testFeeSats is in sats.
-		// We have 0.1BTC/kvB =
-		//   0.1 * 1e8 sats/kvB =
-		//   0.1 * 1e8 / 1e3 sats/vb = 0.1 * 1e5 sats/vb.
-		testFeeSats = hnsutil.Amount(testFeeRate * 1e5 * testTxSize)
+		// testFeeDoo is in dollarydoos (1 HNS = 1e6 doo).
+		// We have 0.1 HNS/kvB =
+		//   0.1 * 1e6 doo/kvB =
+		//   0.1 * 1e6 / 1e3 doo/vb = 0.1 * 1e3 doo/vb.
+		testFeeDoo = hnsutil.Amount(testFeeRate * 1e3 * testTxSize)
 	)
 
 	testCases := []struct {
 		name         string
-		feeSats      hnsutil.Amount
+		feeDoo       hnsutil.Amount
 		txSize       int64
 		maxFeeRate   float64
 		expectedFees *hnsjson.TestMempoolAcceptFees
@@ -222,7 +222,7 @@ func TestValidateFeeRate(t *testing.T) {
 			// When the fee rate(0.1) is above the max fee
 			// rate(0.01), we expect a nil result and false.
 			name:         "fee rate above max",
-			feeSats:      testFeeSats,
+			feeDoo:       testFeeDoo,
 			txSize:       testTxSize,
 			maxFeeRate:   testFeeRate / 10,
 			expectedFees: nil,
@@ -232,11 +232,11 @@ func TestValidateFeeRate(t *testing.T) {
 			// When the fee rate(0.1) is no greater than the max
 			// fee rate(0.1), we expect a result and true.
 			name:       "fee rate below max",
-			feeSats:    testFeeSats,
+			feeDoo:     testFeeDoo,
 			txSize:     testTxSize,
 			maxFeeRate: testFeeRate,
 			expectedFees: &hnsjson.TestMempoolAcceptFees{
-				Base:             testFeeSats.ToBTC(),
+				Base:             testFeeDoo.ToHNS(),
 				EffectiveFeeRate: testFeeRate,
 			},
 			allowed: true,
@@ -245,7 +245,7 @@ func TestValidateFeeRate(t *testing.T) {
 			// When the fee rate(1) is above the default max fee
 			// rate(0.1), we expect a nil result and false.
 			name:         "fee rate above default max",
-			feeSats:      testFeeSats,
+			feeDoo:       testFeeDoo,
 			txSize:       testTxSize / 10,
 			expectedFees: nil,
 			allowed:      false,
@@ -254,11 +254,11 @@ func TestValidateFeeRate(t *testing.T) {
 			// When the fee rate(0.1) is no greater than the
 			// default max fee rate(0.1), we expect a result and
 			// true.
-			name:    "fee rate below default max",
-			feeSats: testFeeSats,
-			txSize:  testTxSize,
+			name:   "fee rate below default max",
+			feeDoo: testFeeDoo,
+			txSize: testTxSize,
 			expectedFees: &hnsjson.TestMempoolAcceptFees{
-				Base:             testFeeSats.ToBTC(),
+				Base:             testFeeDoo.ToHNS(),
 				EffectiveFeeRate: testFeeRate,
 			},
 			allowed: true,
@@ -272,7 +272,7 @@ func TestValidateFeeRate(t *testing.T) {
 			require := require.New(t)
 
 			result, allowed := validateFeeRate(
-				tc.feeSats, tc.txSize, tc.maxFeeRate,
+				tc.feeDoo, tc.txSize, tc.maxFeeRate,
 			)
 
 			require.Equal(tc.expectedFees, result)
@@ -295,14 +295,15 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 	}}
 
 	const (
-		// Set transaction's fee rate to be 0.2BTC/kvB.
+		// Set transaction's fee rate to be 0.2 HNS/kvB.
 		feeRate = defaultMaxFeeRate * 2
 
 		// txSize is 100vb.
 		txSize = 100
 
-		// feeSats is 2e6 sats.
-		feeSats = feeRate * 1e8 * txSize / 1e3
+		// feeDoo is the fee expressed in dollarydoos
+		// (feeRate [HNS/kvB] * 1e6 doo/HNS * txSize / 1e3 vb/kvB).
+		feeDoo = feeRate * 1e6 * txSize / 1e3
 	)
 
 	testCases := []struct {
@@ -333,7 +334,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 		},
 		{
 			// When the max fee rate is not set, the default
-			// 0.1BTC/kvB is used and the fee rate(0.2) used by the
+			// 0.1 HNS/kvB is used and the fee rate(0.2) used by the
 			// tx is above it, the result should disallow it.
 			name:         "above default max fee rate",
 			txHex:        txHex1,
@@ -356,7 +357,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 			// return the result.
 			mm.On("CheckMempoolAcceptance", tx).Return(
 				&mempool.MempoolAcceptResult{
-					TxFee:  feeSats,
+					TxFee:  feeDoo,
 					TxSize: txSize,
 				}, nil,
 			).Once()
@@ -372,7 +373,7 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 			if tc.allowed {
 				expected.Vsize = txSize
 				expected.Fees = &hnsjson.TestMempoolAcceptFees{
-					Base:             feeSats / 1e8,
+					Base:             feeDoo / 1e6,
 					EffectiveFeeRate: feeRate,
 				}
 			} else {

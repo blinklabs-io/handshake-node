@@ -154,6 +154,9 @@ func (s PkScript) Address(chainParams *chaincfg.Params) (hnsutil.Address, error)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse address: %v", err)
 	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("script has no decodable address")
+	}
 
 	return addrs[0], nil
 }

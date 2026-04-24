@@ -8,10 +8,10 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
@@ -538,7 +538,7 @@ func (t *TapscriptProof) ToControlBlock(internalKey *btcec.PublicKey) ControlBlo
 	return ControlBlock{
 		InternalKey:     internalKey,
 		OutputKeyYIsOdd: outputKeyYIsOdd,
-		LeafVersion:     t.TapLeaf.LeafVersion,
+		LeafVersion:     t.LeafVersion,
 		InclusionProof:  t.InclusionProof,
 	}
 }

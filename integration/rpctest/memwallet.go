@@ -621,8 +621,9 @@ func p2wpkhScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
 	return txscript.PayToAddrScript(addr)
 }
 
-// keyToAddr maps the passed private key to the corresponding P2WPKH address.
+// keyToAddr maps the passed private key to the corresponding Handshake
+// version 0 (P2WPKH-equivalent) address.
 func keyToAddr(key *btcec.PrivateKey, net *chaincfg.Params) (hnsutil.Address, error) {
 	serializedKey := key.PubKey().SerializeCompressed()
-	return hnsutil.NewAddressWitnessPubKeyHash(hnsutil.Hash160(serializedKey), net)
+	return hnsutil.NewAddressPubKeyHash(hnsutil.Hash160(serializedKey), net)
 }
