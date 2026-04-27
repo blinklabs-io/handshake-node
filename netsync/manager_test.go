@@ -522,7 +522,6 @@ func TestIsInIBDMode(t *testing.T) {
 	for _, test := range tests {
 		db, tearDown, err := dbSetup(t, test.params)
 		if err != nil {
-			tearDown()
 			t.Fatal(err)
 		}
 
@@ -1115,11 +1114,11 @@ func syncStalledHeaderRecovery(t *testing.T, sm *SyncManager,
 // headers are already caught up but the block chain lags behind.  In this
 // case startSync should skip header download and directly request blocks.
 func TestStartSyncBlockFallback(t *testing.T) {
-	// TODO(handshake): chaincfg.RegressionNetParams.PowLimitBits (0x207fffff)
-	// decodes to a target larger than PowLimit (2^235 - 1), so generated test
-	// blocks fail validation.  Reconcile PowLimitBits with PowLimit before
-	// re-enabling.
-	t.Skip("regtest PowLimitBits/PowLimit mismatch breaks generated blocks")
+	// TODO(handshake): test helpers create blocks with Version 1, but
+	// regtest activates BIP0034/BIP0065/BIP0066 at height 0, so headers
+	// fail validation with ErrBlockVersionTooOld.  Adapt block versioning
+	// for Handshake (genesis uses Version 0) before re-enabling.
+	t.Skip("regtest block version validation rejects test-generated blocks")
 
 	t.Parallel()
 
@@ -1192,11 +1191,11 @@ func TestStallNoDisconnectAtSameHeight(t *testing.T) {
 // isInIBDMode sees IsCurrent()==true with no higher peers, returns false,
 // and startSync exits immediately.
 func TestStartSyncChainCurrent(t *testing.T) {
-	// TODO(handshake): chaincfg.RegressionNetParams.PowLimitBits (0x207fffff)
-	// decodes to a target larger than PowLimit (2^235 - 1), so the generated
-	// block fails validation.  Reconcile PowLimitBits with PowLimit before
-	// re-enabling.
-	t.Skip("regtest PowLimitBits/PowLimit mismatch breaks generated blocks")
+	// TODO(handshake): test helpers create blocks with Version 1, but
+	// regtest activates BIP0034/BIP0065/BIP0066 at height 0, so headers
+	// fail validation with ErrBlockVersionTooOld.  Adapt block versioning
+	// for Handshake (genesis uses Version 0) before re-enabling.
+	t.Skip("regtest block version validation rejects test-generated blocks")
 
 	t.Parallel()
 

@@ -55,10 +55,11 @@ func chainedHeaders(parent *wire.BlockHeader, chainParams *chaincfg.Params,
 }
 
 func TestProcessBlockHeader(t *testing.T) {
-	// TODO(handshake): regtest PowLimitBits (0x207fffff) decodes to a target
-	// larger than PowLimit (2^235 - 1), so generated headers fail validation.
-	// Reconcile PowLimitBits with PowLimit before re-enabling.
-	t.Skip("regtest PowLimitBits/PowLimit mismatch breaks generated blocks")
+	// TODO(handshake): test helpers create blocks with Version 1, but
+	// regtest activates BIP0034/BIP0065/BIP0066 at height 0, so headers
+	// fail validation with ErrBlockVersionTooOld.  Adapt block versioning
+	// for Handshake (genesis uses Version 0) before re-enabling.
+	t.Skip("regtest block version validation rejects test-generated blocks")
 
 	chain, params, tearDown := utxoCacheTestChain("TestProcessBlockHeader")
 	defer tearDown()

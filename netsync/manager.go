@@ -328,14 +328,12 @@ func (sm *SyncManager) startSync() {
 	higherPeers := sm.fetchHigherPeers(best.Height)
 
 	// Pick randomly from the set of peers greater than our
-	// block height, falling back to a random peer of the same
-	// height if none are greater.
+	// block height.
 	//
 	// TODO(conner): Use a better algorithm to ranking peers based on
 	// observed metrics and/or sync in parallel.
 	var bestPeer *peerpkg.Peer
-	switch {
-	case len(higherPeers) > 0:
+	if len(higherPeers) > 0 {
 		bestPeer = higherPeers[rand.Intn(len(higherPeers))]
 	}
 

@@ -78,7 +78,7 @@ func TestImmutableSequential(t *testing.T) {
 		// Ensure the treap length is the expected value.
 		if gotLen := testTreap.Len(); gotLen != (i+1)*keyCount {
 			t.Fatalf("Len #%d: unexpected length - got %d, want %d",
-				i, gotLen, i+1)
+				i, gotLen, (i+1)*keyCount)
 		}
 
 		for j, key := range keys {
@@ -190,7 +190,7 @@ func TestImmutableReverseSequential(t *testing.T) {
 		// Ensure the treap length is the expected value.
 		if gotLen := testTreap.Len(); gotLen != (i+1)*keyCount {
 			t.Fatalf("Len #%d: unexpected length - got %d, want %d",
-				i, gotLen, i+1)
+				i, gotLen, (i+1)*keyCount)
 		}
 
 		for j, key := range keys {
@@ -305,7 +305,7 @@ func TestImmutableUnordered(t *testing.T) {
 		// Ensure the treap length is the expected value.
 		if gotLen := testTreap.Len(); gotLen != (i+1)*keyCount {
 			t.Fatalf("Len #%d: unexpected length - got %d, want %d",
-				i, gotLen, i+1)
+				i, gotLen, (i+1)*keyCount)
 		}
 
 		for j, key := range keys {
@@ -506,7 +506,7 @@ func TestImmutableSnapshot(t *testing.T) {
 		// value.
 		if gotLen := treapSnap.Len(); gotLen != i*keyCount {
 			t.Fatalf("Len #%d: unexpected length - got %d, want %d",
-				i, gotLen, i)
+				i, gotLen, i*keyCount)
 		}
 
 		for j, key := range keys {
