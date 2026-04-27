@@ -31,6 +31,7 @@ func TestIPTypes(t *testing.T) {
 		rfc6052  bool
 		rfc6145  bool
 		rfc6598  bool
+		rfc7343  bool
 		local    bool
 		valid    bool
 		routable bool
@@ -38,53 +39,76 @@ func TestIPTypes(t *testing.T) {
 
 	newIPTest := func(ip string, rfc1918, rfc2544, rfc3849, rfc3927, rfc3964,
 		rfc4193, rfc4380, rfc4843, rfc4862, rfc5737, rfc6052, rfc6145, rfc6598,
-		local, valid, routable bool) ipTest {
+		rfc7343, local, valid, routable bool) ipTest {
 		nip := net.ParseIP(ip)
 		na := *wire.NewNetAddressIPPort(nip, 8333, wire.SFNodeNetwork)
 		test := ipTest{na, rfc1918, rfc2544, rfc3849, rfc3927, rfc3964, rfc4193, rfc4380,
-			rfc4843, rfc4862, rfc5737, rfc6052, rfc6145, rfc6598, local, valid, routable}
+			rfc4843, rfc4862, rfc5737, rfc6052, rfc6145, rfc6598, rfc7343, local, valid, routable}
 		return test
 	}
 
 	tests := []ipTest{
 		newIPTest("10.255.255.255", true, false, false, false, false, false,
-			false, false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, false, true, false),
 		newIPTest("192.168.0.1", true, false, false, false, false, false,
-			false, false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, false, true, false),
 		newIPTest("172.31.255.1", true, false, false, false, false, false,
-			false, false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, false, true, false),
 		newIPTest("172.32.1.1", false, false, false, false, false, false, false, false,
-			false, false, false, false, false, false, true, true),
+			false, false, false, false, false, false, false, true, true),
 		newIPTest("169.254.250.120", false, false, false, true, false, false,
-			false, false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, false, true, false),
 		newIPTest("0.0.0.0", false, false, false, false, false, false, false,
-			false, false, false, false, false, false, true, false, false),
+			false, false, false, false, false, false, false, true, false, false),
 		newIPTest("255.255.255.255", false, false, false, false, false, false,
-			false, false, false, false, false, false, false, false, false, false),
+			false, false, false, false, false, false, false, false, false, false, false),
 		newIPTest("127.0.0.1", false, false, false, false, false, false,
-			false, false, false, false, false, false, false, true, true, false),
+			false, false, false, false, false, false, false, false, true, true, false),
 		newIPTest("fd00:dead::1", false, false, false, false, false, true,
-			false, false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, false, true, false),
 		newIPTest("2001::1", false, false, false, false, false, false,
-			true, false, false, false, false, false, false, false, true, true),
+			true, false, false, false, false, false, false, false, false, true, true),
 		newIPTest("2001:10:abcd::1:1", false, false, false, false, false, false,
-			false, true, false, false, false, false, false, false, true, false),
+			false, true, false, false, false, false, false, false, false, true, false),
+		newIPTest("2001:20:abcd::1:1", false, false, false, false, false, false,
+			false, false, false, false, false, false, false, true, false, true, false),
 		newIPTest("fe80::1", false, false, false, false, false, false,
-			false, false, true, false, false, false, false, false, true, false),
+			false, false, true, false, false, false, false, false, false, true, false),
 		newIPTest("fe80:1::1", false, false, false, false, false, false,
-			false, false, false, false, false, false, false, false, true, true),
+			false, false, false, false, false, false, false, false, false, true, true),
 		newIPTest("64:ff9b::1", false, false, false, false, false, false,
-			false, false, false, false, true, false, false, false, true, true),
+			false, false, false, false, true, false, false, false, false, true, true),
 		newIPTest("::ffff:abcd:ef12:1", false, false, false, false, false, false,
-			false, false, false, false, false, false, false, false, true, true),
+			false, false, false, false, false, false, false, false, false, true, false),
 		newIPTest("::1", false, false, false, false, false, false, false, false,
-			false, false, false, false, false, true, true, false),
+			false, false, false, false, false, false, true, true, false),
 		newIPTest("198.18.0.1", false, true, false, false, false, false, false,
-			false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, true, false),
 		newIPTest("100.127.255.1", false, false, false, false, false, false, false,
-			false, false, false, false, false, true, false, true, false),
+			false, false, false, false, false, true, false, false, true, false),
 		newIPTest("203.0.113.1", false, false, false, false, false, false, false,
-			false, false, false, false, false, false, false, true, false),
+			false, false, false, false, false, false, false, false, true, false),
+
+		// IPv6 zero-prefix addresses (0000::/16 reserved range).
+		// These should NOT be routable per RFC 4291.
+		newIPTest("0:9881:8181:8181:fe00:a:9e:9801", false, false, false,
+			false, false, false, false, false, false, false, false,
+			false, false, false, false, true, false),
+		newIPTest("0::1", false, false, false, false, false, false, false,
+			false, false, false, false, false, false, false, true,
+			true, false),
+		newIPTest("0:1::1", false, false, false, false, false, false,
+			false, false, false, false, false, false, false, false,
+			false, true, false),
+		newIPTest("0:ffff::1", false, false, false, false, false, false,
+			false, false, false, false, false, false, false, false,
+			false, true, false),
+
+		// RFC 6145 translated IPv4 addresses (::ffff:0:0:0/96) are
+		// within 0000::/16 but should still be routable.
+		newIPTest("::ffff:0:0c01:0203", false, false, false, false,
+			false, false, false, false, false, false, false, true,
+			false, false, false, true, true),
 	}
 
 	t.Logf("Running %d tests", len(tests))
@@ -126,7 +150,11 @@ func TestIPTypes(t *testing.T) {
 		}
 
 		if rv := addrmgr.IsRFC6145(&test.in); rv != test.rfc6145 {
-			t.Errorf("IsRFC1918 %s\n got: %v want: %v", test.in.IP, rv, test.rfc6145)
+			t.Errorf("IsRFC6145 %s\n got: %v want: %v", test.in.IP, rv, test.rfc6145)
+		}
+
+		if rv := addrmgr.IsRFC7343(&test.in); rv != test.rfc7343 {
+			t.Errorf("IsRFC7343 %s\n got: %v want: %v", test.in.IP, rv, test.rfc7343)
 		}
 
 		if rv := addrmgr.IsLocal(&test.in); rv != test.local {
@@ -143,6 +171,75 @@ func TestIPTypes(t *testing.T) {
 		if rv := addrmgr.IsRoutable(currentNa); rv != test.routable {
 			t.Errorf("IsRoutable %s\n got: %v want: %v", test.in.IP, rv, test.routable)
 		}
+	}
+}
+
+// TestIsZero ensures the IsZero function correctly identifies addresses in the
+// reserved zero address blocks while excluding allocated sub-ranges.
+func TestIsZero(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   string
+		want bool
+	}{
+		// IPv4 zero addresses (0.0.0.0/8).
+		{name: "ipv4 zero", ip: "0.0.0.0", want: true},
+		{name: "ipv4 zero prefix", ip: "0.1.2.3", want: true},
+		{name: "ipv4 zero 0.255.255.255", ip: "0.255.255.255", want: true},
+
+		// IPv4 non-zero addresses.
+		{name: "ipv4 normal", ip: "1.2.3.4", want: false},
+		{name: "ipv4 loopback", ip: "127.0.0.1", want: false},
+		{name: "ipv4 private", ip: "192.168.1.1", want: false},
+
+		// IPv6 zero-prefix addresses (0000::/16 reserved).
+		{name: "ipv6 zero all", ip: "::", want: true},
+		{name: "ipv6 loopback", ip: "::1", want: true},
+		{name: "ipv6 zero prefix 0::2", ip: "0::2", want: true},
+		{name: "ipv6 zero prefix 0:1::1", ip: "0:1::1", want: true},
+		{name: "ipv6 zero prefix 0:ffff::1", ip: "0:ffff::1", want: true},
+		{
+			name: "ipv6 zero prefix from bug report",
+			ip:   "0:9881:8181:8181:fe00:a:9e:9801",
+			want: true,
+		},
+		{
+			name: "ipv6 zero prefix unallocated",
+			ip:   "::ffff:abcd:ef12:1",
+			want: true,
+		},
+
+		// RFC 6145 addresses (::ffff:0:0:0/96) — allocated sub-range
+		// of 0000::/16 that should NOT be flagged as zero.
+		{
+			name: "ipv6 rfc6145 translated ipv4",
+			ip:   "::ffff:0:0c01:0203",
+			want: false,
+		},
+		{
+			name: "ipv6 rfc6145 another",
+			ip:   "::ffff:0:1.2.3.4",
+			want: false,
+		},
+
+		// IPv6 non-zero-prefix addresses.
+		{name: "ipv6 normal", ip: "2602:100::1", want: false},
+		{name: "ipv6 rfc6052", ip: "64:ff9b::1", want: false},
+		{name: "ipv6 private", ip: "fd00:dead::1", want: false},
+		{name: "ipv6 teredo", ip: "2001::1", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			nip := net.ParseIP(test.ip)
+			na := wire.NewNetAddressIPPort(
+				nip, 8333, wire.SFNodeNetwork,
+			)
+			if got := addrmgr.IsZero(na); got != test.want {
+				t.Errorf("IsZero(%s) = %v, want %v",
+					test.ip, got, test.want)
+			}
+		})
 	}
 }
 
@@ -169,7 +266,10 @@ func TestGroupKey(t *testing.T) {
 		{name: "ipv4 rfc3927 169.254/16", ip: "169.254.1.2", expected: "unroutable"},
 		{name: "ipv6 rfc4193 fc00::/7", ip: "fc00::1234", expected: "unroutable"},
 		{name: "ipv6 rfc4843 2001:10::/28", ip: "2001:10::1234", expected: "unroutable"},
+		{name: "ipv6 rfc7343 2001:20::/28", ip: "2001:20::1234", expected: "unroutable"},
 		{name: "ipv6 rfc4862 fe80::/64", ip: "fe80::1234", expected: "unroutable"},
+		{name: "ipv6 zero prefix 0::/16", ip: "0:9881:8181:8181:fe00:a:9e:9801", expected: "unroutable"},
+		{name: "ipv6 zero prefix 0:1::1", ip: "0:1::1", expected: "unroutable"},
 
 		// IPv4 normal.
 		{name: "ipv4 normal class a", ip: "12.1.2.3", expected: "12.1.0.0"},
