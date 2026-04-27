@@ -29,9 +29,9 @@ var (
 	mainPowLimit, _ = new(big.Int).SetString("0000000000ffff00000000000000000000000000000000000000000000000000", 16)
 
 	// regressionPowLimit is the highest proof of work value a Handshake
-	// block can have for the regression test network.  It is the value
-	// 2^235 - 1 (compact bits 0x207fffff).
-	regressionPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 235), bigOne)
+	// block can have for the regression test network.  This is the value
+	// represented by compact bits 0x207fffff: 0x7fffff00...
+	regressionPowLimit, _ = new(big.Int).SetString("7fffff0000000000000000000000000000000000000000000000000000000000", 16)
 )
 
 // Checkpoint identifies a known good point in the block chain.  Using
