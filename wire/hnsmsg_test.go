@@ -1,10 +1,6 @@
-// Copyright 2026 Blink Labs Software
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
+// Copyright (c) 2025-2026 Blink Labs Software
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
 
 package wire
 
