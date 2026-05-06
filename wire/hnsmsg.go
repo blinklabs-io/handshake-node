@@ -1,19 +1,11 @@
-// Copyright 2026 Blink Labs Software
+// Copyright (c) 2025-2026 Blink Labs Software
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Portions of this file are derived from
-// github.com/blinklabs-io/cdnsd/handshake/messages.go (MIT-licensed).
+// Portions of this file are derived from cdnsd
+// (https://github.com/blinklabs-io/cdnsd) handshake/messages.go, which is
+// Copyright 2025 Blink Labs Software and licensed under the MIT license.
+// The cdnsd code was itself ported from hsd/hnsd.
 
 package wire
 
@@ -186,6 +178,8 @@ func DecodeHnsMessage(data []byte) (HandshakeMessage, uint32, error) {
 // not yet implemented in this package.
 func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 	switch msgType {
+	case HnsMsgTypeVersion:
+		return &HnsMsgVersion{}, nil
 	case HnsMsgTypeVerack:
 		return &HnsMsgVerack{}, nil
 	case HnsMsgTypePing:
