@@ -197,6 +197,8 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgGetData{}, nil
 	case HnsMsgTypeNotFound:
 		return &HnsMsgNotFound{}, nil
+	case HnsMsgTypeGetBlocks:
+		return &HnsMsgGetBlocks{}, nil
 	case HnsMsgTypeGetHeaders:
 		return &HnsMsgGetHeaders{}, nil
 	case HnsMsgTypeHeaders:
@@ -466,6 +468,59 @@ func hnsDecodeInvItems(msgName string, data []byte) ([]HnsInvItem, error) {
 		data = data[HnsInvItemSize:]
 	}
 	return inventory, nil
+}
+
+// HnsMsgGetBlocks is the Handshake "getblocks" message. It requests block
+// inventory after one of the locator hashes, stopping at StopHash when set.
+type HnsMsgGetBlocks struct {
+	Locator  [][32]byte
+	StopHash [32]byte
+}
+
+func (*HnsMsgGetBlocks) Type() HnsMsgType { return HnsMsgTypeGetBlocks }
+func (m *HnsMsgGetBlocks) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Locator)))
+	out := make([]byte, len(count)+(len(m.Locator)*32)+32)
+	copy(out, count)
+	off := len(count)
+	for i := range m.Locator {
+		copy(out[off:off+32], m.Locator[i][:])
+		off += 32
+	}
+	copy(out[off:off+32], m.StopHash[:])
+	return out
+}
+
+func (m *HnsMsgGetBlocks) Decode(data []byte) error {
+	count, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("getblocks: locator count: %w", err)
+	}
+	data = data[bytesRead:]
+	if len(data) < 32 {
+		return fmt.Errorf("getblocks: payload missing stop hash")
+	}
+	locatorBytes := len(data) - 32
+	if count > uint64(locatorBytes/32) {
+		return fmt.Errorf(
+			"getblocks: locator count %d exceeds payload length %d",
+			count, len(data),
+		)
+	}
+	wantLen := int(count)*32 + 32
+	if len(data) != wantLen {
+		return fmt.Errorf(
+			"getblocks: invalid payload length for %d locators: got %d, want %d",
+			count, len(data), wantLen,
+		)
+	}
+	m.Locator = make([][32]byte, int(count))
+	for i := range m.Locator {
+		copy(m.Locator[i][:], data[:32])
+		data = data[32:]
+	}
+	copy(m.StopHash[:], data[:32])
+	return nil
 }
 
 // HnsMsgGetHeaders is the Handshake "getheaders" message. It requests a

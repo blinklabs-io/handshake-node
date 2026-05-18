@@ -60,6 +60,7 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"inv", &HnsMsgInv{Inventory: testHnsInventory()}},
 		{"getdata", &HnsMsgGetData{Inventory: testHnsInventory()}},
 		{"notfound", &HnsMsgNotFound{Inventory: testHnsInventory()}},
+		{"getblocks", &HnsMsgGetBlocks{Locator: testHnsLocators(), StopHash: hashOfBytes(0x22)}},
 		{"getheaders", &HnsMsgGetHeaders{Locator: testHnsLocators(), StopHash: hashOfBytes(0x33)}},
 		{"headers", &HnsMsgHeaders{Headers: []*BlockHeader{testHnsHeader()}}},
 		{"sendheaders", &HnsMsgSendHeaders{}},
@@ -413,6 +414,69 @@ func TestHnsMsgNotFoundDecodeErrors(t *testing.T) {
 	}
 	if err := msg.Decode([]byte{0x01}); err == nil {
 		t.Fatal("expected error for count without inventory payload")
+	}
+}
+
+func TestHnsMsgGetBlocksRoundTrip(t *testing.T) {
+	in := HnsMsgGetBlocks{
+		Locator:  testHnsLocators(),
+		StopHash: hashOfBytes(0x33),
+	}
+	encoded := in.Encode()
+
+	var out HnsMsgGetBlocks
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgGetBlocksRoundTripEmptyLocators(t *testing.T) {
+	in := HnsMsgGetBlocks{StopHash: hashOfBytes(0x44)}
+	encoded := in.Encode()
+	if len(encoded) != 33 {
+		t.Fatalf("encoded length: got %d, want 33", len(encoded))
+	}
+
+	var out HnsMsgGetBlocks
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Locator) != 0 {
+		t.Fatalf("locators: got %d, want 0", len(out.Locator))
+	}
+	if out.StopHash != in.StopHash {
+		t.Fatalf("stop hash mismatch")
+	}
+}
+
+func TestHnsMsgGetBlocksOnTheWireLayout(t *testing.T) {
+	locator := hashOfBytes(0x11)
+	stop := hashOfBytes(0x22)
+	got := (&HnsMsgGetBlocks{
+		Locator:  [][32]byte{locator},
+		StopHash: stop,
+	}).Encode()
+	want := append([]byte{0x01}, locator[:]...)
+	want = append(want, stop[:]...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgGetBlocksDecodeErrors(t *testing.T) {
+	var msg HnsMsgGetBlocks
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing locator count")
+	}
+	if err := msg.Decode([]byte{0x00}); err == nil {
+		t.Fatal("expected error for missing stop hash")
+	}
+	locator := hashOfBytes(0x11)
+	if err := msg.Decode(append([]byte{0x01}, locator[:]...)); err == nil {
+		t.Fatal("expected error for locator count without stop hash")
 	}
 }
 
