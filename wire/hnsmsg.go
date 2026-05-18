@@ -199,6 +199,12 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgHeaders{}, nil
 	case HnsMsgTypeSendHeaders:
 		return &HnsMsgSendHeaders{}, nil
+	case HnsMsgTypeBlock:
+		return &HnsMsgBlock{}, nil
+	case HnsMsgTypeGetProof:
+		return &HnsMsgGetProof{}, nil
+	case HnsMsgTypeProof:
+		return &HnsMsgProof{}, nil
 	default:
 		return nil, UnsupportedHnsMsgTypeError{MessageType: msgType}
 	}
@@ -518,6 +524,81 @@ func (*HnsMsgSendHeaders) Decode(data []byte) error {
 	if len(data) != 0 {
 		return fmt.Errorf("sendheaders: expected empty payload, got %d bytes", len(data))
 	}
+	return nil
+}
+
+// HnsMsgBlock is the Handshake "block" message. It reuses the existing
+// Handshake-shaped MsgBlock serializer from Phase 1.
+type HnsMsgBlock struct {
+	Block MsgBlock
+}
+
+func (*HnsMsgBlock) Type() HnsMsgType { return HnsMsgTypeBlock }
+func (m *HnsMsgBlock) Encode() []byte {
+	var buf bytes.Buffer
+	_ = m.Block.Serialize(&buf)
+	return buf.Bytes()
+}
+
+func (m *HnsMsgBlock) Decode(data []byte) error {
+	if len(data) == 0 {
+		return errors.New("block: empty payload")
+	}
+	if err := m.Block.Deserialize(bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("block: %w", err)
+	}
+	return nil
+}
+
+// HnsMsgGetProof is the Handshake "getproof" message. It requests an Urkel
+// proof for Key at Root.
+type HnsMsgGetProof struct {
+	Root [32]byte
+	Key  [32]byte
+}
+
+func (*HnsMsgGetProof) Type() HnsMsgType { return HnsMsgTypeGetProof }
+func (m *HnsMsgGetProof) Encode() []byte {
+	out := make([]byte, 64)
+	copy(out[0:32], m.Root[:])
+	copy(out[32:64], m.Key[:])
+	return out
+}
+
+func (m *HnsMsgGetProof) Decode(data []byte) error {
+	if len(data) != 64 {
+		return fmt.Errorf("getproof: expected 64-byte payload, got %d", len(data))
+	}
+	copy(m.Root[:], data[0:32])
+	copy(m.Key[:], data[32:64])
+	return nil
+}
+
+// HnsMsgProof is the Handshake "proof" message. The Urkel proof body is kept
+// opaque until the Phase 4 name-system implementation provides a native proof
+// type and verifier.
+type HnsMsgProof struct {
+	Root  [32]byte
+	Key   [32]byte
+	Proof []byte
+}
+
+func (*HnsMsgProof) Type() HnsMsgType { return HnsMsgTypeProof }
+func (m *HnsMsgProof) Encode() []byte {
+	out := make([]byte, 64+len(m.Proof))
+	copy(out[0:32], m.Root[:])
+	copy(out[32:64], m.Key[:])
+	copy(out[64:], m.Proof)
+	return out
+}
+
+func (m *HnsMsgProof) Decode(data []byte) error {
+	if len(data) < 64 {
+		return fmt.Errorf("proof: expected at least 64 bytes, got %d", len(data))
+	}
+	copy(m.Root[:], data[0:32])
+	copy(m.Key[:], data[32:64])
+	m.Proof = append(m.Proof[:0], data[64:]...)
 	return nil
 }
 

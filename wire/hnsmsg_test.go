@@ -61,6 +61,9 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"getheaders", &HnsMsgGetHeaders{Locator: testHnsLocators(), StopHash: hashOfBytes(0x33)}},
 		{"headers", &HnsMsgHeaders{Headers: []*BlockHeader{testHnsHeader()}}},
 		{"sendheaders", &HnsMsgSendHeaders{}},
+		{"block", &HnsMsgBlock{Block: *NewMsgBlock(testHnsHeader())}},
+		{"getproof", &HnsMsgGetProof{Root: hashOfBytes(0x44), Key: hashOfBytes(0x55)}},
+		{"proof", &HnsMsgProof{Root: hashOfBytes(0x66), Key: hashOfBytes(0x77), Proof: []byte{1, 2, 3, 4}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -424,6 +427,107 @@ func TestHnsMsgSendHeadersRejectsPayload(t *testing.T) {
 	var msg HnsMsgSendHeaders
 	if err := msg.Decode([]byte{0x00}); err == nil {
 		t.Fatal("expected error for non-empty sendheaders payload")
+	}
+}
+
+func TestHnsMsgBlockRoundTrip(t *testing.T) {
+	in := HnsMsgBlock{Block: *NewMsgBlock(testHnsHeader())}
+	encoded := in.Encode()
+
+	var out HnsMsgBlock
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgBlockOnTheWireLayout(t *testing.T) {
+	header := testHnsHeader()
+	got := (&HnsMsgBlock{Block: *NewMsgBlock(header)}).Encode()
+	want := append(serializeHnsHeader(t, header), 0x00)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgBlockDecodeErrors(t *testing.T) {
+	var msg HnsMsgBlock
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for empty block payload")
+	}
+	if err := msg.Decode([]byte{0x01, 0x02}); err == nil {
+		t.Fatal("expected error for short block payload")
+	}
+}
+
+func TestHnsMsgGetProofRoundTrip(t *testing.T) {
+	in := HnsMsgGetProof{Root: hashOfBytes(0x11), Key: hashOfBytes(0x22)}
+	encoded := in.Encode()
+
+	var out HnsMsgGetProof
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if out != in {
+		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", out, in)
+	}
+}
+
+func TestHnsMsgGetProofOnTheWireLayout(t *testing.T) {
+	root := hashOfBytes(0x11)
+	key := hashOfBytes(0x22)
+	got := (&HnsMsgGetProof{Root: root, Key: key}).Encode()
+	want := append(root[:], key[:]...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgGetProofDecodeWrongSize(t *testing.T) {
+	var msg HnsMsgGetProof
+	if err := msg.Decode(make([]byte, 63)); err == nil {
+		t.Fatal("expected error for short getproof payload")
+	}
+	if err := msg.Decode(make([]byte, 65)); err == nil {
+		t.Fatal("expected error for long getproof payload")
+	}
+}
+
+func TestHnsMsgProofRoundTrip(t *testing.T) {
+	in := HnsMsgProof{
+		Root:  hashOfBytes(0x33),
+		Key:   hashOfBytes(0x44),
+		Proof: []byte{0xaa, 0xbb, 0xcc},
+	}
+	encoded := in.Encode()
+
+	var out HnsMsgProof
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgProofOnTheWireLayout(t *testing.T) {
+	root := hashOfBytes(0x11)
+	key := hashOfBytes(0x22)
+	proof := []byte{0x33, 0x44}
+	got := (&HnsMsgProof{Root: root, Key: key, Proof: proof}).Encode()
+	want := append(root[:], key[:]...)
+	want = append(want, proof...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgProofDecodeErrors(t *testing.T) {
+	var msg HnsMsgProof
+	if err := msg.Decode(make([]byte, 63)); err == nil {
+		t.Fatal("expected error for short proof payload")
 	}
 }
 
