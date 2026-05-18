@@ -190,6 +190,8 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgGetAddr{}, nil
 	case HnsMsgTypeAddr:
 		return &HnsMsgAddr{}, nil
+	case HnsMsgTypeGetData:
+		return &HnsMsgGetData{}, nil
 	default:
 		return nil, UnsupportedHnsMsgTypeError{MessageType: msgType}
 	}
@@ -307,6 +309,91 @@ func (m *HnsMsgAddr) Decode(data []byte) error {
 			return fmt.Errorf("addr: peer %d: %w", i, err)
 		}
 		data = data[HnsNetAddressSize:]
+	}
+	return nil
+}
+
+const HnsInvItemSize = 36
+
+const (
+	HnsInvTypeTx            uint32 = 1
+	HnsInvTypeBlock         uint32 = 2
+	HnsInvTypeFilteredBlock uint32 = 3
+	HnsInvTypeCmpctBlock    uint32 = 4
+	HnsInvTypeClaim         uint32 = 5
+	HnsInvTypeAirDrop       uint32 = 6
+)
+
+// HnsInvItem identifies an object by type and hash in Handshake inventory
+// messages.
+type HnsInvItem struct {
+	Type uint32
+	Hash [32]byte
+}
+
+func (i *HnsInvItem) Encode() []byte {
+	out := make([]byte, HnsInvItemSize)
+	binary.LittleEndian.PutUint32(out[0:4], i.Type)
+	copy(out[4:36], i.Hash[:])
+	return out
+}
+
+func (i *HnsInvItem) Decode(data []byte) error {
+	if len(data) != HnsInvItemSize {
+		return fmt.Errorf(
+			"handshake inventory item: expected %d bytes, got %d",
+			HnsInvItemSize, len(data),
+		)
+	}
+	i.Type = binary.LittleEndian.Uint32(data[0:4])
+	copy(i.Hash[:], data[4:36])
+	return nil
+}
+
+// HnsMsgGetData is the Handshake "getdata" message. It requests inventory
+// items previously announced by a peer.
+type HnsMsgGetData struct {
+	Inventory []HnsInvItem
+}
+
+func (*HnsMsgGetData) Type() HnsMsgType { return HnsMsgTypeGetData }
+func (m *HnsMsgGetData) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Inventory)))
+	out := make([]byte, len(count)+(len(m.Inventory)*HnsInvItemSize))
+	copy(out, count)
+	off := len(count)
+	for i := range m.Inventory {
+		copy(out[off:off+HnsInvItemSize], m.Inventory[i].Encode())
+		off += HnsInvItemSize
+	}
+	return out
+}
+
+func (m *HnsMsgGetData) Decode(data []byte) error {
+	count, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("getdata: inventory count: %w", err)
+	}
+	data = data[bytesRead:]
+	if count > uint64(len(data)/HnsInvItemSize) {
+		return fmt.Errorf(
+			"getdata: inventory count %d exceeds payload length %d",
+			count, len(data),
+		)
+	}
+	wantLen := int(count) * HnsInvItemSize
+	if len(data) != wantLen {
+		return fmt.Errorf(
+			"getdata: invalid payload length for %d inventory items: got %d, want %d",
+			count, len(data), wantLen,
+		)
+	}
+	m.Inventory = make([]HnsInvItem, int(count))
+	for i := range m.Inventory {
+		if err := m.Inventory[i].Decode(data[:HnsInvItemSize]); err != nil {
+			return fmt.Errorf("getdata: inventory %d: %w", i, err)
+		}
+		data = data[HnsInvItemSize:]
 	}
 	return nil
 }
