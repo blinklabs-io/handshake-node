@@ -57,7 +57,9 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"pong", &HnsMsgPong{Nonce: [8]byte{8, 7, 6, 5, 4, 3, 2, 1}}},
 		{"getaddr", &HnsMsgGetAddr{}},
 		{"addr", &HnsMsgAddr{Peers: testHnsAddrPeers()}},
+		{"inv", &HnsMsgInv{Inventory: testHnsInventory()}},
 		{"getdata", &HnsMsgGetData{Inventory: testHnsInventory()}},
+		{"notfound", &HnsMsgNotFound{Inventory: testHnsInventory()}},
 		{"getheaders", &HnsMsgGetHeaders{Locator: testHnsLocators(), StopHash: hashOfBytes(0x33)}},
 		{"headers", &HnsMsgHeaders{Headers: []*BlockHeader{testHnsHeader()}}},
 		{"sendheaders", &HnsMsgSendHeaders{}},
@@ -261,6 +263,57 @@ func TestHnsInvItemDecodeWrongSize(t *testing.T) {
 	}
 }
 
+func TestHnsMsgInvRoundTrip(t *testing.T) {
+	in := HnsMsgInv{Inventory: testHnsInventory()}
+	encoded := in.Encode()
+
+	var out HnsMsgInv
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgInvRoundTripEmpty(t *testing.T) {
+	var msg HnsMsgInv
+	encoded := msg.Encode()
+	if !bytes.Equal(encoded, []byte{0x00}) {
+		t.Fatalf("empty inv encoding: got % x, want 00", encoded)
+	}
+
+	var out HnsMsgInv
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Inventory) != 0 {
+		t.Fatalf("decoded inventory: got %d, want 0", len(out.Inventory))
+	}
+}
+
+func TestHnsMsgInvOnTheWireLayout(t *testing.T) {
+	item := HnsInvItem{
+		Type: HnsInvTypeClaim,
+		Hash: hashOfBytes(0xaa),
+	}
+	got := (&HnsMsgInv{Inventory: []HnsInvItem{item}}).Encode()
+	want := append([]byte{0x01}, item.Encode()...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgInvDecodeErrors(t *testing.T) {
+	var msg HnsMsgInv
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing inventory count")
+	}
+	if err := msg.Decode([]byte{0x01}); err == nil {
+		t.Fatal("expected error for count without inventory payload")
+	}
+}
+
 func TestHnsMsgGetDataRoundTrip(t *testing.T) {
 	in := HnsMsgGetData{Inventory: testHnsInventory()}
 	encoded := in.Encode()
@@ -304,6 +357,57 @@ func TestHnsMsgGetDataOnTheWireLayout(t *testing.T) {
 
 func TestHnsMsgGetDataDecodeErrors(t *testing.T) {
 	var msg HnsMsgGetData
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing inventory count")
+	}
+	if err := msg.Decode([]byte{0x01}); err == nil {
+		t.Fatal("expected error for count without inventory payload")
+	}
+}
+
+func TestHnsMsgNotFoundRoundTrip(t *testing.T) {
+	in := HnsMsgNotFound{Inventory: testHnsInventory()}
+	encoded := in.Encode()
+
+	var out HnsMsgNotFound
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgNotFoundRoundTripEmpty(t *testing.T) {
+	var msg HnsMsgNotFound
+	encoded := msg.Encode()
+	if !bytes.Equal(encoded, []byte{0x00}) {
+		t.Fatalf("empty notfound encoding: got % x, want 00", encoded)
+	}
+
+	var out HnsMsgNotFound
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Inventory) != 0 {
+		t.Fatalf("decoded inventory: got %d, want 0", len(out.Inventory))
+	}
+}
+
+func TestHnsMsgNotFoundOnTheWireLayout(t *testing.T) {
+	item := HnsInvItem{
+		Type: HnsInvTypeAirDrop,
+		Hash: hashOfBytes(0xbb),
+	}
+	got := (&HnsMsgNotFound{Inventory: []HnsInvItem{item}}).Encode()
+	want := append([]byte{0x01}, item.Encode()...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgNotFoundDecodeErrors(t *testing.T) {
+	var msg HnsMsgNotFound
 	if err := msg.Decode(nil); err == nil {
 		t.Fatal("expected error for missing inventory count")
 	}

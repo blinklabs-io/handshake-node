@@ -191,8 +191,12 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgGetAddr{}, nil
 	case HnsMsgTypeAddr:
 		return &HnsMsgAddr{}, nil
+	case HnsMsgTypeInv:
+		return &HnsMsgInv{}, nil
 	case HnsMsgTypeGetData:
 		return &HnsMsgGetData{}, nil
+	case HnsMsgTypeNotFound:
+		return &HnsMsgNotFound{}, nil
 	case HnsMsgTypeGetHeaders:
 		return &HnsMsgGetHeaders{}, nil
 	case HnsMsgTypeHeaders:
@@ -363,6 +367,26 @@ func (i *HnsInvItem) Decode(data []byte) error {
 	return nil
 }
 
+// HnsMsgInv is the Handshake "inv" message. It announces inventory available
+// from the peer.
+type HnsMsgInv struct {
+	Inventory []HnsInvItem
+}
+
+func (*HnsMsgInv) Type() HnsMsgType { return HnsMsgTypeInv }
+func (m *HnsMsgInv) Encode() []byte {
+	return hnsEncodeInvItems(m.Inventory)
+}
+
+func (m *HnsMsgInv) Decode(data []byte) error {
+	inventory, err := hnsDecodeInvItems("inv", data)
+	if err != nil {
+		return err
+	}
+	m.Inventory = inventory
+	return nil
+}
+
 // HnsMsgGetData is the Handshake "getdata" message. It requests inventory
 // items previously announced by a peer.
 type HnsMsgGetData struct {
@@ -371,44 +395,77 @@ type HnsMsgGetData struct {
 
 func (*HnsMsgGetData) Type() HnsMsgType { return HnsMsgTypeGetData }
 func (m *HnsMsgGetData) Encode() []byte {
-	count := hnsWriteUvarint(uint64(len(m.Inventory)))
-	out := make([]byte, len(count)+(len(m.Inventory)*HnsInvItemSize))
+	return hnsEncodeInvItems(m.Inventory)
+}
+
+func (m *HnsMsgGetData) Decode(data []byte) error {
+	inventory, err := hnsDecodeInvItems("getdata", data)
+	if err != nil {
+		return err
+	}
+	m.Inventory = inventory
+	return nil
+}
+
+// HnsMsgNotFound is the Handshake "notfound" message. It returns requested
+// inventory items that the peer could not provide.
+type HnsMsgNotFound struct {
+	Inventory []HnsInvItem
+}
+
+func (*HnsMsgNotFound) Type() HnsMsgType { return HnsMsgTypeNotFound }
+func (m *HnsMsgNotFound) Encode() []byte {
+	return hnsEncodeInvItems(m.Inventory)
+}
+
+func (m *HnsMsgNotFound) Decode(data []byte) error {
+	inventory, err := hnsDecodeInvItems("notfound", data)
+	if err != nil {
+		return err
+	}
+	m.Inventory = inventory
+	return nil
+}
+
+func hnsEncodeInvItems(inventory []HnsInvItem) []byte {
+	count := hnsWriteUvarint(uint64(len(inventory)))
+	out := make([]byte, len(count)+(len(inventory)*HnsInvItemSize))
 	copy(out, count)
 	off := len(count)
-	for i := range m.Inventory {
-		copy(out[off:off+HnsInvItemSize], m.Inventory[i].Encode())
+	for i := range inventory {
+		copy(out[off:off+HnsInvItemSize], inventory[i].Encode())
 		off += HnsInvItemSize
 	}
 	return out
 }
 
-func (m *HnsMsgGetData) Decode(data []byte) error {
+func hnsDecodeInvItems(msgName string, data []byte) ([]HnsInvItem, error) {
 	count, bytesRead, err := hnsReadUvarint(data)
 	if err != nil {
-		return fmt.Errorf("getdata: inventory count: %w", err)
+		return nil, fmt.Errorf("%s: inventory count: %w", msgName, err)
 	}
 	data = data[bytesRead:]
 	if count > uint64(len(data)/HnsInvItemSize) {
-		return fmt.Errorf(
-			"getdata: inventory count %d exceeds payload length %d",
-			count, len(data),
+		return nil, fmt.Errorf(
+			"%s: inventory count %d exceeds payload length %d",
+			msgName, count, len(data),
 		)
 	}
 	wantLen := int(count) * HnsInvItemSize
 	if len(data) != wantLen {
-		return fmt.Errorf(
-			"getdata: invalid payload length for %d inventory items: got %d, want %d",
-			count, len(data), wantLen,
+		return nil, fmt.Errorf(
+			"%s: invalid payload length for %d inventory items: got %d, want %d",
+			msgName, count, len(data), wantLen,
 		)
 	}
-	m.Inventory = make([]HnsInvItem, int(count))
-	for i := range m.Inventory {
-		if err := m.Inventory[i].Decode(data[:HnsInvItemSize]); err != nil {
-			return fmt.Errorf("getdata: inventory %d: %w", i, err)
+	inventory := make([]HnsInvItem, int(count))
+	for i := range inventory {
+		if err := inventory[i].Decode(data[:HnsInvItemSize]); err != nil {
+			return nil, fmt.Errorf("%s: inventory %d: %w", msgName, i, err)
 		}
 		data = data[HnsInvItemSize:]
 	}
-	return nil
+	return inventory, nil
 }
 
 // HnsMsgGetHeaders is the Handshake "getheaders" message. It requests a
