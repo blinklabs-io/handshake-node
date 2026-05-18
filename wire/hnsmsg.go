@@ -10,6 +10,7 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -192,6 +193,12 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgAddr{}, nil
 	case HnsMsgTypeGetData:
 		return &HnsMsgGetData{}, nil
+	case HnsMsgTypeGetHeaders:
+		return &HnsMsgGetHeaders{}, nil
+	case HnsMsgTypeHeaders:
+		return &HnsMsgHeaders{}, nil
+	case HnsMsgTypeSendHeaders:
+		return &HnsMsgSendHeaders{}, nil
 	default:
 		return nil, UnsupportedHnsMsgTypeError{MessageType: msgType}
 	}
@@ -394,6 +401,122 @@ func (m *HnsMsgGetData) Decode(data []byte) error {
 			return fmt.Errorf("getdata: inventory %d: %w", i, err)
 		}
 		data = data[HnsInvItemSize:]
+	}
+	return nil
+}
+
+// HnsMsgGetHeaders is the Handshake "getheaders" message. It requests a
+// header chain after one of the locator hashes, stopping at StopHash when set.
+type HnsMsgGetHeaders struct {
+	Locator  [][32]byte
+	StopHash [32]byte
+}
+
+func (*HnsMsgGetHeaders) Type() HnsMsgType { return HnsMsgTypeGetHeaders }
+func (m *HnsMsgGetHeaders) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Locator)))
+	out := make([]byte, len(count)+(len(m.Locator)*32)+32)
+	copy(out, count)
+	off := len(count)
+	for i := range m.Locator {
+		copy(out[off:off+32], m.Locator[i][:])
+		off += 32
+	}
+	copy(out[off:off+32], m.StopHash[:])
+	return out
+}
+
+func (m *HnsMsgGetHeaders) Decode(data []byte) error {
+	count, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("getheaders: locator count: %w", err)
+	}
+	data = data[bytesRead:]
+	if len(data) < 32 {
+		return fmt.Errorf("getheaders: payload missing stop hash")
+	}
+	locatorBytes := len(data) - 32
+	if count > uint64(locatorBytes/32) {
+		return fmt.Errorf(
+			"getheaders: locator count %d exceeds payload length %d",
+			count, len(data),
+		)
+	}
+	wantLen := int(count)*32 + 32
+	if len(data) != wantLen {
+		return fmt.Errorf(
+			"getheaders: invalid payload length for %d locators: got %d, want %d",
+			count, len(data), wantLen,
+		)
+	}
+	m.Locator = make([][32]byte, int(count))
+	for i := range m.Locator {
+		copy(m.Locator[i][:], data[:32])
+		data = data[32:]
+	}
+	copy(m.StopHash[:], data[:32])
+	return nil
+}
+
+// HnsMsgHeaders is the Handshake "headers" message. It carries a count
+// followed by raw 236-byte Handshake block headers.
+type HnsMsgHeaders struct {
+	Headers []*BlockHeader
+}
+
+func (*HnsMsgHeaders) Type() HnsMsgType { return HnsMsgTypeHeaders }
+func (m *HnsMsgHeaders) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Headers)))
+	out := make([]byte, len(count), len(count)+(len(m.Headers)*MaxBlockHeaderPayload))
+	out = append(out[:0], count...)
+	for _, header := range m.Headers {
+		var buf bytes.Buffer
+		_ = header.Serialize(&buf)
+		out = append(out, buf.Bytes()...)
+	}
+	return out
+}
+
+func (m *HnsMsgHeaders) Decode(data []byte) error {
+	count, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("headers: header count: %w", err)
+	}
+	data = data[bytesRead:]
+	if count > uint64(len(data)/MaxBlockHeaderPayload) {
+		return fmt.Errorf(
+			"headers: header count %d exceeds payload length %d",
+			count, len(data),
+		)
+	}
+	wantLen := int(count) * MaxBlockHeaderPayload
+	if len(data) != wantLen {
+		return fmt.Errorf(
+			"headers: invalid payload length for %d headers: got %d, want %d",
+			count, len(data), wantLen,
+		)
+	}
+	headers := make([]BlockHeader, int(count))
+	m.Headers = make([]*BlockHeader, 0, int(count))
+	for i := range headers {
+		if err := headers[i].Deserialize(bytes.NewReader(data[:MaxBlockHeaderPayload])); err != nil {
+			return fmt.Errorf("headers: header %d: %w", i, err)
+		}
+		m.Headers = append(m.Headers, &headers[i])
+		data = data[MaxBlockHeaderPayload:]
+	}
+	return nil
+}
+
+// HnsMsgSendHeaders is the Handshake "sendheaders" message. It requests that
+// peers announce new blocks with Headers messages instead of Inv messages.
+type HnsMsgSendHeaders struct{}
+
+func (*HnsMsgSendHeaders) Type() HnsMsgType { return HnsMsgTypeSendHeaders }
+func (*HnsMsgSendHeaders) Encode() []byte   { return nil }
+func (*HnsMsgSendHeaders) Decode(data []byte) error {
+	if len(data) != 0 {
+		return fmt.Errorf("sendheaders: expected empty payload, got %d bytes", len(data))
 	}
 	return nil
 }

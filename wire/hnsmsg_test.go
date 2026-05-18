@@ -10,6 +10,9 @@ import (
 	"math"
 	"net"
 	"testing"
+	"time"
+
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
 const testHnsMagic uint32 = 0x5b6ef2d3 // mainnet
@@ -55,6 +58,9 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"getaddr", &HnsMsgGetAddr{}},
 		{"addr", &HnsMsgAddr{Peers: testHnsAddrPeers()}},
 		{"getdata", &HnsMsgGetData{Inventory: testHnsInventory()}},
+		{"getheaders", &HnsMsgGetHeaders{Locator: testHnsLocators(), StopHash: hashOfBytes(0x33)}},
+		{"headers", &HnsMsgHeaders{Headers: []*BlockHeader{testHnsHeader()}}},
+		{"sendheaders", &HnsMsgSendHeaders{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -303,6 +309,124 @@ func TestHnsMsgGetDataDecodeErrors(t *testing.T) {
 	}
 }
 
+func TestHnsMsgGetHeadersRoundTrip(t *testing.T) {
+	in := HnsMsgGetHeaders{
+		Locator:  testHnsLocators(),
+		StopHash: hashOfBytes(0x33),
+	}
+	encoded := in.Encode()
+
+	var out HnsMsgGetHeaders
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgGetHeadersRoundTripEmptyLocators(t *testing.T) {
+	in := HnsMsgGetHeaders{StopHash: hashOfBytes(0x44)}
+	encoded := in.Encode()
+	if len(encoded) != 33 {
+		t.Fatalf("encoded length: got %d, want 33", len(encoded))
+	}
+
+	var out HnsMsgGetHeaders
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Locator) != 0 {
+		t.Fatalf("locators: got %d, want 0", len(out.Locator))
+	}
+	if out.StopHash != in.StopHash {
+		t.Fatalf("stop hash mismatch")
+	}
+}
+
+func TestHnsMsgGetHeadersOnTheWireLayout(t *testing.T) {
+	locator := hashOfBytes(0x11)
+	stop := hashOfBytes(0x22)
+	got := (&HnsMsgGetHeaders{
+		Locator:  [][32]byte{locator},
+		StopHash: stop,
+	}).Encode()
+	want := append([]byte{0x01}, locator[:]...)
+	want = append(want, stop[:]...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgGetHeadersDecodeErrors(t *testing.T) {
+	var msg HnsMsgGetHeaders
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing locator count")
+	}
+	if err := msg.Decode([]byte{0x00}); err == nil {
+		t.Fatal("expected error for missing stop hash")
+	}
+	locator := hashOfBytes(0x11)
+	if err := msg.Decode(append([]byte{0x01}, locator[:]...)); err == nil {
+		t.Fatal("expected error for locator count without stop hash")
+	}
+}
+
+func TestHnsMsgHeadersRoundTrip(t *testing.T) {
+	in := HnsMsgHeaders{Headers: []*BlockHeader{testHnsHeader()}}
+	encoded := in.Encode()
+
+	var out HnsMsgHeaders
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgHeadersRoundTripEmpty(t *testing.T) {
+	var msg HnsMsgHeaders
+	encoded := msg.Encode()
+	if !bytes.Equal(encoded, []byte{0x00}) {
+		t.Fatalf("empty headers encoding: got % x, want 00", encoded)
+	}
+
+	var out HnsMsgHeaders
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Headers) != 0 {
+		t.Fatalf("decoded headers: got %d, want 0", len(out.Headers))
+	}
+}
+
+func TestHnsMsgHeadersOnTheWireLayout(t *testing.T) {
+	header := testHnsHeader()
+	got := (&HnsMsgHeaders{Headers: []*BlockHeader{header}}).Encode()
+	want := append([]byte{0x01}, serializeHnsHeader(t, header)...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgHeadersDecodeErrors(t *testing.T) {
+	var msg HnsMsgHeaders
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing header count")
+	}
+	if err := msg.Decode([]byte{0x01}); err == nil {
+		t.Fatal("expected error for count without header payload")
+	}
+}
+
+func TestHnsMsgSendHeadersRejectsPayload(t *testing.T) {
+	var msg HnsMsgSendHeaders
+	if err := msg.Decode([]byte{0x00}); err == nil {
+		t.Fatal("expected error for non-empty sendheaders payload")
+	}
+}
+
 func TestHnsUvarintRoundTrip(t *testing.T) {
 	tests := []struct {
 		val uint64
@@ -347,6 +471,42 @@ func TestHnsUvarintShortEncodings(t *testing.T) {
 			t.Fatalf("expected error for short uvarint % x", tc)
 		}
 	}
+}
+
+func testHnsLocators() [][32]byte {
+	return [][32]byte{
+		hashOfBytes(0x11),
+		hashOfBytes(0x22),
+	}
+}
+
+func testHnsHeader() *BlockHeader {
+	var extraNonce [24]byte
+	for i := range extraNonce {
+		extraNonce[i] = byte(i + 1)
+	}
+	return &BlockHeader{
+		Version:      7,
+		PrevBlock:    chainhash.Hash(hashOfBytes(0x01)),
+		MerkleRoot:   chainhash.Hash(hashOfBytes(0x02)),
+		Timestamp:    time.Unix(0x0102030405060708, 0),
+		Bits:         0x1d00ffff,
+		Nonce:        0x11223344,
+		NameRoot:     chainhash.Hash(hashOfBytes(0x03)),
+		ExtraNonce:   extraNonce,
+		ReservedRoot: chainhash.Hash(hashOfBytes(0x04)),
+		WitnessRoot:  chainhash.Hash(hashOfBytes(0x05)),
+		Mask:         chainhash.Hash(hashOfBytes(0x06)),
+	}
+}
+
+func serializeHnsHeader(t *testing.T, header *BlockHeader) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := header.Serialize(&buf); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func testHnsInventory() []HnsInvItem {
