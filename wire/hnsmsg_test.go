@@ -7,6 +7,8 @@ package wire
 import (
 	"bytes"
 	"errors"
+	"math"
+	"net"
 	"testing"
 )
 
@@ -50,6 +52,8 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"verack", &HnsMsgVerack{}},
 		{"ping", &HnsMsgPing{Nonce: [8]byte{1, 2, 3, 4, 5, 6, 7, 8}}},
 		{"pong", &HnsMsgPong{Nonce: [8]byte{8, 7, 6, 5, 4, 3, 2, 1}}},
+		{"getaddr", &HnsMsgGetAddr{}},
+		{"addr", &HnsMsgAddr{Peers: testHnsAddrPeers()}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,3 +157,136 @@ type oversizedHnsMsg struct{ size int }
 func (*oversizedHnsMsg) Type() HnsMsgType      { return HnsMsgTypeUnknown }
 func (m *oversizedHnsMsg) Encode() []byte      { return make([]byte, m.size) }
 func (*oversizedHnsMsg) Decode(_ []byte) error { return nil }
+
+func TestHnsMsgGetAddrRejectsPayload(t *testing.T) {
+	var msg HnsMsgGetAddr
+	if err := msg.Decode([]byte{0x00}); err == nil {
+		t.Fatal("expected error for non-empty getaddr payload")
+	}
+}
+
+func TestHnsMsgAddrRoundTrip(t *testing.T) {
+	in := HnsMsgAddr{Peers: testHnsAddrPeers()}
+	encoded := in.Encode()
+
+	var out HnsMsgAddr
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgAddrRoundTripEmpty(t *testing.T) {
+	var msg HnsMsgAddr
+	encoded := msg.Encode()
+	if !bytes.Equal(encoded, []byte{0x00}) {
+		t.Fatalf("empty addr encoding: got % x, want 00", encoded)
+	}
+
+	var out HnsMsgAddr
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Peers) != 0 {
+		t.Fatalf("decoded peers: got %d, want 0", len(out.Peers))
+	}
+}
+
+func TestHnsMsgAddrOnTheWireLayout(t *testing.T) {
+	peer := HnsNetAddress{
+		Time:     0x0807060504030201,
+		Services: 0x1716151413121110,
+		Host:     net.IPv4(10, 0, 0, 1).To4(),
+		Port:     0x2F06,
+		Key:      keyOfBytes(0x55),
+	}
+	got := (&HnsMsgAddr{Peers: []HnsNetAddress{peer}}).Encode()
+	want := append([]byte{0x01}, peer.Encode()...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgAddrDecodeErrors(t *testing.T) {
+	var msg HnsMsgAddr
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing peer count")
+	}
+	if err := msg.Decode([]byte{0x01}); err == nil {
+		t.Fatal("expected error for count without peer payload")
+	}
+
+	badPeerType := (&HnsMsgAddr{Peers: []HnsNetAddress{testHnsAddrPeers()[0]}}).Encode()
+	badPeerType[1+16] = 1
+	if err := msg.Decode(badPeerType); err == nil {
+		t.Fatal("expected error for invalid peer address type")
+	}
+}
+
+func TestHnsUvarintRoundTrip(t *testing.T) {
+	tests := []struct {
+		val uint64
+		enc []byte
+	}{
+		{0, []byte{0x00}},
+		{0xfc, []byte{0xfc}},
+		{0xfd, []byte{0xfd, 0xfd, 0x00}},
+		{0xffff, []byte{0xfd, 0xff, 0xff}},
+		{0x10000, []byte{0xfe, 0x00, 0x00, 0x01, 0x00}},
+		{math.MaxUint32 + 1, []byte{0xff, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00}},
+	}
+	for _, tc := range tests {
+		encoded := hnsWriteUvarint(tc.val)
+		if !bytes.Equal(encoded, tc.enc) {
+			t.Fatalf("hnsWriteUvarint(%d): got % x, want % x", tc.val, encoded, tc.enc)
+		}
+		decoded, n, err := hnsReadUvarint(encoded)
+		if err != nil {
+			t.Fatalf("hnsReadUvarint(%x): %v", encoded, err)
+		}
+		if decoded != tc.val || n != len(encoded) {
+			t.Fatalf(
+				"hnsReadUvarint(%x): got val=%d n=%d, want val=%d n=%d",
+				encoded, decoded, n, tc.val, len(encoded),
+			)
+		}
+	}
+}
+
+func TestHnsUvarintShortEncodings(t *testing.T) {
+	tests := [][]byte{
+		{0xfd},
+		{0xfd, 0x01},
+		{0xfe},
+		{0xfe, 0x01, 0x02, 0x03},
+		{0xff},
+		{0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07},
+	}
+	for _, tc := range tests {
+		if _, _, err := hnsReadUvarint(tc); err == nil {
+			t.Fatalf("expected error for short uvarint % x", tc)
+		}
+	}
+}
+
+func testHnsAddrPeers() []HnsNetAddress {
+	return []HnsNetAddress{
+		{
+			Time:     0x1122334455667788,
+			Services: 0x0102030405060708,
+			Host:     net.IPv4(192, 168, 1, 42).To4(),
+			Reserved: [20]byte{1, 2, 3, 4, 5},
+			Port:     12038,
+			Key:      keyOfBytes(0xab),
+		},
+		{
+			Time:     0x8877665544332211,
+			Services: 0x0807060504030201,
+			Host:     net.ParseIP("2001:db8::1"),
+			Port:     12039,
+			Key:      keyOfBytes(0xcd),
+		},
+	}
+}

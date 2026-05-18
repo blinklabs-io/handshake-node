@@ -186,6 +186,10 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgPing{}, nil
 	case HnsMsgTypePong:
 		return &HnsMsgPong{}, nil
+	case HnsMsgTypeGetAddr:
+		return &HnsMsgGetAddr{}, nil
+	case HnsMsgTypeAddr:
+		return &HnsMsgAddr{}, nil
 	default:
 		return nil, UnsupportedHnsMsgTypeError{MessageType: msgType}
 	}
@@ -244,4 +248,112 @@ func (m *HnsMsgPong) Decode(data []byte) error {
 	}
 	copy(m.Nonce[:], data)
 	return nil
+}
+
+// HnsMsgGetAddr is the Handshake "getaddr" message, requesting known peers
+// from the remote node. It carries no payload.
+type HnsMsgGetAddr struct{}
+
+func (*HnsMsgGetAddr) Type() HnsMsgType { return HnsMsgTypeGetAddr }
+func (*HnsMsgGetAddr) Encode() []byte   { return nil }
+func (*HnsMsgGetAddr) Decode(data []byte) error {
+	if len(data) != 0 {
+		return fmt.Errorf("getaddr: expected empty payload, got %d bytes", len(data))
+	}
+	return nil
+}
+
+// HnsMsgAddr is the Handshake "addr" message. It advertises peers using the
+// Handshake 88-byte NetAddress shape, which includes each peer's static key.
+type HnsMsgAddr struct {
+	Peers []HnsNetAddress
+}
+
+func (*HnsMsgAddr) Type() HnsMsgType { return HnsMsgTypeAddr }
+func (m *HnsMsgAddr) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Peers)))
+	out := make([]byte, len(count)+(len(m.Peers)*HnsNetAddressSize))
+	copy(out, count)
+	off := len(count)
+	for i := range m.Peers {
+		copy(out[off:off+HnsNetAddressSize], m.Peers[i].Encode())
+		off += HnsNetAddressSize
+	}
+	return out
+}
+
+func (m *HnsMsgAddr) Decode(data []byte) error {
+	count, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("addr: peer count: %w", err)
+	}
+	data = data[bytesRead:]
+	if count > uint64(len(data)/HnsNetAddressSize) {
+		return fmt.Errorf(
+			"addr: peer count %d exceeds payload length %d",
+			count, len(data),
+		)
+	}
+	wantLen := int(count) * HnsNetAddressSize
+	if len(data) != wantLen {
+		return fmt.Errorf(
+			"addr: invalid payload length for %d peers: got %d, want %d",
+			count, len(data), wantLen,
+		)
+	}
+	m.Peers = make([]HnsNetAddress, int(count))
+	for i := range m.Peers {
+		if err := m.Peers[i].Decode(data[:HnsNetAddressSize]); err != nil {
+			return fmt.Errorf("addr: peer %d: %w", i, err)
+		}
+		data = data[HnsNetAddressSize:]
+	}
+	return nil
+}
+
+func hnsReadUvarint(data []byte) (uint64, int, error) {
+	if len(data) == 0 {
+		return 0, 0, errors.New("data is empty")
+	}
+	switch data[0] {
+	case 0xff:
+		if len(data) < 9 {
+			return 0, 0, errors.New("invalid length for uint64")
+		}
+		return binary.LittleEndian.Uint64(data[1:9]), 9, nil
+	case 0xfe:
+		if len(data) < 5 {
+			return 0, 0, errors.New("invalid length for uint32")
+		}
+		return uint64(binary.LittleEndian.Uint32(data[1:5])), 5, nil
+	case 0xfd:
+		if len(data) < 3 {
+			return 0, 0, errors.New("invalid length for uint16")
+		}
+		return uint64(binary.LittleEndian.Uint16(data[1:3])), 3, nil
+	default:
+		return uint64(data[0]), 1, nil
+	}
+}
+
+func hnsWriteUvarint(val uint64) []byte {
+	switch {
+	case val < 0xfd:
+		return []byte{uint8(val)}
+	case val <= 0xffff:
+		out := make([]byte, 3)
+		out[0] = 0xfd
+		binary.LittleEndian.PutUint16(out[1:3], uint16(val))
+		return out
+	case val <= 0xffffffff:
+		out := make([]byte, 5)
+		out[0] = 0xfe
+		binary.LittleEndian.PutUint32(out[1:5], uint32(val))
+		return out
+	default:
+		out := make([]byte, 9)
+		out[0] = 0xff
+		binary.LittleEndian.PutUint64(out[1:9], val)
+		return out
+	}
 }
