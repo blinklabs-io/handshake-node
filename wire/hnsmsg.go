@@ -211,6 +211,14 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgTx{}, nil
 	case HnsMsgTypeMempool:
 		return &HnsMsgMemPool{}, nil
+	case HnsMsgTypeFilterAdd:
+		return &HnsMsgFilterAdd{}, nil
+	case HnsMsgTypeFilterClear:
+		return &HnsMsgFilterClear{}, nil
+	case HnsMsgTypeFeeFilter:
+		return &HnsMsgFeeFilter{}, nil
+	case HnsMsgTypeSendCmpct:
+		return &HnsMsgSendCmpct{}, nil
 	case HnsMsgTypeGetProof:
 		return &HnsMsgGetProof{}, nil
 	case HnsMsgTypeProof:
@@ -589,8 +597,8 @@ type HnsMsgHeaders struct {
 func (*HnsMsgHeaders) Type() HnsMsgType { return HnsMsgTypeHeaders }
 func (m *HnsMsgHeaders) Encode() []byte {
 	count := hnsWriteUvarint(uint64(len(m.Headers)))
-	out := make([]byte, len(count), len(count)+(len(m.Headers)*MaxBlockHeaderPayload))
-	out = append(out[:0], count...)
+	out := make([]byte, 0, len(count)+(len(m.Headers)*MaxBlockHeaderPayload))
+	out = append(out, count...)
 	for _, header := range m.Headers {
 		var buf bytes.Buffer
 		_ = header.Serialize(&buf)
@@ -702,6 +710,101 @@ func (*HnsMsgMemPool) Decode(data []byte) error {
 	return nil
 }
 
+// HnsMsgFilterAdd is the Handshake "filteradd" message. It appends one item
+// to the peer's loaded bloom filter.
+type HnsMsgFilterAdd struct {
+	Data []byte
+}
+
+func (*HnsMsgFilterAdd) Type() HnsMsgType { return HnsMsgTypeFilterAdd }
+func (m *HnsMsgFilterAdd) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Data)))
+	out := make([]byte, len(count)+len(m.Data))
+	copy(out, count)
+	copy(out[len(count):], m.Data)
+	return out
+}
+
+func (m *HnsMsgFilterAdd) Decode(data []byte) error {
+	count, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("filteradd: data length: %w", err)
+	}
+	data = data[bytesRead:]
+	if count > uint64(len(data)) {
+		return fmt.Errorf(
+			"filteradd: data length %d exceeds payload length %d",
+			count, len(data),
+		)
+	}
+	if len(data) != int(count) {
+		return fmt.Errorf(
+			"filteradd: invalid payload length: got %d, want %d",
+			len(data), count,
+		)
+	}
+	m.Data = append(m.Data[:0], data...)
+	return nil
+}
+
+// HnsMsgFilterClear is the Handshake "filterclear" message. It clears the
+// peer's loaded bloom filter and carries no payload.
+type HnsMsgFilterClear struct{}
+
+func (*HnsMsgFilterClear) Type() HnsMsgType { return HnsMsgTypeFilterClear }
+func (*HnsMsgFilterClear) Encode() []byte   { return nil }
+func (*HnsMsgFilterClear) Decode(data []byte) error {
+	if len(data) != 0 {
+		return fmt.Errorf("filterclear: expected empty payload, got %d bytes", len(data))
+	}
+	return nil
+}
+
+// HnsMsgFeeFilter is the Handshake "feefilter" message. Rate is encoded as a
+// signed 64-bit fee rate in dollarydoos per kilobyte.
+type HnsMsgFeeFilter struct {
+	Rate int64
+}
+
+func (*HnsMsgFeeFilter) Type() HnsMsgType { return HnsMsgTypeFeeFilter }
+func (m *HnsMsgFeeFilter) Encode() []byte {
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint64(out, uint64(m.Rate))
+	return out
+}
+
+func (m *HnsMsgFeeFilter) Decode(data []byte) error {
+	if len(data) != 8 {
+		return fmt.Errorf("feefilter: expected 8-byte payload, got %d", len(data))
+	}
+	m.Rate = int64(binary.LittleEndian.Uint64(data))
+	return nil
+}
+
+// HnsMsgSendCmpct is the Handshake "sendcmpct" message. It negotiates compact
+// block announcements.
+type HnsMsgSendCmpct struct {
+	Mode    uint8
+	Version uint64
+}
+
+func (*HnsMsgSendCmpct) Type() HnsMsgType { return HnsMsgTypeSendCmpct }
+func (m *HnsMsgSendCmpct) Encode() []byte {
+	out := make([]byte, 9)
+	out[0] = m.Mode
+	binary.LittleEndian.PutUint64(out[1:9], m.Version)
+	return out
+}
+
+func (m *HnsMsgSendCmpct) Decode(data []byte) error {
+	if len(data) != 9 {
+		return fmt.Errorf("sendcmpct: expected 9-byte payload, got %d", len(data))
+	}
+	m.Mode = data[0]
+	m.Version = binary.LittleEndian.Uint64(data[1:9])
+	return nil
+}
+
 // HnsMsgGetProof is the Handshake "getproof" message. It requests an Urkel
 // proof for Key at Root.
 type HnsMsgGetProof struct {
@@ -763,17 +866,32 @@ func hnsReadUvarint(data []byte) (uint64, int, error) {
 		if len(data) < 9 {
 			return 0, 0, errors.New("invalid length for uint64")
 		}
-		return binary.LittleEndian.Uint64(data[1:9]), 9, nil
+		val := binary.LittleEndian.Uint64(data[1:9])
+		min := uint64(0x100000000)
+		if val < min {
+			return 0, 0, fmt.Errorf(errNonCanonicalVarInt, val, data[0], min)
+		}
+		return val, 9, nil
 	case 0xfe:
 		if len(data) < 5 {
 			return 0, 0, errors.New("invalid length for uint32")
 		}
-		return uint64(binary.LittleEndian.Uint32(data[1:5])), 5, nil
+		val := uint64(binary.LittleEndian.Uint32(data[1:5]))
+		min := uint64(0x10000)
+		if val < min {
+			return 0, 0, fmt.Errorf(errNonCanonicalVarInt, val, data[0], min)
+		}
+		return val, 5, nil
 	case 0xfd:
 		if len(data) < 3 {
 			return 0, 0, errors.New("invalid length for uint16")
 		}
-		return uint64(binary.LittleEndian.Uint16(data[1:3])), 3, nil
+		val := uint64(binary.LittleEndian.Uint16(data[1:3]))
+		min := uint64(0xfd)
+		if val < min {
+			return 0, 0, fmt.Errorf(errNonCanonicalVarInt, val, data[0], min)
+		}
+		return val, 3, nil
 	default:
 		return uint64(data[0]), 1, nil
 	}
