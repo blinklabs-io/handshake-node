@@ -67,6 +67,10 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"block", &HnsMsgBlock{Block: *NewMsgBlock(testHnsHeader())}},
 		{"tx", &HnsMsgTx{Tx: *buildHnsTestTx()}},
 		{"mempool", &HnsMsgMemPool{}},
+		{"filteradd", &HnsMsgFilterAdd{Data: []byte{1, 2, 3}}},
+		{"filterclear", &HnsMsgFilterClear{}},
+		{"feefilter", &HnsMsgFeeFilter{Rate: 1000}},
+		{"sendcmpct", &HnsMsgSendCmpct{Mode: 1, Version: 2}},
 		{"getproof", &HnsMsgGetProof{Root: hashOfBytes(0x44), Key: hashOfBytes(0x55)}},
 		{"proof", &HnsMsgProof{Root: hashOfBytes(0x66), Key: hashOfBytes(0x77), Proof: []byte{1, 2, 3, 4}}},
 	}
@@ -668,6 +672,125 @@ func TestHnsMsgMemPoolRejectsPayload(t *testing.T) {
 	var msg HnsMsgMemPool
 	if err := msg.Decode([]byte{0x00}); err == nil {
 		t.Fatal("expected error for non-empty mempool payload")
+	}
+}
+
+func TestHnsMsgFilterAddRoundTrip(t *testing.T) {
+	in := HnsMsgFilterAdd{Data: []byte{0xaa, 0xbb, 0xcc}}
+	encoded := in.Encode()
+
+	var out HnsMsgFilterAdd
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgFilterAddRoundTripEmpty(t *testing.T) {
+	var msg HnsMsgFilterAdd
+	encoded := msg.Encode()
+	if !bytes.Equal(encoded, []byte{0x00}) {
+		t.Fatalf("empty filteradd encoding: got % x, want 00", encoded)
+	}
+
+	var out HnsMsgFilterAdd
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out.Data) != 0 {
+		t.Fatalf("decoded data: got %d bytes, want 0", len(out.Data))
+	}
+}
+
+func TestHnsMsgFilterAddOnTheWireLayout(t *testing.T) {
+	got := (&HnsMsgFilterAdd{Data: []byte{0xaa, 0xbb}}).Encode()
+	want := []byte{0x02, 0xaa, 0xbb}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgFilterAddDecodeErrors(t *testing.T) {
+	var msg HnsMsgFilterAdd
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing filteradd data length")
+	}
+	if err := msg.Decode([]byte{0x02, 0xaa}); err == nil {
+		t.Fatal("expected error for truncated filteradd data")
+	}
+	if err := msg.Decode([]byte{0x01, 0xaa, 0xbb}); err == nil {
+		t.Fatal("expected error for trailing filteradd data")
+	}
+}
+
+func TestHnsMsgFilterClearRejectsPayload(t *testing.T) {
+	var msg HnsMsgFilterClear
+	if err := msg.Decode([]byte{0x00}); err == nil {
+		t.Fatal("expected error for non-empty filterclear payload")
+	}
+}
+
+func TestHnsMsgFeeFilterRoundTrip(t *testing.T) {
+	in := HnsMsgFeeFilter{Rate: -1000}
+	encoded := in.Encode()
+
+	var out HnsMsgFeeFilter
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if out != in {
+		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", out, in)
+	}
+}
+
+func TestHnsMsgFeeFilterOnTheWireLayout(t *testing.T) {
+	got := (&HnsMsgFeeFilter{Rate: 0x0102030405060708}).Encode()
+	want := []byte{0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgFeeFilterDecodeWrongSize(t *testing.T) {
+	var msg HnsMsgFeeFilter
+	if err := msg.Decode(make([]byte, 7)); err == nil {
+		t.Fatal("expected error for short feefilter payload")
+	}
+	if err := msg.Decode(make([]byte, 9)); err == nil {
+		t.Fatal("expected error for long feefilter payload")
+	}
+}
+
+func TestHnsMsgSendCmpctRoundTrip(t *testing.T) {
+	in := HnsMsgSendCmpct{Mode: 1, Version: 0x0102030405060708}
+	encoded := in.Encode()
+
+	var out HnsMsgSendCmpct
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if out != in {
+		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", out, in)
+	}
+}
+
+func TestHnsMsgSendCmpctOnTheWireLayout(t *testing.T) {
+	got := (&HnsMsgSendCmpct{Mode: 1, Version: 0x0102030405060708}).Encode()
+	want := []byte{0x01, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgSendCmpctDecodeWrongSize(t *testing.T) {
+	var msg HnsMsgSendCmpct
+	if err := msg.Decode(make([]byte, 8)); err == nil {
+		t.Fatal("expected error for short sendcmpct payload")
+	}
+	if err := msg.Decode(make([]byte, 10)); err == nil {
+		t.Fatal("expected error for long sendcmpct payload")
 	}
 }
 
