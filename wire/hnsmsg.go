@@ -207,6 +207,10 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgSendHeaders{}, nil
 	case HnsMsgTypeBlock:
 		return &HnsMsgBlock{}, nil
+	case HnsMsgTypeTx:
+		return &HnsMsgTx{}, nil
+	case HnsMsgTypeMempool:
+		return &HnsMsgMemPool{}, nil
 	case HnsMsgTypeGetProof:
 		return &HnsMsgGetProof{}, nil
 	case HnsMsgTypeProof:
@@ -658,6 +662,42 @@ func (m *HnsMsgBlock) Decode(data []byte) error {
 	}
 	if err := m.Block.Deserialize(bytes.NewReader(data)); err != nil {
 		return fmt.Errorf("block: %w", err)
+	}
+	return nil
+}
+
+// HnsMsgTx is the Handshake "tx" message. It reuses the existing
+// Handshake-shaped MsgTx serializer from Phase 1.
+type HnsMsgTx struct {
+	Tx MsgTx
+}
+
+func (*HnsMsgTx) Type() HnsMsgType { return HnsMsgTypeTx }
+func (m *HnsMsgTx) Encode() []byte {
+	var buf bytes.Buffer
+	_ = m.Tx.Serialize(&buf)
+	return buf.Bytes()
+}
+
+func (m *HnsMsgTx) Decode(data []byte) error {
+	if len(data) == 0 {
+		return errors.New("tx: empty payload")
+	}
+	if err := m.Tx.Deserialize(bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("tx: %w", err)
+	}
+	return nil
+}
+
+// HnsMsgMemPool is the Handshake "mempool" message. It requests the peer's
+// mempool inventory and carries no payload.
+type HnsMsgMemPool struct{}
+
+func (*HnsMsgMemPool) Type() HnsMsgType { return HnsMsgTypeMempool }
+func (*HnsMsgMemPool) Encode() []byte   { return nil }
+func (*HnsMsgMemPool) Decode(data []byte) error {
+	if len(data) != 0 {
+		return fmt.Errorf("mempool: expected empty payload, got %d bytes", len(data))
 	}
 	return nil
 }

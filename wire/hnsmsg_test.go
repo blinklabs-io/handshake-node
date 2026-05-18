@@ -65,6 +65,8 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"headers", &HnsMsgHeaders{Headers: []*BlockHeader{testHnsHeader()}}},
 		{"sendheaders", &HnsMsgSendHeaders{}},
 		{"block", &HnsMsgBlock{Block: *NewMsgBlock(testHnsHeader())}},
+		{"tx", &HnsMsgTx{Tx: *buildHnsTestTx()}},
+		{"mempool", &HnsMsgMemPool{}},
 		{"getproof", &HnsMsgGetProof{Root: hashOfBytes(0x44), Key: hashOfBytes(0x55)}},
 		{"proof", &HnsMsgProof{Root: hashOfBytes(0x66), Key: hashOfBytes(0x77), Proof: []byte{1, 2, 3, 4}}},
 	}
@@ -630,6 +632,45 @@ func TestHnsMsgBlockDecodeErrors(t *testing.T) {
 	}
 }
 
+func TestHnsMsgTxRoundTrip(t *testing.T) {
+	in := HnsMsgTx{Tx: *buildHnsTestTx()}
+	encoded := in.Encode()
+
+	var out HnsMsgTx
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgTxOnTheWireLayout(t *testing.T) {
+	tx := buildHnsTestTx()
+	got := (&HnsMsgTx{Tx: *tx}).Encode()
+	want := serializeHnsTx(t, tx)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgTxDecodeErrors(t *testing.T) {
+	var msg HnsMsgTx
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for empty tx payload")
+	}
+	if err := msg.Decode([]byte{0x01, 0x02}); err == nil {
+		t.Fatal("expected error for short tx payload")
+	}
+}
+
+func TestHnsMsgMemPoolRejectsPayload(t *testing.T) {
+	var msg HnsMsgMemPool
+	if err := msg.Decode([]byte{0x00}); err == nil {
+		t.Fatal("expected error for non-empty mempool payload")
+	}
+}
+
 func TestHnsMsgGetProofRoundTrip(t *testing.T) {
 	in := HnsMsgGetProof{Root: hashOfBytes(0x11), Key: hashOfBytes(0x22)}
 	encoded := in.Encode()
@@ -776,6 +817,15 @@ func serializeHnsHeader(t *testing.T, header *BlockHeader) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	if err := header.Serialize(&buf); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func serializeHnsTx(t *testing.T, tx *MsgTx) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := tx.Serialize(&buf); err != nil {
 		t.Fatalf("Serialize: %v", err)
 	}
 	return buf.Bytes()
