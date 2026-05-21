@@ -209,20 +209,38 @@ func newEmptyHnsMessage(msgType HnsMsgType) (HandshakeMessage, error) {
 		return &HnsMsgBlock{}, nil
 	case HnsMsgTypeTx:
 		return &HnsMsgTx{}, nil
+	case HnsMsgTypeReject:
+		return &HnsMsgReject{}, nil
 	case HnsMsgTypeMempool:
 		return &HnsMsgMemPool{}, nil
+	case HnsMsgTypeFilterLoad:
+		return &HnsMsgFilterLoad{}, nil
 	case HnsMsgTypeFilterAdd:
 		return &HnsMsgFilterAdd{}, nil
 	case HnsMsgTypeFilterClear:
 		return &HnsMsgFilterClear{}, nil
+	case HnsMsgTypeMerkleBlock:
+		return &HnsMsgMerkleBlock{}, nil
 	case HnsMsgTypeFeeFilter:
 		return &HnsMsgFeeFilter{}, nil
 	case HnsMsgTypeSendCmpct:
 		return &HnsMsgSendCmpct{}, nil
+	case HnsMsgTypeCmpctBlock:
+		return &HnsMsgCmpctBlock{}, nil
+	case HnsMsgTypeGetBlockTxn:
+		return &HnsMsgGetBlockTxn{}, nil
+	case HnsMsgTypeBlockTxn:
+		return &HnsMsgBlockTxn{}, nil
 	case HnsMsgTypeGetProof:
 		return &HnsMsgGetProof{}, nil
 	case HnsMsgTypeProof:
 		return &HnsMsgProof{}, nil
+	case HnsMsgTypeClaim:
+		return &HnsMsgClaim{}, nil
+	case HnsMsgTypeAirDrop:
+		return &HnsMsgAirDrop{}, nil
+	case HnsMsgTypeUnknown:
+		return &HnsMsgUnknown{}, nil
 	default:
 		return nil, UnsupportedHnsMsgTypeError{MessageType: msgType}
 	}
@@ -697,6 +715,77 @@ func (m *HnsMsgTx) Decode(data []byte) error {
 	return nil
 }
 
+// HnsMsgReject is the Handshake "reject" message. Unlike Bitcoin's reject
+// payload, hsd encodes the rejected message as a one-byte Handshake packet
+// type and the reason as a one-byte length-prefixed string. Block, tx, claim,
+// and airdrop rejects carry the rejected object's hash.
+type HnsMsgReject struct {
+	Message HnsMsgType
+	Code    RejectCode
+	Reason  string
+	Hash    [32]byte
+}
+
+func (*HnsMsgReject) Type() HnsMsgType { return HnsMsgTypeReject }
+func (m *HnsMsgReject) Encode() []byte {
+	reason := []byte(m.Reason)
+	if len(reason) > 255 {
+		reason = reason[:255]
+	}
+	size := 3 + len(reason)
+	if hnsRejectMessageRequiresHash(m.Message) {
+		size += 32
+	}
+	out := make([]byte, size)
+	out[0] = byte(m.Message)
+	out[1] = byte(m.Code)
+	out[2] = byte(len(reason))
+	copy(out[3:], reason)
+	if hnsRejectMessageRequiresHash(m.Message) {
+		copy(out[3+len(reason):], m.Hash[:])
+	}
+	return out
+}
+
+func (m *HnsMsgReject) Decode(data []byte) error {
+	if len(data) < 3 {
+		return fmt.Errorf("reject: expected at least 3 bytes, got %d", len(data))
+	}
+	m.Message = HnsMsgType(data[0])
+	m.Code = RejectCode(data[1])
+	reasonLen := int(data[2])
+	data = data[3:]
+	if len(data) < reasonLen {
+		return fmt.Errorf(
+			"reject: reason length %d exceeds payload length %d",
+			reasonLen, len(data),
+		)
+	}
+	m.Reason = string(data[:reasonLen])
+	data = data[reasonLen:]
+	if hnsRejectMessageRequiresHash(m.Message) {
+		if len(data) != 32 {
+			return fmt.Errorf("reject: expected 32-byte hash, got %d", len(data))
+		}
+		copy(m.Hash[:], data)
+		return nil
+	}
+	if len(data) != 0 {
+		return fmt.Errorf("reject: unexpected trailing payload bytes: %d", len(data))
+	}
+	m.Hash = [32]byte{}
+	return nil
+}
+
+func hnsRejectMessageRequiresHash(msgType HnsMsgType) bool {
+	switch msgType {
+	case HnsMsgTypeBlock, HnsMsgTypeTx, HnsMsgTypeClaim, HnsMsgTypeAirDrop:
+		return true
+	default:
+		return false
+	}
+}
+
 // HnsMsgMemPool is the Handshake "mempool" message. It requests the peer's
 // mempool inventory and carries no payload.
 type HnsMsgMemPool struct{}
@@ -707,6 +796,70 @@ func (*HnsMsgMemPool) Decode(data []byte) error {
 	if len(data) != 0 {
 		return fmt.Errorf("mempool: expected empty payload, got %d bytes", len(data))
 	}
+	return nil
+}
+
+// HnsMsgFilterLoad is the Handshake "filterload" message. hsd uses the same
+// BIP-37 bloom filter payload shape: varbytes filter, hash function count,
+// tweak, and update flags.
+type HnsMsgFilterLoad struct {
+	Filter    []byte
+	HashFuncs uint32
+	Tweak     uint32
+	Flags     BloomUpdateType
+}
+
+func (*HnsMsgFilterLoad) Type() HnsMsgType { return HnsMsgTypeFilterLoad }
+func (m *HnsMsgFilterLoad) Encode() []byte {
+	count := hnsWriteUvarint(uint64(len(m.Filter)))
+	out := make([]byte, len(count)+len(m.Filter)+9)
+	copy(out, count)
+	off := len(count)
+	copy(out[off:], m.Filter)
+	off += len(m.Filter)
+	binary.LittleEndian.PutUint32(out[off:off+4], m.HashFuncs)
+	off += 4
+	binary.LittleEndian.PutUint32(out[off:off+4], m.Tweak)
+	off += 4
+	out[off] = byte(m.Flags)
+	return out
+}
+
+func (m *HnsMsgFilterLoad) Decode(data []byte) error {
+	filterLen, bytesRead, err := hnsReadUvarint(data)
+	if err != nil {
+		return fmt.Errorf("filterload: filter length: %w", err)
+	}
+	data = data[bytesRead:]
+	if filterLen > uint64(len(data)) {
+		return fmt.Errorf(
+			"filterload: filter length %d exceeds payload length %d",
+			filterLen, len(data),
+		)
+	}
+	if filterLen > MaxFilterLoadFilterSize {
+		return fmt.Errorf(
+			"filterload: filter length %d exceeds maximum %d",
+			filterLen, MaxFilterLoadFilterSize,
+		)
+	}
+	if len(data) != int(filterLen)+9 {
+		return fmt.Errorf(
+			"filterload: invalid payload length: got %d, want %d",
+			len(data), int(filterLen)+9,
+		)
+	}
+	m.Filter = append(m.Filter[:0], data[:filterLen]...)
+	data = data[filterLen:]
+	m.HashFuncs = binary.LittleEndian.Uint32(data[0:4])
+	if m.HashFuncs > MaxFilterLoadHashFuncs {
+		return fmt.Errorf(
+			"filterload: hash function count %d exceeds maximum %d",
+			m.HashFuncs, MaxFilterLoadHashFuncs,
+		)
+	}
+	m.Tweak = binary.LittleEndian.Uint32(data[4:8])
+	m.Flags = BloomUpdateType(data[8])
 	return nil
 }
 
@@ -760,6 +913,22 @@ func (*HnsMsgFilterClear) Decode(data []byte) error {
 	return nil
 }
 
+// HnsMsgMerkleBlock is the Handshake "merkleblock" message. The payload is
+// kept opaque while the Phase 3/5 SPV and merkle proof callers are migrated
+// off the remaining btcd-shaped filtered block code.
+type HnsMsgMerkleBlock struct {
+	Payload []byte
+}
+
+func (*HnsMsgMerkleBlock) Type() HnsMsgType { return HnsMsgTypeMerkleBlock }
+func (m *HnsMsgMerkleBlock) Encode() []byte {
+	return hnsEncodeOpaquePayload(m.Payload)
+}
+func (m *HnsMsgMerkleBlock) Decode(data []byte) error {
+	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
+	return nil
+}
+
 // HnsMsgFeeFilter is the Handshake "feefilter" message. Rate is encoded as a
 // signed 64-bit fee rate in dollarydoos per kilobyte.
 type HnsMsgFeeFilter struct {
@@ -802,6 +971,54 @@ func (m *HnsMsgSendCmpct) Decode(data []byte) error {
 	}
 	m.Mode = data[0]
 	m.Version = binary.LittleEndian.Uint64(data[1:9])
+	return nil
+}
+
+// HnsMsgCmpctBlock is the Handshake "cmpctblock" message. Compact block
+// structures depend on the block-relay migration in Phase 5, so the body is
+// intentionally preserved as an opaque payload for now.
+type HnsMsgCmpctBlock struct {
+	Payload []byte
+}
+
+func (*HnsMsgCmpctBlock) Type() HnsMsgType { return HnsMsgTypeCmpctBlock }
+func (m *HnsMsgCmpctBlock) Encode() []byte {
+	return hnsEncodeOpaquePayload(m.Payload)
+}
+func (m *HnsMsgCmpctBlock) Decode(data []byte) error {
+	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
+	return nil
+}
+
+// HnsMsgGetBlockTxn is the Handshake "getblocktxn" message. The compact-block
+// transaction request body is retained opaquely until compact block relay is
+// implemented.
+type HnsMsgGetBlockTxn struct {
+	Payload []byte
+}
+
+func (*HnsMsgGetBlockTxn) Type() HnsMsgType { return HnsMsgTypeGetBlockTxn }
+func (m *HnsMsgGetBlockTxn) Encode() []byte {
+	return hnsEncodeOpaquePayload(m.Payload)
+}
+func (m *HnsMsgGetBlockTxn) Decode(data []byte) error {
+	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
+	return nil
+}
+
+// HnsMsgBlockTxn is the Handshake "blocktxn" message. The compact-block
+// transaction response body is retained opaquely until compact block relay is
+// implemented.
+type HnsMsgBlockTxn struct {
+	Payload []byte
+}
+
+func (*HnsMsgBlockTxn) Type() HnsMsgType { return HnsMsgTypeBlockTxn }
+func (m *HnsMsgBlockTxn) Encode() []byte {
+	return hnsEncodeOpaquePayload(m.Payload)
+}
+func (m *HnsMsgBlockTxn) Decode(data []byte) error {
+	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
 	return nil
 }
 
@@ -855,6 +1072,79 @@ func (m *HnsMsgProof) Decode(data []byte) error {
 	copy(m.Key[:], data[32:64])
 	m.Proof = append(m.Proof[:0], data[64:]...)
 	return nil
+}
+
+// HnsMsgClaim is the Handshake "claim" message. It carries a raw encoded name
+// claim with a uint16 little-endian length prefix.
+type HnsMsgClaim struct {
+	Claim []byte
+}
+
+func (*HnsMsgClaim) Type() HnsMsgType { return HnsMsgTypeClaim }
+func (m *HnsMsgClaim) Encode() []byte {
+	claim := m.Claim
+	if len(claim) > 0xffff {
+		claim = claim[:0xffff]
+	}
+	out := make([]byte, 2+len(claim))
+	binary.LittleEndian.PutUint16(out[0:2], uint16(len(claim)))
+	copy(out[2:], claim)
+	return out
+}
+
+func (m *HnsMsgClaim) Decode(data []byte) error {
+	if len(data) < 2 {
+		return fmt.Errorf("claim: expected at least 2 bytes, got %d", len(data))
+	}
+	claimLen := int(binary.LittleEndian.Uint16(data[0:2]))
+	data = data[2:]
+	if len(data) != claimLen {
+		return fmt.Errorf(
+			"claim: invalid payload length: got %d, want %d",
+			len(data), claimLen,
+		)
+	}
+	m.Claim = append(m.Claim[:0], data...)
+	return nil
+}
+
+// HnsMsgAirDrop is the Handshake "airdrop" message. The native airdrop proof
+// parser belongs with Phase 4 claim/airdrop verification, so the packet body
+// is retained opaquely at the wire envelope layer.
+type HnsMsgAirDrop struct {
+	Payload []byte
+}
+
+func (*HnsMsgAirDrop) Type() HnsMsgType { return HnsMsgTypeAirDrop }
+func (m *HnsMsgAirDrop) Encode() []byte {
+	return hnsEncodeOpaquePayload(m.Payload)
+}
+func (m *HnsMsgAirDrop) Decode(data []byte) error {
+	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
+	return nil
+}
+
+// HnsMsgUnknown is the hsd type-30 unknown packet. It preserves the payload
+// without interpreting it.
+type HnsMsgUnknown struct {
+	Payload []byte
+}
+
+func (*HnsMsgUnknown) Type() HnsMsgType { return HnsMsgTypeUnknown }
+func (m *HnsMsgUnknown) Encode() []byte {
+	return hnsEncodeOpaquePayload(m.Payload)
+}
+func (m *HnsMsgUnknown) Decode(data []byte) error {
+	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
+	return nil
+}
+
+func hnsEncodeOpaquePayload(payload []byte) []byte {
+	return append([]byte(nil), payload...)
+}
+
+func hnsDecodeOpaquePayload(dst, src []byte) []byte {
+	return append(dst[:0], src...)
 }
 
 func hnsReadUvarint(data []byte) (uint64, int, error) {

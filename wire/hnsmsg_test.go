@@ -66,13 +66,22 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"sendheaders", &HnsMsgSendHeaders{}},
 		{"block", &HnsMsgBlock{Block: *NewMsgBlock(testHnsHeader())}},
 		{"tx", &HnsMsgTx{Tx: *buildHnsTestTx()}},
+		{"reject", &HnsMsgReject{Message: HnsMsgTypeTx, Code: RejectInvalid, Reason: "bad tx", Hash: hashOfBytes(0x99)}},
 		{"mempool", &HnsMsgMemPool{}},
+		{"filterload", &HnsMsgFilterLoad{Filter: []byte{0x01, 0x02, 0x03}, HashFuncs: 10, Tweak: 20, Flags: BloomUpdateAll}},
 		{"filteradd", &HnsMsgFilterAdd{Data: []byte{1, 2, 3}}},
 		{"filterclear", &HnsMsgFilterClear{}},
+		{"merkleblock", &HnsMsgMerkleBlock{Payload: []byte{0xaa, 0xbb, 0xcc}}},
 		{"feefilter", &HnsMsgFeeFilter{Rate: 1000}},
 		{"sendcmpct", &HnsMsgSendCmpct{Mode: 1, Version: 2}},
+		{"cmpctblock", &HnsMsgCmpctBlock{Payload: []byte{0x01, 0x02}}},
+		{"getblocktxn", &HnsMsgGetBlockTxn{Payload: []byte{0x03, 0x04}}},
+		{"blocktxn", &HnsMsgBlockTxn{Payload: []byte{0x05, 0x06}}},
 		{"getproof", &HnsMsgGetProof{Root: hashOfBytes(0x44), Key: hashOfBytes(0x55)}},
 		{"proof", &HnsMsgProof{Root: hashOfBytes(0x66), Key: hashOfBytes(0x77), Proof: []byte{1, 2, 3, 4}}},
+		{"claim", &HnsMsgClaim{Claim: []byte{0xca, 0xfe}}},
+		{"airdrop", &HnsMsgAirDrop{Payload: []byte{0xda, 0x7a}}},
+		{"unknown", &HnsMsgUnknown{Payload: []byte{0x7f}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,7 +135,7 @@ func TestHnsMsgEnvelopeOnTheWireLayout(t *testing.T) {
 func TestHnsMsgDecodeUnsupportedType(t *testing.T) {
 	header := hnsMsgHeader{
 		NetworkMagic:  testHnsMagic,
-		MessageType:   HnsMsgTypeUnknown,
+		MessageType:   HnsMsgType(255),
 		PayloadLength: 0,
 	}
 	encoded := header.Encode()
@@ -135,8 +144,8 @@ func TestHnsMsgDecodeUnsupportedType(t *testing.T) {
 	if !errors.As(err, &typErr) {
 		t.Fatalf("expected UnsupportedHnsMsgTypeError, got %v", err)
 	}
-	if typErr.MessageType != HnsMsgTypeUnknown {
-		t.Errorf("error type: got %d, want %d", typErr.MessageType, HnsMsgTypeUnknown)
+	if typErr.MessageType != HnsMsgType(255) {
+		t.Errorf("error type: got %d, want %d", typErr.MessageType, HnsMsgType(255))
 	}
 }
 
@@ -668,10 +677,165 @@ func TestHnsMsgTxDecodeErrors(t *testing.T) {
 	}
 }
 
+func TestHnsMsgRejectRoundTrip(t *testing.T) {
+	in := HnsMsgReject{
+		Message: HnsMsgTypeTx,
+		Code:    RejectInvalid,
+		Reason:  "bad tx",
+		Hash:    hashOfBytes(0x99),
+	}
+	encoded := in.Encode()
+
+	var out HnsMsgReject
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if out.Message != in.Message {
+		t.Errorf("message: got %d, want %d", out.Message, in.Message)
+	}
+	if out.Code != in.Code {
+		t.Errorf("code: got %d, want %d", out.Code, in.Code)
+	}
+	if out.Reason != in.Reason {
+		t.Errorf("reason: got %q, want %q", out.Reason, in.Reason)
+	}
+	if out.Hash != in.Hash {
+		t.Errorf("hash: got %x, want %x", out.Hash, in.Hash)
+	}
+}
+
+func TestHnsMsgRejectNoHashRoundTrip(t *testing.T) {
+	in := HnsMsgReject{
+		Message: HnsMsgTypeVersion,
+		Code:    RejectObsolete,
+		Reason:  "old version",
+	}
+	encoded := in.Encode()
+
+	var out HnsMsgReject
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if out.Message != in.Message {
+		t.Errorf("message: got %d, want %d", out.Message, in.Message)
+	}
+	if out.Code != in.Code {
+		t.Errorf("code: got %d, want %d", out.Code, in.Code)
+	}
+	if out.Reason != in.Reason {
+		t.Errorf("reason: got %q, want %q", out.Reason, in.Reason)
+	}
+	if out.Hash != ([32]byte{}) {
+		t.Errorf("hash: got %x, want zero hash", out.Hash)
+	}
+}
+
+func TestHnsMsgRejectOnTheWireLayout(t *testing.T) {
+	hash := hashOfBytes(0x99)
+	got := (&HnsMsgReject{
+		Message: HnsMsgTypeTx,
+		Code:    RejectInvalid,
+		Reason:  "bad tx",
+		Hash:    hash,
+	}).Encode()
+	want := []byte{
+		byte(HnsMsgTypeTx),
+		byte(RejectInvalid),
+		0x06,
+		'b', 'a', 'd', ' ', 't', 'x',
+	}
+	want = append(want, hash[:]...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgRejectDecodeErrors(t *testing.T) {
+	var msg HnsMsgReject
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for empty reject payload")
+	}
+	if err := msg.Decode([]byte{byte(HnsMsgTypeVersion), byte(RejectInvalid), 0x04, 'b'}); err == nil {
+		t.Fatal("expected error for truncated reason")
+	}
+	if err := msg.Decode([]byte{byte(HnsMsgTypeTx), byte(RejectInvalid), 0x00}); err == nil {
+		t.Fatal("expected error for missing hash")
+	}
+	if err := msg.Decode([]byte{byte(HnsMsgTypeVersion), byte(RejectInvalid), 0x00, 0x99}); err == nil {
+		t.Fatal("expected error for trailing payload")
+	}
+}
+
 func TestHnsMsgMemPoolRejectsPayload(t *testing.T) {
 	var msg HnsMsgMemPool
 	if err := msg.Decode([]byte{0x00}); err == nil {
 		t.Fatal("expected error for non-empty mempool payload")
+	}
+}
+
+func TestHnsMsgFilterLoadRoundTrip(t *testing.T) {
+	in := HnsMsgFilterLoad{
+		Filter:    []byte{0xaa, 0xbb, 0xcc},
+		HashFuncs: 10,
+		Tweak:     0x01020304,
+		Flags:     BloomUpdateAll,
+	}
+	encoded := in.Encode()
+
+	var out HnsMsgFilterLoad
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Filter, in.Filter) {
+		t.Errorf("filter: got % x, want % x", out.Filter, in.Filter)
+	}
+	if out.HashFuncs != in.HashFuncs {
+		t.Errorf("hash funcs: got %d, want %d", out.HashFuncs, in.HashFuncs)
+	}
+	if out.Tweak != in.Tweak {
+		t.Errorf("tweak: got %#x, want %#x", out.Tweak, in.Tweak)
+	}
+	if out.Flags != in.Flags {
+		t.Errorf("flags: got %d, want %d", out.Flags, in.Flags)
+	}
+}
+
+func TestHnsMsgFilterLoadOnTheWireLayout(t *testing.T) {
+	got := (&HnsMsgFilterLoad{
+		Filter:    []byte{0xaa, 0xbb},
+		HashFuncs: 0x01020304,
+		Tweak:     0x05060708,
+		Flags:     BloomUpdateP2PubkeyOnly,
+	}).Encode()
+	want := []byte{
+		0x02, 0xaa, 0xbb,
+		0x04, 0x03, 0x02, 0x01,
+		0x08, 0x07, 0x06, 0x05,
+		byte(BloomUpdateP2PubkeyOnly),
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgFilterLoadDecodeErrors(t *testing.T) {
+	var msg HnsMsgFilterLoad
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing filter length")
+	}
+	if err := msg.Decode([]byte{0x03, 0xaa}); err == nil {
+		t.Fatal("expected error for truncated filter")
+	}
+	if err := msg.Decode([]byte{0x01, 0xaa}); err == nil {
+		t.Fatal("expected error for missing filter parameters")
+	}
+
+	payload := (&HnsMsgFilterLoad{
+		Filter:    []byte{0xaa},
+		HashFuncs: MaxFilterLoadHashFuncs + 1,
+	}).Encode()
+	if err := msg.Decode(payload); err == nil {
+		t.Fatal("expected error for too many hash functions")
 	}
 }
 
@@ -729,6 +893,20 @@ func TestHnsMsgFilterClearRejectsPayload(t *testing.T) {
 	var msg HnsMsgFilterClear
 	if err := msg.Decode([]byte{0x00}); err == nil {
 		t.Fatal("expected error for non-empty filterclear payload")
+	}
+}
+
+func TestHnsMsgMerkleBlockRoundTripOpaquePayload(t *testing.T) {
+	payload := []byte{0xaa, 0xbb, 0xcc}
+	in := HnsMsgMerkleBlock{Payload: payload}
+	encoded := in.Encode()
+
+	var out HnsMsgMerkleBlock
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Payload, payload) {
+		t.Fatalf("payload mismatch:\n got % x\nwant % x", out.Payload, payload)
 	}
 }
 
@@ -791,6 +969,32 @@ func TestHnsMsgSendCmpctDecodeWrongSize(t *testing.T) {
 	}
 	if err := msg.Decode(make([]byte, 10)); err == nil {
 		t.Fatal("expected error for long sendcmpct payload")
+	}
+}
+
+func TestHnsMsgCompactRelayOpaquePayloads(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  HandshakeMessage
+	}{
+		{"cmpctblock", &HnsMsgCmpctBlock{Payload: []byte{0x01, 0x02}}},
+		{"getblocktxn", &HnsMsgGetBlockTxn{Payload: []byte{0x03, 0x04}}},
+		{"blocktxn", &HnsMsgBlockTxn{Payload: []byte{0x05, 0x06}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded := tc.msg.Encode()
+			decoded, err := newEmptyHnsMessage(tc.msg.Type())
+			if err != nil {
+				t.Fatalf("newEmptyHnsMessage: %v", err)
+			}
+			if err := decoded.Decode(encoded); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if !bytes.Equal(decoded.Encode(), encoded) {
+				t.Fatalf("round-trip mismatch:\n got % x\nwant % x", decoded.Encode(), encoded)
+			}
+		})
 	}
 }
 
@@ -860,6 +1064,65 @@ func TestHnsMsgProofDecodeErrors(t *testing.T) {
 	var msg HnsMsgProof
 	if err := msg.Decode(make([]byte, 63)); err == nil {
 		t.Fatal("expected error for short proof payload")
+	}
+}
+
+func TestHnsMsgClaimRoundTrip(t *testing.T) {
+	in := HnsMsgClaim{Claim: []byte{0xca, 0xfe, 0xba, 0xbe}}
+	encoded := in.Encode()
+
+	var out HnsMsgClaim
+	if err := out.Decode(encoded); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !bytes.Equal(out.Claim, in.Claim) {
+		t.Fatalf("claim mismatch:\n got % x\nwant % x", out.Claim, in.Claim)
+	}
+}
+
+func TestHnsMsgClaimOnTheWireLayout(t *testing.T) {
+	got := (&HnsMsgClaim{Claim: []byte{0xca, 0xfe}}).Encode()
+	want := []byte{0x02, 0x00, 0xca, 0xfe}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wire layout mismatch:\n got % x\nwant % x", got, want)
+	}
+}
+
+func TestHnsMsgClaimDecodeErrors(t *testing.T) {
+	var msg HnsMsgClaim
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for missing claim length")
+	}
+	if err := msg.Decode([]byte{0x02, 0x00, 0xca}); err == nil {
+		t.Fatal("expected error for truncated claim")
+	}
+	if err := msg.Decode([]byte{0x01, 0x00, 0xca, 0xfe}); err == nil {
+		t.Fatal("expected error for trailing claim data")
+	}
+}
+
+func TestHnsMsgAirDropAndUnknownOpaquePayloads(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  HandshakeMessage
+	}{
+		{"airdrop", &HnsMsgAirDrop{Payload: []byte{0xda, 0x7a}}},
+		{"unknown", &HnsMsgUnknown{Payload: []byte{0x7f, 0x80}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded := tc.msg.Encode()
+			decoded, err := newEmptyHnsMessage(tc.msg.Type())
+			if err != nil {
+				t.Fatalf("newEmptyHnsMessage: %v", err)
+			}
+			if err := decoded.Decode(encoded); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if !bytes.Equal(decoded.Encode(), encoded) {
+				t.Fatalf("round-trip mismatch:\n got % x\nwant % x", decoded.Encode(), encoded)
+			}
+		})
 	}
 }
 
