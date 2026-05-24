@@ -262,8 +262,8 @@ func TestPeerConnection(t *testing.T) {
 		wantLastPingNonce:   uint64(0),
 		wantLastPingMicros:  int64(0),
 		wantTimeOffset:      int64(0),
-		wantBytesSent:       167, // 143 version + 24 verack
-		wantBytesReceived:   167,
+		wantBytesSent:       173, // 164 version + 9 verack
+		wantBytesReceived:   173,
 		wantWitnessEnabled:  false,
 	}
 	wantStats2 := peerStats{
@@ -277,8 +277,8 @@ func TestPeerConnection(t *testing.T) {
 		wantLastPingNonce:   uint64(0),
 		wantLastPingMicros:  int64(0),
 		wantTimeOffset:      int64(0),
-		wantBytesSent:       167, // 143 version + 24 verack
-		wantBytesReceived:   167,
+		wantBytesSent:       173, // 164 version + 9 verack
+		wantBytesReceived:   173,
 		wantWitnessEnabled:  true,
 	}
 
@@ -541,27 +541,6 @@ func TestPeerListeners(t *testing.T) {
 			wire.NewMsgGetHeaders(),
 		},
 		{
-			"OnGetCFilters",
-			wire.NewMsgGetCFilters(wire.GCSFilterRegular, 0, &chainhash.Hash{}),
-		},
-		{
-			"OnGetCFHeaders",
-			wire.NewMsgGetCFHeaders(wire.GCSFilterRegular, 0, &chainhash.Hash{}),
-		},
-		{
-			"OnGetCFCheckpt",
-			wire.NewMsgGetCFCheckpt(wire.GCSFilterRegular, &chainhash.Hash{}),
-		},
-		{
-			"OnCFilter",
-			wire.NewMsgCFilter(wire.GCSFilterRegular, &chainhash.Hash{},
-				[]byte("payload")),
-		},
-		{
-			"OnCFHeaders",
-			wire.NewMsgCFHeaders(),
-		},
-		{
 			"OnFeeFilter",
 			wire.NewMsgFeeFilter(15000),
 		},
@@ -591,14 +570,6 @@ func TestPeerListeners(t *testing.T) {
 		{
 			"OnSendHeaders",
 			wire.NewMsgSendHeaders(),
-		},
-		{
-			"OnSendAddrV2",
-			wire.NewMsgSendAddrV2(),
-		},
-		{
-			"OnAddrV2",
-			wire.NewMsgAddrV2(),
 		},
 	}
 	t.Logf("Running %d tests", len(tests))
@@ -799,7 +770,7 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	outboundMessages := make(chan wire.Message)
 	go func() {
 		for {
-			_, msg, _, err := wire.ReadMessageN(
+			_, msg, _, err := wire.ReadHnsMessageN(
 				remoteConn,
 				p.ProtocolVersion(),
 				peerCfg.ChainParams.Net,
@@ -831,14 +802,14 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	invalidVersionMsg := wire.NewMsgVersion(remoteNA, localNA, 0, 0)
 	invalidVersionMsg.ProtocolVersion = 1
 
-	_, err = wire.WriteMessageN(
+	_, err = wire.WriteHnsMessageN(
 		remoteConn.Writer,
 		invalidVersionMsg,
 		uint32(invalidVersionMsg.ProtocolVersion),
 		peerCfg.ChainParams.Net,
 	)
 	if err != nil {
-		t.Fatalf("wire.WriteMessageN: unexpected err - %v\n", err)
+		t.Fatalf("wire.WriteHnsMessageN: unexpected err - %v\n", err)
 	}
 
 	// Expect peer to disconnect automatically
@@ -1054,20 +1025,14 @@ func setupPeerConnection(in, out *peer.Peer) error {
 	}
 }
 
-// TestSendAddrV2Handshake tests that the version-verack handshake with the
-// addition of the sendaddrv2 message works as expected.
-func TestSendAddrV2Handshake(t *testing.T) {
+// TestNoSendAddrV2Handshake tests that the Handshake version-verack exchange
+// does not negotiate Bitcoin's sendaddrv2 message.
+func TestNoSendAddrV2Handshake(t *testing.T) {
 	verack := make(chan struct{}, 2)
-	sendaddr := make(chan struct{}, 2)
 	peer1Cfg := &peer.Config{
 		Listeners: peer.MessageListeners{
 			OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
 				verack <- struct{}{}
-			},
-			OnSendAddrV2: func(p *peer.Peer,
-				msg *wire.MsgSendAddrV2) {
-
-				sendaddr <- struct{}{}
 			},
 		},
 		AllowSelfConns: true,
@@ -1079,6 +1044,14 @@ func TestSendAddrV2Handshake(t *testing.T) {
 		AllowSelfConns: true,
 		ChainParams:    &chaincfg.MainNetParams,
 	}
+	newPeer1Cfg := func() *peer.Config {
+		cfg := *peer1Cfg
+		return &cfg
+	}
+	newPeer2Cfg := func() *peer.Config {
+		cfg := *peer2Cfg
+		return &cfg
+	}
 
 	verackErr := errors.New("verack timeout")
 
@@ -1088,12 +1061,12 @@ func TestSendAddrV2Handshake(t *testing.T) {
 		setup     func() (*peer.Peer, *peer.Peer, error)
 	}{
 		{
-			"successful sendaddrv2 handshake",
-			true,
+			"handshake without sendaddrv2",
+			false,
 			func() (*peer.Peer, *peer.Peer, error) {
-				inPeer := peer.NewInboundPeer(peer1Cfg)
+				inPeer := peer.NewInboundPeer(newPeer1Cfg())
 				outPeer, err := peer.NewOutboundPeer(
-					peer2Cfg, "10.0.0.2:8333",
+					newPeer2Cfg(), "10.0.0.2:8333",
 				)
 				if err != nil {
 					return nil, nil, err
@@ -1104,9 +1077,8 @@ func TestSendAddrV2Handshake(t *testing.T) {
 					return nil, nil, err
 				}
 
-				for i := 0; i < 4; i++ {
+				for i := 0; i < 2; i++ {
 					select {
-					case <-sendaddr:
 					case <-verack:
 					case <-time.After(time.Second * 2):
 						return nil, nil, verackErr
@@ -1121,10 +1093,11 @@ func TestSendAddrV2Handshake(t *testing.T) {
 			false,
 			func() (*peer.Peer, *peer.Peer, error) {
 				legacyVersion := wire.AddrV2Version - 1
-				peer1Cfg.ProtocolVersion = legacyVersion
-				inPeer := peer.NewInboundPeer(peer1Cfg)
+				inCfg := newPeer1Cfg()
+				inCfg.ProtocolVersion = legacyVersion
+				inPeer := peer.NewInboundPeer(inCfg)
 				outPeer, err := peer.NewOutboundPeer(
-					peer2Cfg, "10.0.0.2:8333",
+					newPeer2Cfg(), "10.0.0.2:8333",
 				)
 				if err != nil {
 					return nil, nil, err
@@ -1150,11 +1123,12 @@ func TestSendAddrV2Handshake(t *testing.T) {
 			"handshake with legacy outbound peer",
 			false,
 			func() (*peer.Peer, *peer.Peer, error) {
-				inPeer := peer.NewInboundPeer(peer1Cfg)
+				inPeer := peer.NewInboundPeer(newPeer1Cfg())
 				legacyVersion := wire.AddrV2Version - 1
-				peer2Cfg.ProtocolVersion = legacyVersion
+				outCfg := newPeer2Cfg()
+				outCfg.ProtocolVersion = legacyVersion
 				outPeer, err := peer.NewOutboundPeer(
-					peer2Cfg, "10.0.0.2:8333",
+					outCfg, "10.0.0.2:8333",
 				)
 				if err != nil {
 					return nil, nil, err
@@ -1182,16 +1156,16 @@ func TestSendAddrV2Handshake(t *testing.T) {
 	for i, test := range tests {
 		inPeer, outPeer, err := test.setup()
 		if err != nil {
-			t.Fatalf("TestSendAddrV2Handshake setup #%d: "+
+			t.Fatalf("TestNoSendAddrV2Handshake setup #%d: "+
 				"unexpected err: %v", i, err)
 		}
 
 		if inPeer.WantsAddrV2() != test.expectsV2 {
-			t.Fatalf("TestSendAddrV2Handshake #%d expected "+
+			t.Fatalf("TestNoSendAddrV2Handshake #%d expected "+
 				"wantsAddrV2 to be %v instead was %v", i,
 				test.expectsV2, inPeer.WantsAddrV2())
 		} else if outPeer.WantsAddrV2() != test.expectsV2 {
-			t.Fatalf("TestSendAddrV2Handshake #%d expected "+
+			t.Fatalf("TestNoSendAddrV2Handshake #%d expected "+
 				"wantsAddrV2 to be %v instead was %v", i,
 				test.expectsV2, outPeer.WantsAddrV2())
 		}

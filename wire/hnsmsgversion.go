@@ -40,9 +40,8 @@ type HnsMsgVersion struct {
 
 func (*HnsMsgVersion) Type() HnsMsgType { return HnsMsgTypeVersion }
 
-// Encode serializes the message. Returns nil if Agent exceeds
-// HnsMaxUserAgentLen — callers should validate Agent before encoding; the
-// envelope-level Encode path will surface the resulting payload-size error.
+// Encode serializes the message. Agent is capped to HnsMaxUserAgentLen because
+// the Handshake packet stores its length in one byte.
 func (m *HnsMsgVersion) Encode() []byte {
 	agent := m.Agent
 	if len(agent) > HnsMaxUserAgentLen {
