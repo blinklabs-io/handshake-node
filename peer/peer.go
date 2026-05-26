@@ -1068,9 +1068,9 @@ func (p *Peer) handlePongMsg(msg *wire.MsgPong) {
 	}
 }
 
-// readMessage reads the next bitcoin message from the peer with logging. The
-// partial bool indicates that we've partially read a message already. In this
-// case, we use the ReadPartialMessageWithEncodingN function.
+// readMessage reads the next Handshake message from the peer with logging. The
+// partial bool is retained for the old BIP324 downgrade path; Handshake uses
+// Brontide/plaintext transports instead.
 func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 	wire.Message, []byte, error) {
 
@@ -1081,7 +1081,7 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 		err error
 	)
 
-	n, msg, buf, err = wire.ReadMessageWithEncodingN(
+	n, msg, buf, err = wire.ReadHnsMessageWithEncodingN(
 		p.conn, p.ProtocolVersion(), p.cfg.ChainParams.Net, encoding,
 	)
 
@@ -1114,14 +1114,14 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 	return msg, buf, nil
 }
 
-// writeMessage sends a bitcoin message to the peer with logging.
+// writeMessage sends a Handshake message to the peer with logging.
 func (p *Peer) writeMessage(msg wire.Message, enc wire.MessageEncoding) error {
 	// Don't do anything if we're disconnecting.
 	if atomic.LoadInt32(&p.disconnect) != 0 {
 		return nil
 	}
 
-	n, err := wire.WriteMessageWithEncodingN(
+	n, err := wire.WriteHnsMessageWithEncodingN(
 		p.conn, msg, p.ProtocolVersion(), p.cfg.ChainParams.Net, enc,
 	)
 
@@ -2167,27 +2167,17 @@ func (p *Peer) writeLocalVersionMsg() error {
 	return p.writeMessage(localVerMsg, wire.LatestEncoding)
 }
 
-// writeSendAddrV2Msg writes our sendaddrv2 message to the remote peer if the
-// peer supports protocol version 70016 and above.
-func (p *Peer) writeSendAddrV2Msg(pver uint32) error {
-	if pver < wire.AddrV2Version {
-		return nil
-	}
-
-	sendAddrMsg := wire.NewMsgSendAddrV2()
-	return p.writeMessage(sendAddrMsg, wire.LatestEncoding)
+// writeSendAddrV2Msg is retained as a negotiation hook while the peer package
+// still has btcd-era method names. Handshake has no sendaddrv2 packet; peers
+// use the type-5 addr message with 88-byte Handshake NetAddress entries.
+func (p *Peer) writeSendAddrV2Msg(_ uint32) error {
+	return nil
 }
 
-// waitToFinishNegotiation waits until desired negotiation messages are
-// received, recording the remote peer's preference for sendaddrv2 as an
-// example. The list of negotiated features can be expanded in the future. If a
-// verack is received, negotiation stops and the connection is live.
-func (p *Peer) waitToFinishNegotiation(pver uint32) error {
-	// There are several possible messages that can be received here. We
-	// could immediately receive verack and be done with the handshake. We
-	// could receive sendaddrv2 and still have to wait for verack. Or we
-	// can receive unknown messages before and after sendaddrv2 and still
-	// have to wait for verack.
+// waitToFinishNegotiation waits until verack is received. Unknown messages are
+// skipped so peers can advertise packet types this migration has not wired to
+// the btcd-era listener API yet.
+func (p *Peer) waitToFinishNegotiation(_ uint32) error {
 	for {
 		remoteMsg, _, err := p.readMessage(wire.LatestEncoding, false)
 		if err == wire.ErrUnknownMessage {
@@ -2197,16 +2187,6 @@ func (p *Peer) waitToFinishNegotiation(pver uint32) error {
 		}
 
 		switch m := remoteMsg.(type) {
-		case *wire.MsgSendAddrV2:
-			if pver >= wire.AddrV2Version {
-				p.flagsMtx.Lock()
-				p.sendAddrV2 = true
-				p.flagsMtx.Unlock()
-
-				if p.cfg.Listeners.OnSendAddrV2 != nil {
-					p.cfg.Listeners.OnSendAddrV2(p, m)
-				}
-			}
 		case *wire.MsgVerAck:
 			// Receiving a verack means we are done with the
 			// handshake.
@@ -2226,12 +2206,9 @@ func (p *Peer) waitToFinishNegotiation(pver uint32) error {
 //
 //  1. Remote peer sends their version.
 //  2. We send our version.
-//  3. We send sendaddrv2 if their version is >= 70016.
+//  3. We skip Bitcoin sendaddrv2 negotiation; Handshake has no sendaddrv2.
 //  4. We send our verack.
-//  5. Wait until sendaddrv2 or verack is received. Unknown messages are
-//     skipped as it could be wtxidrelay or a different message in the future
-//     that handshake-node does not implement but bitcoind does.
-//  6. If remote peer sent sendaddrv2 above, wait until receipt of verack.
+//  5. Wait until verack is received, skipping unknown Handshake packet types.
 func (p *Peer) negotiateInboundProtocol() error {
 	if err := p.readRemoteVersionMsg(false); err != nil {
 		return err
@@ -2265,11 +2242,9 @@ func (p *Peer) negotiateInboundProtocol() error {
 //
 //  1. We send our version.
 //  2. Remote peer sends their version.
-//  3. We send sendaddrv2 if their version is >= 70016.
+//  3. We skip Bitcoin sendaddrv2 negotiation; Handshake has no sendaddrv2.
 //  4. We send our verack.
-//  5. We wait to receive sendaddrv2 or verack, skipping unknown messages as
-//     in the inbound case.
-//  6. If sendaddrv2 was received, wait for receipt of verack.
+//  5. We wait to receive verack, skipping unknown Handshake packet types.
 func (p *Peer) negotiateOutboundProtocol() error {
 	if err := p.writeLocalVersionMsg(); err != nil {
 		return err
