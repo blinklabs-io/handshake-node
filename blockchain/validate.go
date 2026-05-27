@@ -1254,7 +1254,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 	// optimization because running the scripts is the most time consuming
 	// portion of block handling.
 	checkpoint := b.LatestCheckpoint()
-	runScripts := !(checkpoint != nil && node.height <= checkpoint.Height)
+	runScripts := checkpoint == nil || node.height > checkpoint.Height
 
 	// Blocks created after the BIP0016 activation time need to have the
 	// pay-to-script-hash checks enabled.
