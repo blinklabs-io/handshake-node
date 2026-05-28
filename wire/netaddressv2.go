@@ -2,15 +2,15 @@ package wire
 
 import (
 	"bytes"
+	"crypto/sha3"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -583,7 +583,7 @@ func (a *torv3Addr) String() string {
 	checksumConst := []byte(".onion checksum")
 
 	// Write never returns an error so there is no need to handle it.
-	h := sha3.New256()
+	h := hash.Hash(sha3.New256())
 	h.Write(checksumConst)
 	h.Write(a.addr[:])
 	h.Write(torV3Version)
