@@ -1790,7 +1790,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					hnsjson.Bool(true),
 				)
 			},
-			marshalled: `{"jsonrpc":"1.0","method":"walletcreatefundedpsbt","params":[[{"txid":"1234","vout":0,"sequence":0}],[{"1234":0.00001234},{"data":"01020304"}],1,{},true],"id":1}`,
+			marshalled: `{"jsonrpc":"1.0","method":"walletcreatefundedpsbt","params":[[{"txid":"1234","vout":0,"sequence":0}],[{"1234":0.001234},{"data":"01020304"}],1,{},true],"id":1}`,
 			unmarshalled: &hnsjson.WalletCreateFundedPsbtCmd{
 				Inputs: []hnsjson.PsbtInput{
 					{

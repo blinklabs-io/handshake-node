@@ -32,7 +32,7 @@ const (
 )
 
 // makeTestOutput creates an on-chain output paying to a freshly generated
-// P2WPKH output with the specified amount.
+// Handshake version-0 pubkey-hash output with the specified amount.
 func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	amt hnsutil.Amount) (*btcec.PrivateKey, *wire.OutPoint, []byte, error) {
 
@@ -43,9 +43,9 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 		return nil, nil, nil, err
 	}
 
-	// Using the key created above, generate a witness program which it's
-	// able to spend.
-	witnessAddr, err := hnsutil.NewAddressWitnessPubKeyHash(
+	// Using the key created above, generate an address which it's able to
+	// spend.
+	witnessAddr, err := hnsutil.NewAddressPubKeyHash(
 		hnsutil.Hash160(key.PubKey().SerializeCompressed()), r.ActiveNet,
 	)
 	if err != nil {
@@ -333,10 +333,10 @@ func createCSVOutput(r *rpctest.Harness, t *testing.T,
 		return nil, nil, nil, err
 	}
 
-	// Using the script generated above, create a P2WSH output which will be
-	// accepted into the mempool.
+	// Using the script generated above, create a version-0 script-hash
+	// output which will be accepted into the mempool.
 	scriptHash := sha256.Sum256(csvScript)
-	p2wshAddr, err := hnsutil.NewAddressWitnessScriptHash(
+	p2wshAddr, err := hnsutil.NewAddressScriptHash(
 		scriptHash[:], r.ActiveNet,
 	)
 	if err != nil {

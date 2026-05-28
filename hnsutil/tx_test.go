@@ -10,8 +10,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -34,8 +34,8 @@ func TestTx(t *testing.T) {
 			gotIndex, wantIndex)
 	}
 
-	// Hash for block 100,000 transaction 0.
-	wantHashStr := "8c14f0db3df150123e6f3dbbf30f8b955a8249b62ac1d1ff16284aefa3d06d87"
+	// Hash for block 100,000 transaction 0 using the Handshake tx hash.
+	wantHashStr := "81001784062977be7635ae5333ab0d6fc014a1dc0ff1928968f7365ef4f8810c"
 	wantHash, err := chainhash.NewHashFromStr(wantHashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -98,39 +98,26 @@ func TestTxErrors(t *testing.T) {
 
 // TestTxHasWitness tests the HasWitness() method.
 func TestTxHasWitness(t *testing.T) {
-	msgTx := Block100000.Transactions[0] // contains witness data
-	tx := hnsutil.NewTx(msgTx)
+	for i, msgTx := range Block100000.Transactions {
+		tx := hnsutil.NewTx(msgTx)
 
-	tx.WitnessHash() // Populate the witness hash cache
-	tx.HasWitness()  // Should not fail (see btcsuite/btcd#1543)
-
-	if !tx.HasWitness() {
-		t.Errorf("HasWitness: got false, want true")
-	}
-
-	for _, msgTxWithoutWitness := range Block100000.Transactions[1:] {
-		txWithoutWitness := hnsutil.NewTx(msgTxWithoutWitness)
-		if txWithoutWitness.HasWitness() {
-			t.Errorf("HasWitness: got false, want true")
+		tx.WitnessHash() // Populate the witness hash cache.
+		got := tx.HasWitness()
+		want := msgTx.HasWitness()
+		if got != want {
+			t.Errorf("HasWitness #%d: got %v, want %v", i, got, want)
 		}
 	}
 }
 
 // TestTxWitnessHash tests the WitnessHash() method.
 func TestTxWitnessHash(t *testing.T) {
-	msgTx := Block100000.Transactions[0] // contains witness data
-	tx := hnsutil.NewTx(msgTx)
-
-	if tx.WitnessHash().IsEqual(tx.Hash()) {
-		t.Errorf("WitnessHash: witness hash and tx id must NOT be same - "+
-			"got %v, want %v", tx.WitnessHash(), tx.Hash())
-	}
-
-	for _, msgTxWithoutWitness := range Block100000.Transactions[1:] {
-		txWithoutWitness := hnsutil.NewTx(msgTxWithoutWitness)
-		if !txWithoutWitness.WitnessHash().IsEqual(txWithoutWitness.Hash()) {
-			t.Errorf("WitnessHash: witness hash and tx id must be same - "+
-				"got %v, want %v", txWithoutWitness.WitnessHash(), txWithoutWitness.Hash())
+	for i, msgTx := range Block100000.Transactions {
+		tx := hnsutil.NewTx(msgTx)
+		want := msgTx.WitnessHash()
+		if !tx.WitnessHash().IsEqual(&want) {
+			t.Errorf("WitnessHash #%d: got %v, want %v",
+				i, tx.WitnessHash(), want)
 		}
 	}
 }

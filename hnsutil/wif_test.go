@@ -9,9 +9,9 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	. "github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	. "github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 func TestEncodeDecodeWIF(t *testing.T) {
@@ -52,7 +52,7 @@ func TestEncodeDecodeWIF(t *testing.T) {
 				0x94, 0xb9, 0x67, 0x89, 0xb2, 0x1a, 0x03, 0x98},
 			net:      &chaincfg.RegressionNetParams,
 			compress: true,
-			wif:      "cV1Y7ARUr9Yx7BR55nTdnR7ZXNJphZtCCMBTEZBJe1hXt2kB684q",
+			wif:      "EScav7jSmF3Tv5ScgVeaAV1zSdNdKDUswXN2rsZCUiQUvi4WDj8V",
 			publicKey: []byte{
 				0x02, 0xee, 0xc2, 0x54, 0x06, 0x61, 0xb0, 0xc3,
 				0x9d, 0x27, 0x15, 0x70, 0x74, 0x24, 0x13, 0xbd,

@@ -11,15 +11,15 @@ import (
 	"path/filepath"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/database"
 	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 )
 
 // This example demonstrates how to create a new chain instance and use
 // ProcessBlock to attempt to add a block to the chain.  As the package
-// overview documentation describes, this includes all of the Bitcoin consensus
+// overview documentation describes, this includes all of the Handshake consensus
 // rules.  This example intentionally attempts to insert a duplicate genesis
 // block to illustrate how an invalid block is handled.
 func ExampleBlockChain_ProcessBlock() {
@@ -39,7 +39,7 @@ func ExampleBlockChain_ProcessBlock() {
 	defer db.Close()
 
 	// Create a new BlockChain instance using the underlying database for
-	// the main bitcoin network.  This example does not demonstrate some
+	// the main Handshake network.  This example does not demonstrate some
 	// of the other available configuration options such as specifying a
 	// notification callback and signature cache.  Also, the caller would
 	// ordinarily keep a reference to the median time source and add time
@@ -69,7 +69,7 @@ func ExampleBlockChain_ProcessBlock() {
 	fmt.Printf("Block accepted. Is it an orphan?: %v", isOrphan)
 
 	// Output:
-	// Failed to process block: already have block 1e629981f3bddcbbd4bb9a9e72b2aea98d831d66aa5d544c07430efe56322f64
+	// Failed to process block: already have block e09259071d7460974866e1140f7417ddef1118ba30a0d9dfcacdf3c1d3f26e5b
 }
 
 // This example demonstrates how to convert the compact "bits" in a block header
