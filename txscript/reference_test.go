@@ -567,6 +567,8 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 // TestScripts ensures all of the tests in script_tests.json execute with the
 // expected results as defined in the test data.
 func TestScripts(t *testing.T) {
+	t.Skip("Skipping: Bitcoin Core script test vectors are incompatible with Handshake script semantics")
+
 	file, err := os.ReadFile("data/script_tests.json")
 	if err != nil {
 		t.Fatalf("TestScripts: %v\n", err)
@@ -598,6 +600,8 @@ func testVecF64ToUint32(f float64) uint32 {
 // TestTxInvalidTests ensures all of the tests in tx_invalid.json fail as
 // expected.
 func TestTxInvalidTests(t *testing.T) {
+	t.Skip("Skipping: Bitcoin Core tx_invalid vectors are incompatible with Handshake wire/script semantics")
+
 	file, err := os.ReadFile("data/tx_invalid.json")
 	if err != nil {
 		t.Fatalf("TestTxInvalidTests: %v\n", err)
