@@ -342,37 +342,9 @@ func (sp *serverPeer) relayTxDisabled() bool {
 	return isDisabled
 }
 
-// pushAddrMsg sends a legacy addr message to the connected peer using the
+// pushAddrMsg sends a Handshake addr message to the connected peer using the
 // provided addresses.
 func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2) {
-	if sp.WantsAddrV2() {
-		// If the peer supports addrv2, we'll be pushing an addrv2
-		// message instead. The logic is otherwise identical to the
-		// addr case below.
-		addrs := make([]*wire.NetAddressV2, 0, len(addresses))
-		for _, addr := range addresses {
-			// Filter addresses already known to the peer.
-			if sp.addressKnown(addr) {
-				continue
-			}
-
-			addrs = append(addrs, addr)
-		}
-
-		known, err := sp.PushAddrV2Msg(addrs)
-		if err != nil {
-			peerLog.Errorf("Can't push addrv2 message to %s: %v",
-				sp.Peer, err)
-			sp.Disconnect()
-			return
-		}
-
-		// Add the final set of addresses sent to the set the peer
-		// knows of.
-		sp.addKnownAddresses(known)
-		return
-	}
-
 	addrs := make([]*wire.NetAddress, 0, len(addresses))
 	for _, addr := range addresses {
 		// Filter addresses already known to the peer.
@@ -458,6 +430,42 @@ func hasServices(advertised, desired wire.ServiceFlag) bool {
 	return advertised&desired == desired
 }
 
+func hnsTimeToTime(sec uint64) time.Time {
+	const maxInt64Unix = uint64(1<<63 - 1)
+	if sec > maxInt64Unix {
+		sec = maxInt64Unix
+	}
+	return time.Unix(int64(sec), 0)
+}
+
+func legacyMessageFromHns(msg wire.HandshakeMessage, pver uint32) (wire.Message, error) {
+	return wire.LegacyMessageFromHns(msg, pver, wire.WitnessEncoding)
+}
+
+func legacyInvFromHns(msg wire.HandshakeMessage, pver uint32) (*wire.MsgInv, error) {
+	legacy, err := legacyMessageFromHns(msg, pver)
+	if err != nil {
+		return nil, err
+	}
+	inv, ok := legacy.(*wire.MsgInv)
+	if !ok {
+		return nil, fmt.Errorf("converted %T to %T, want *wire.MsgInv", msg, legacy)
+	}
+	return inv, nil
+}
+
+func legacyNotFoundFromHns(msg wire.HandshakeMessage, pver uint32) (*wire.MsgNotFound, error) {
+	legacy, err := legacyMessageFromHns(msg, pver)
+	if err != nil {
+		return nil, err
+	}
+	notFound, ok := legacy.(*wire.MsgNotFound)
+	if !ok {
+		return nil, fmt.Errorf("converted %T to %T, want *wire.MsgNotFound", msg, legacy)
+	}
+	return notFound, nil
+}
+
 // ShouldReconnectV1 is invoked when we need to determine if we are going to
 // reconnect to an outbound peer. This will return true if we attempted to
 // connect to the peer using the v2 transport, and need to fall back to v1.
@@ -465,10 +473,10 @@ func (sp *serverPeer) ShouldReconnectV1() bool {
 	return sp.ShouldDowngradeToV1()
 }
 
-// OnVersion is invoked when a peer receives a version bitcoin message
+// OnVersion is invoked when a peer receives a version message
 // and is used to negotiate the protocol version details as well as kick start
 // the communications.
-func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgReject {
+func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.HnsMsgVersion) *wire.HnsMsgReject {
 	// Update the address manager with the advertised services for outbound
 	// connections in case they have changed.  This is not done for inbound
 	// connections to help prevent malicious behavior and is skipped when
@@ -483,25 +491,30 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 	remoteAddr := sp.NA()
 	addrManager := sp.server.addrManager
 	if !cfg.RegressionTest && !isInbound {
-		addrManager.SetServices(remoteAddr, msg.Services)
+		addrManager.SetServices(remoteAddr, wire.ServiceFlag(msg.Services))
 	}
 
 	// Ignore peers that have a protocol version that is too old.  The peer
 	// negotiation logic will disconnect it after this callback returns.
-	if msg.ProtocolVersion < int32(peer.MinAcceptableProtocolVersion) {
+	if msg.Version < peer.MinAcceptableProtocolVersion {
 		return nil
 	}
 
 	// Reject outbound peers that are not full nodes.
 	wantServices := wire.SFNodeNetwork
-	if !isInbound && !hasServices(msg.Services, wantServices) {
-		missingServices := wantServices & ^msg.Services
+	services := wire.ServiceFlag(msg.Services)
+	if !isInbound && !hasServices(services, wantServices) {
+		missingServices := wantServices & ^services
 		srvrLog.Debugf("Rejecting peer %s with services %v due to not "+
-			"providing desired services %v", sp.Peer, msg.Services,
+			"providing desired services %v", sp.Peer, services,
 			missingServices)
 		reason := fmt.Sprintf("required services %#x not offered",
 			uint64(missingServices))
-		return wire.NewMsgReject(msg.Command(), wire.RejectNonstandard, reason)
+		return &wire.HnsMsgReject{
+			Message: wire.HnsMsgTypeVersion,
+			Code:    wire.RejectNonstandard,
+			Reason:  reason,
+		}
 	}
 
 	if !cfg.RegressionTest && !isInbound {
@@ -526,26 +539,26 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 
 	// Add the remote peer time as a sample for creating an offset against
 	// the local clock to keep the network time in sync.
-	sp.server.timeSource.AddTimeSample(sp.Addr(), msg.Timestamp)
+	sp.server.timeSource.AddTimeSample(sp.Addr(), hnsTimeToTime(msg.Time))
 
 	// Choose whether or not to relay transactions before a filter command
 	// is received.
-	sp.setDisableRelayTx(msg.DisableRelayTx)
+	sp.setDisableRelayTx(msg.NoRelay)
 
 	return nil
 }
 
-// OnVerAck is invoked when a peer receives a verack bitcoin message and is used
+// OnVerAck is invoked when a peer receives a verack message and is used
 // to kick start communication with them.
-func (sp *serverPeer) OnVerAck(_ *peer.Peer, _ *wire.MsgVerAck) {
+func (sp *serverPeer) OnVerAck(_ *peer.Peer, _ *wire.HnsMsgVerack) {
 	sp.server.AddPeer(sp)
 }
 
-// OnMemPool is invoked when a peer receives a mempool bitcoin message.
+// OnMemPool is invoked when a peer receives a mempool message.
 // It creates and sends an inventory message with the contents of the memory
 // pool up to the maximum inventory allowed per message.  When the peer has a
 // bloom filter loaded, the contents are filtered accordingly.
-func (sp *serverPeer) OnMemPool(_ *peer.Peer, msg *wire.MsgMemPool) {
+func (sp *serverPeer) OnMemPool(_ *peer.Peer, msg *wire.HnsMsgMemPool) {
 	// Only allow mempool requests if the server has bloom filtering
 	// enabled.
 	if sp.server.services&wire.SFNodeBloom != wire.SFNodeBloom {
@@ -591,21 +604,21 @@ func (sp *serverPeer) OnMemPool(_ *peer.Peer, msg *wire.MsgMemPool) {
 	}
 }
 
-// OnTx is invoked when a peer receives a tx bitcoin message.  It blocks
-// until the bitcoin transaction has been fully processed.  Unlock the block
+// OnTx is invoked when a peer receives a tx message. It blocks until the
+// transaction has been fully processed. Unlock the block
 // handler this does not serialize all transactions through a single thread
 // transactions don't rely on the previous one in a linear fashion like blocks.
-func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.MsgTx) {
+func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.HnsMsgTx) {
 	if cfg.BlocksOnly {
 		peerLog.Tracef("Ignoring tx %v from %v - blocksonly enabled",
-			msg.TxHash(), sp)
+			msg.Tx.TxHash(), sp)
 		return
 	}
 
 	// Add the transaction to the known inventory for the peer.
 	// Convert the raw MsgTx to a hnsutil.Tx which provides some convenience
 	// methods and things such as hash caching.
-	tx := hnsutil.NewTx(msg)
+	tx := hnsutil.NewTx(&msg.Tx)
 	iv := wire.NewInvVect(wire.InvTypeTx, tx.Hash())
 	sp.AddKnownInventory(iv)
 
@@ -618,12 +631,12 @@ func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.MsgTx) {
 	<-sp.txProcessed
 }
 
-// OnBlock is invoked when a peer receives a block bitcoin message.  It
-// blocks until the bitcoin block has been fully processed.
-func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.MsgBlock, buf []byte) {
+// OnBlock is invoked when a peer receives a block message. It blocks until the
+// block has been fully processed.
+func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
 	// Convert the raw MsgBlock to a hnsutil.Block which provides some
 	// convenience methods and things such as hash caching.
-	block := hnsutil.NewBlockFromBlockAndBytes(msg, buf)
+	block := hnsutil.NewBlockFromBlockAndBytes(&msg.Block, buf)
 
 	// Add the block to the known inventory for the peer.
 	iv := wire.NewInvVect(wire.InvTypeBlock, block.Hash())
@@ -644,11 +657,18 @@ func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	<-sp.blockProcessed
 }
 
-// OnInv is invoked when a peer receives an inv bitcoin message and is
+// OnInv is invoked when a peer receives an inv message and is
 // used to examine the inventory being advertised by the remote peer and react
 // accordingly.  We pass the message down to blockmanager which will call
 // QueueMessage with any appropriate responses.
-func (sp *serverPeer) OnInv(_ *peer.Peer, msg *wire.MsgInv) {
+func (sp *serverPeer) OnInv(_ *peer.Peer, hnsMsg *wire.HnsMsgInv) {
+	msg, err := legacyInvFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert inv from %s: %v", sp, err)
+		sp.Disconnect()
+		return
+	}
+
 	if !cfg.BlocksOnly {
 		if len(msg.InvList) > 0 {
 			sp.server.syncManager.QueueInv(msg, sp.Peer)
@@ -681,15 +701,40 @@ func (sp *serverPeer) OnInv(_ *peer.Peer, msg *wire.MsgInv) {
 	}
 }
 
-// OnHeaders is invoked when a peer receives a headers bitcoin
-// message.  The message is passed down to the sync manager.
-func (sp *serverPeer) OnHeaders(_ *peer.Peer, msg *wire.MsgHeaders) {
+// OnHeaders is invoked when a peer receives a headers message. The message is
+// passed down to the sync manager.
+func (sp *serverPeer) OnHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgHeaders) {
+	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert headers from %s: %v", sp, err)
+		sp.Disconnect()
+		return
+	}
+	msg, ok := legacy.(*wire.MsgHeaders)
+	if !ok {
+		peerLog.Debugf("Unexpected headers conversion type %T from %s", legacy, sp)
+		sp.Disconnect()
+		return
+	}
 	sp.server.syncManager.QueueHeaders(msg, sp.Peer)
 }
 
-// OnGetData is invoked when a peer receives a getdata bitcoin message and is
+// OnGetData is invoked when a peer receives a getdata message and is
 // used to deliver block and transaction information.
-func (sp *serverPeer) OnGetData(_ *peer.Peer, msg *wire.MsgGetData) {
+func (sp *serverPeer) OnGetData(_ *peer.Peer, hnsMsg *wire.HnsMsgGetData) {
+	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert getdata from %s: %v", sp, err)
+		sp.Disconnect()
+		return
+	}
+	msg, ok := legacy.(*wire.MsgGetData)
+	if !ok {
+		peerLog.Debugf("Unexpected getdata conversion type %T from %s", legacy, sp)
+		sp.Disconnect()
+		return
+	}
+
 	// failedMsg is an inventory that stores all the failed msgs - either
 	// the msg is an unknown type, or there's an error processing it.
 	failedMsg := wire.NewMsgNotFound()
@@ -826,9 +871,21 @@ func (s *server) pushInventory(sp *serverPeer, iv *wire.InvVect,
 	}
 }
 
-// OnGetBlocks is invoked when a peer receives a getblocks bitcoin
-// message.
-func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, msg *wire.MsgGetBlocks) {
+// OnGetBlocks is invoked when a peer receives a getblocks message.
+func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, hnsMsg *wire.HnsMsgGetBlocks) {
+	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert getblocks from %s: %v", sp, err)
+		sp.Disconnect()
+		return
+	}
+	msg, ok := legacy.(*wire.MsgGetBlocks)
+	if !ok {
+		peerLog.Debugf("Unexpected getblocks conversion type %T from %s", legacy, sp)
+		sp.Disconnect()
+		return
+	}
+
 	// Find the most recent known block in the best chain based on the block
 	// locator and fetch all of the block hashes after it until either
 	// wire.MaxBlocksPerMsg have been fetched or the provided stop hash is
@@ -865,9 +922,21 @@ func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, msg *wire.MsgGetBlocks) {
 	}
 }
 
-// OnGetHeaders is invoked when a peer receives a getheaders bitcoin
-// message.
-func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, msg *wire.MsgGetHeaders) {
+// OnGetHeaders is invoked when a peer receives a getheaders message.
+func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) {
+	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert getheaders from %s: %v", sp, err)
+		sp.Disconnect()
+		return
+	}
+	msg, ok := legacy.(*wire.MsgGetHeaders)
+	if !ok {
+		peerLog.Debugf("Unexpected getheaders conversion type %T from %s", legacy, sp)
+		sp.Disconnect()
+		return
+	}
+
 	// Ignore getheaders requests if not in sync.
 	if !sp.server.syncManager.IsCurrent() {
 		return
@@ -894,335 +963,11 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, msg *wire.MsgGetHeaders) {
 	sp.QueueMessage(&wire.MsgHeaders{Headers: blockHeaders}, nil)
 }
 
-// OnGetCFilters is invoked when a peer receives a getcfilters bitcoin message.
-func (sp *serverPeer) OnGetCFilters(_ *peer.Peer, msg *wire.MsgGetCFilters) {
-	// Ignore getcfilters requests if not in sync.
-	if !sp.server.syncManager.IsCurrent() {
-		return
-	}
-
-	// We'll also ensure that the remote party is requesting a set of
-	// filters that we actually currently maintain.
-	switch msg.FilterType {
-	case wire.GCSFilterRegular:
-		break
-
-	default:
-		peerLog.Debug("Filter request for unknown filter: %v",
-			msg.FilterType)
-		return
-	}
-
-	hashes, err := sp.server.chain.HeightToHashRange(
-		int32(msg.StartHeight), &msg.StopHash, wire.MaxGetCFiltersReqRange,
-	)
-	if err != nil {
-		peerLog.Debugf("Invalid getcfilters request: %v", err)
-		return
-	}
-
-	// Create []*chainhash.Hash from []chainhash.Hash to pass to
-	// FiltersByBlockHashes.
-	hashPtrs := make([]*chainhash.Hash, len(hashes))
-	for i := range hashes {
-		hashPtrs[i] = &hashes[i]
-	}
-
-	filters, err := sp.server.cfIndex.FiltersByBlockHashes(
-		hashPtrs, msg.FilterType,
-	)
-	if err != nil {
-		peerLog.Errorf("Error retrieving cfilters: %v", err)
-		return
-	}
-
-	for i, filterBytes := range filters {
-		if len(filterBytes) == 0 {
-			peerLog.Warnf("Could not obtain cfilter for %v",
-				hashes[i])
-			return
-		}
-
-		filterMsg := wire.NewMsgCFilter(
-			msg.FilterType, &hashes[i], filterBytes,
-		)
-		sp.QueueMessage(filterMsg, nil)
-	}
-}
-
-// OnGetCFHeaders is invoked when a peer receives a getcfheader bitcoin message.
-func (sp *serverPeer) OnGetCFHeaders(_ *peer.Peer, msg *wire.MsgGetCFHeaders) {
-	// Ignore getcfilterheader requests if not in sync.
-	if !sp.server.syncManager.IsCurrent() {
-		return
-	}
-
-	// We'll also ensure that the remote party is requesting a set of
-	// headers for filters that we actually currently maintain.
-	switch msg.FilterType {
-	case wire.GCSFilterRegular:
-		break
-
-	default:
-		peerLog.Debug("Filter request for unknown headers for "+
-			"filter: %v", msg.FilterType)
-		return
-	}
-
-	startHeight := int32(msg.StartHeight)
-	maxResults := wire.MaxCFHeadersPerMsg
-
-	// If StartHeight is positive, fetch the predecessor block hash so we
-	// can populate the PrevFilterHeader field.
-	if msg.StartHeight > 0 {
-		startHeight--
-		maxResults++
-	}
-
-	// Fetch the hashes from the block index.
-	hashList, err := sp.server.chain.HeightToHashRange(
-		startHeight, &msg.StopHash, maxResults,
-	)
-	if err != nil {
-		peerLog.Debugf("Invalid getcfheaders request: %v", err)
-	}
-
-	// This is possible if StartHeight is one greater that the height of
-	// StopHash, and we pull a valid range of hashes including the previous
-	// filter header.
-	if len(hashList) == 0 || (msg.StartHeight > 0 && len(hashList) == 1) {
-		peerLog.Debug("No results for getcfheaders request")
-		return
-	}
-
-	// Create []*chainhash.Hash from []chainhash.Hash to pass to
-	// FilterHeadersByBlockHashes.
-	hashPtrs := make([]*chainhash.Hash, len(hashList))
-	for i := range hashList {
-		hashPtrs[i] = &hashList[i]
-	}
-
-	// Fetch the raw filter hash bytes from the database for all blocks.
-	filterHashes, err := sp.server.cfIndex.FilterHashesByBlockHashes(
-		hashPtrs, msg.FilterType,
-	)
-	if err != nil {
-		peerLog.Errorf("Error retrieving cfilter hashes: %v", err)
-		return
-	}
-
-	// Generate cfheaders message and send it.
-	headersMsg := wire.NewMsgCFHeaders()
-
-	// Populate the PrevFilterHeader field.
-	if msg.StartHeight > 0 {
-		prevBlockHash := &hashList[0]
-
-		// Fetch the raw committed filter header bytes from the
-		// database.
-		headerBytes, err := sp.server.cfIndex.FilterHeaderByBlockHash(
-			prevBlockHash, msg.FilterType)
-		if err != nil {
-			peerLog.Errorf("Error retrieving CF header: %v", err)
-			return
-		}
-		if len(headerBytes) == 0 {
-			peerLog.Warnf("Could not obtain CF header for %v", prevBlockHash)
-			return
-		}
-
-		// Deserialize the hash into PrevFilterHeader.
-		err = headersMsg.PrevFilterHeader.SetBytes(headerBytes)
-		if err != nil {
-			peerLog.Warnf("Committed filter header deserialize "+
-				"failed: %v", err)
-			return
-		}
-
-		hashList = hashList[1:]
-		filterHashes = filterHashes[1:]
-	}
-
-	// Populate HeaderHashes.
-	for i, hashBytes := range filterHashes {
-		if len(hashBytes) == 0 {
-			peerLog.Warnf("Could not obtain CF hash for %v", hashList[i])
-			return
-		}
-
-		// Deserialize the hash.
-		filterHash, err := chainhash.NewHash(hashBytes)
-		if err != nil {
-			peerLog.Warnf("Committed filter hash deserialize "+
-				"failed: %v", err)
-			return
-		}
-
-		headersMsg.AddCFHash(filterHash)
-	}
-
-	headersMsg.FilterType = msg.FilterType
-	headersMsg.StopHash = msg.StopHash
-
-	sp.QueueMessage(headersMsg, nil)
-}
-
-// OnGetCFCheckpt is invoked when a peer receives a getcfcheckpt bitcoin message.
-func (sp *serverPeer) OnGetCFCheckpt(_ *peer.Peer, msg *wire.MsgGetCFCheckpt) {
-	// Ignore getcfcheckpt requests if not in sync.
-	if !sp.server.syncManager.IsCurrent() {
-		return
-	}
-
-	// We'll also ensure that the remote party is requesting a set of
-	// checkpoints for filters that we actually currently maintain.
-	switch msg.FilterType {
-	case wire.GCSFilterRegular:
-		break
-
-	default:
-		peerLog.Debug("Filter request for unknown checkpoints for "+
-			"filter: %v", msg.FilterType)
-		return
-	}
-
-	// Now that we know the client is fetching a filter that we know of,
-	// we'll fetch the block hashes et each check point interval so we can
-	// compare against our cache, and create new check points if necessary.
-	blockHashes, err := sp.server.chain.IntervalBlockHashes(
-		&msg.StopHash, wire.CFCheckptInterval,
-	)
-	if err != nil {
-		peerLog.Debugf("Invalid getcfilters request: %v", err)
-		return
-	}
-
-	checkptMsg := wire.NewMsgCFCheckpt(
-		msg.FilterType, &msg.StopHash, len(blockHashes),
-	)
-
-	// Fetch the current existing cache so we can decide if we need to
-	// extend it or if its adequate as is.
-	sp.server.cfCheckptCachesMtx.RLock()
-	checkptCache := sp.server.cfCheckptCaches[msg.FilterType]
-
-	// If the set of block hashes is beyond the current size of the cache,
-	// then we'll expand the size of the cache and also retain the write
-	// lock.
-	var updateCache bool
-	if len(blockHashes) > len(checkptCache) {
-		// Now that we know we'll need to modify the size of the cache,
-		// we'll release the read lock and grab the write lock to
-		// possibly expand the cache size.
-		sp.server.cfCheckptCachesMtx.RUnlock()
-
-		sp.server.cfCheckptCachesMtx.Lock()
-		defer sp.server.cfCheckptCachesMtx.Unlock()
-
-		// Now that we have the write lock, we'll check again as it's
-		// possible that the cache has already been expanded.
-		checkptCache = sp.server.cfCheckptCaches[msg.FilterType]
-
-		// If we still need to expand the cache, then We'll mark that
-		// we need to update the cache for below and also expand the
-		// size of the cache in place.
-		if len(blockHashes) > len(checkptCache) {
-			updateCache = true
-
-			additionalLength := len(blockHashes) - len(checkptCache)
-			newEntries := make([]cfHeaderKV, additionalLength)
-
-			peerLog.Infof("Growing size of checkpoint cache from %v to %v "+
-				"block hashes", len(checkptCache), len(blockHashes))
-
-			checkptCache = append(
-				sp.server.cfCheckptCaches[msg.FilterType],
-				newEntries...,
-			)
-		}
-	} else {
-		// Otherwise, we'll hold onto the read lock for the remainder
-		// of this method.
-		defer sp.server.cfCheckptCachesMtx.RUnlock()
-
-		peerLog.Tracef("Serving stale cache of size %v",
-			len(checkptCache))
-	}
-
-	// Now that we know the cache is of an appropriate size, we'll iterate
-	// backwards until the find the block hash. We do this as it's possible
-	// a re-org has occurred so items in the db are now in the main china
-	// while the cache has been partially invalidated.
-	var forkIdx int
-	for forkIdx = len(blockHashes); forkIdx > 0; forkIdx-- {
-		if checkptCache[forkIdx-1].blockHash == blockHashes[forkIdx-1] {
-			break
-		}
-	}
-
-	// Now that we know the how much of the cache is relevant for this
-	// query, we'll populate our check point message with the cache as is.
-	// Shortly below, we'll populate the new elements of the cache.
-	for i := 0; i < forkIdx; i++ {
-		checkptMsg.AddCFHeader(&checkptCache[i].filterHeader)
-	}
-
-	// We'll now collect the set of hashes that are beyond our cache so we
-	// can look up the filter headers to populate the final cache.
-	blockHashPtrs := make([]*chainhash.Hash, 0, len(blockHashes)-forkIdx)
-	for i := forkIdx; i < len(blockHashes); i++ {
-		blockHashPtrs = append(blockHashPtrs, &blockHashes[i])
-	}
-	filterHeaders, err := sp.server.cfIndex.FilterHeadersByBlockHashes(
-		blockHashPtrs, msg.FilterType,
-	)
-	if err != nil {
-		peerLog.Errorf("Error retrieving cfilter headers: %v", err)
-		return
-	}
-
-	// Now that we have the full set of filter headers, we'll add them to
-	// the checkpoint message, and also update our cache in line.
-	for i, filterHeaderBytes := range filterHeaders {
-		if len(filterHeaderBytes) == 0 {
-			peerLog.Warnf("Could not obtain CF header for %v",
-				blockHashPtrs[i])
-			return
-		}
-
-		filterHeader, err := chainhash.NewHash(filterHeaderBytes)
-		if err != nil {
-			peerLog.Warnf("Committed filter header deserialize "+
-				"failed: %v", err)
-			return
-		}
-
-		checkptMsg.AddCFHeader(filterHeader)
-
-		// If the new main chain is longer than what's in the cache,
-		// then we'll override it beyond the fork point.
-		if updateCache {
-			checkptCache[forkIdx+i] = cfHeaderKV{
-				blockHash:    blockHashes[forkIdx+i],
-				filterHeader: *filterHeader,
-			}
-		}
-	}
-
-	// Finally, we'll update the cache if we need to, and send the final
-	// message back to the requesting peer.
-	if updateCache {
-		sp.server.cfCheckptCaches[msg.FilterType] = checkptCache
-	}
-
-	sp.QueueMessage(checkptMsg, nil)
-}
-
 // enforceNodeBloomFlag disconnects the peer if the server is not configured to
 // allow bloom filters.  Additionally, if the peer has negotiated to a protocol
 // version  that is high enough to observe the bloom filter service support bit,
 // it will be banned since it is intentionally violating the protocol.
-func (sp *serverPeer) enforceNodeBloomFlag(cmd string) bool {
+func (sp *serverPeer) enforceNodeBloomFlag(msgType wire.HnsMsgType) bool {
 	if sp.server.services&wire.SFNodeBloom != wire.SFNodeBloom {
 		// Ban the peer if the protocol version is high enough that the
 		// peer is knowingly violating the protocol and banning is
@@ -1237,7 +982,7 @@ func (sp *serverPeer) enforceNodeBloomFlag(cmd string) bool {
 
 			// Disconnect the peer regardless of whether it was
 			// banned.
-			sp.addBanScore(100, 0, cmd)
+			sp.addBanScore(100, 0, msgType.String())
 			sp.Disconnect()
 			return false
 		}
@@ -1245,7 +990,7 @@ func (sp *serverPeer) enforceNodeBloomFlag(cmd string) bool {
 		// Disconnect the peer regardless of protocol version or banning
 		// state.
 		peerLog.Debugf("%s sent an unsupported %s request -- "+
-			"disconnecting", sp, cmd)
+			"disconnecting", sp, msgType)
 		sp.Disconnect()
 		return false
 	}
@@ -1257,26 +1002,26 @@ func (sp *serverPeer) enforceNodeBloomFlag(cmd string) bool {
 // is used by remote peers to request that no transactions which have a fee rate
 // lower than provided value are inventoried to them.  The peer will be
 // disconnected if an invalid fee filter value is provided.
-func (sp *serverPeer) OnFeeFilter(_ *peer.Peer, msg *wire.MsgFeeFilter) {
+func (sp *serverPeer) OnFeeFilter(_ *peer.Peer, msg *wire.HnsMsgFeeFilter) {
 	// Check that the passed minimum fee is a valid amount.
-	if msg.MinFee < 0 || msg.MinFee > hnsutil.MaxDoo {
+	if msg.Rate < 0 || msg.Rate > hnsutil.MaxDoo {
 		peerLog.Debugf("Peer %v sent an invalid feefilter '%v' -- "+
-			"disconnecting", sp, hnsutil.Amount(msg.MinFee))
+			"disconnecting", sp, hnsutil.Amount(msg.Rate))
 		sp.Disconnect()
 		return
 	}
 
-	atomic.StoreInt64(&sp.feeFilter, msg.MinFee)
+	atomic.StoreInt64(&sp.feeFilter, msg.Rate)
 }
 
 // OnFilterAdd is invoked when a peer receives a filteradd bitcoin
 // message and is used by remote peers to add data to an already loaded bloom
 // filter.  The peer will be disconnected if a filter is not loaded when this
 // message is received or the server is not configured to allow bloom filters.
-func (sp *serverPeer) OnFilterAdd(_ *peer.Peer, msg *wire.MsgFilterAdd) {
+func (sp *serverPeer) OnFilterAdd(_ *peer.Peer, msg *wire.HnsMsgFilterAdd) {
 	// Disconnect and/or ban depending on the node bloom services flag and
 	// negotiated protocol version.
-	if !sp.enforceNodeBloomFlag(msg.Command()) {
+	if !sp.enforceNodeBloomFlag(msg.Type()) {
 		return
 	}
 
@@ -1294,10 +1039,10 @@ func (sp *serverPeer) OnFilterAdd(_ *peer.Peer, msg *wire.MsgFilterAdd) {
 // message and is used by remote peers to clear an already loaded bloom filter.
 // The peer will be disconnected if a filter is not loaded when this message is
 // received  or the server is not configured to allow bloom filters.
-func (sp *serverPeer) OnFilterClear(_ *peer.Peer, msg *wire.MsgFilterClear) {
+func (sp *serverPeer) OnFilterClear(_ *peer.Peer, msg *wire.HnsMsgFilterClear) {
 	// Disconnect and/or ban depending on the node bloom services flag and
 	// negotiated protocol version.
-	if !sp.enforceNodeBloomFlag(msg.Command()) {
+	if !sp.enforceNodeBloomFlag(msg.Type()) {
 		return
 	}
 
@@ -1316,22 +1061,34 @@ func (sp *serverPeer) OnFilterClear(_ *peer.Peer, msg *wire.MsgFilterClear) {
 // delivering merkle blocks and associated transactions that match the filter.
 // The peer will be disconnected if the server is not configured to allow bloom
 // filters.
-func (sp *serverPeer) OnFilterLoad(_ *peer.Peer, msg *wire.MsgFilterLoad) {
+func (sp *serverPeer) OnFilterLoad(_ *peer.Peer, hnsMsg *wire.HnsMsgFilterLoad) {
 	// Disconnect and/or ban depending on the node bloom services flag and
 	// negotiated protocol version.
-	if !sp.enforceNodeBloomFlag(msg.Command()) {
+	if !sp.enforceNodeBloomFlag(hnsMsg.Type()) {
 		return
 	}
 
 	sp.setDisableRelayTx(false)
 
+	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert filterload from %s: %v", sp, err)
+		sp.Disconnect()
+		return
+	}
+	msg, ok := legacy.(*wire.MsgFilterLoad)
+	if !ok {
+		peerLog.Debugf("Unexpected filterload conversion type %T from %s", legacy, sp)
+		sp.Disconnect()
+		return
+	}
 	sp.filter.Reload(msg)
 }
 
-// OnGetAddr is invoked when a peer receives a getaddr bitcoin message
+// OnGetAddr is invoked when a peer receives a getaddr message
 // and is used to provide the peer with known addresses from the address
 // manager.
-func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.MsgGetAddr) {
+func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.HnsMsgGetAddr) {
 	// Don't return any addresses when running in regression test mode.
 	// This helps prevent the network from becoming another public test
 	// network since it will not be able to learn about other peers that
@@ -1364,9 +1121,9 @@ func (sp *serverPeer) OnGetAddr(_ *peer.Peer, msg *wire.MsgGetAddr) {
 	sp.pushAddrMsg(addrCache)
 }
 
-// OnAddr is invoked when a peer receives an addr bitcoin message and is
+// OnAddr is invoked when a peer receives an addr message and is
 // used to notify the server about advertised addresses.
-func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
+func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.HnsMsgAddr) {
 	// Ignore addresses when running in regression test mode.  This helps
 	// prevent the network from becoming another public test network since
 	// it will not be able to learn about other peers that have not
@@ -1381,15 +1138,15 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 	}
 
 	// A message that has no addresses is invalid.
-	if len(msg.AddrList) == 0 {
+	if len(msg.Peers) == 0 {
 		peerLog.Errorf("Command [%s] from %s does not contain any addresses",
-			msg.Command(), sp.Peer)
+			msg.Type(), sp.Peer)
 		sp.Disconnect()
 		return
 	}
 
-	addrs := make([]*wire.NetAddressV2, 0, len(msg.AddrList))
-	for _, na := range msg.AddrList {
+	addrs := make([]*wire.NetAddressV2, 0, len(msg.Peers))
+	for _, na := range msg.Peers {
 		// Don't add more address if we're disconnecting.
 		if !sp.Connected() {
 			return
@@ -1399,15 +1156,16 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 		// in the future so this address is one of the first to be
 		// removed when space is needed.
 		now := time.Now()
-		if na.Timestamp.After(now.Add(time.Minute * 10)) {
-			na.Timestamp = now.Add(-1 * time.Hour * 24 * 5)
+		timestamp := hnsTimeToTime(na.Time)
+		if timestamp.After(now.Add(time.Minute * 10)) {
+			timestamp = now.Add(-1 * time.Hour * 24 * 5)
 		}
 
 		// Add address to known addresses for this peer. This is
 		// converted to NetAddressV2 since that's what the address
 		// manager uses.
 		currentNa := wire.NetAddressV2FromBytes(
-			na.Timestamp, na.Services, na.IP, na.Port,
+			timestamp, wire.ServiceFlag(na.Services), na.Host, na.Port,
 		)
 		addrs = append(addrs, currentNa)
 		sp.addKnownAddresses([]*wire.NetAddressV2{currentNa})
@@ -1421,61 +1179,32 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 	sp.server.addrManager.AddAddresses(addrs, sp.NA())
 }
 
-// OnAddrV2 is invoked when a peer receives an addrv2 bitcoin message and is
-// used to notify the server about advertised addresses.
-func (sp *serverPeer) OnAddrV2(_ *peer.Peer, msg *wire.MsgAddrV2) {
-	// Ignore in regression test mode for the same reasons as the regular
-	// addr message.
-	if cfg.RegressionTest {
-		return
-	}
+// OnRead is invoked when a peer receives a message and it is used to update the
+// bytes received by the server.
+func (sp *serverPeer) OnRead(_ *peer.Peer, bytesRead int,
+	msg wire.HandshakeMessage, err error) {
 
-	// An empty AddrV2 message is invalid.
-	if len(msg.AddrList) == 0 {
-		peerLog.Errorf("Command [%s] from %s does not contain any "+
-			"addresses", msg.Command(), sp.Peer)
-		sp.Disconnect()
-		return
-	}
-
-	for _, na := range msg.AddrList {
-		// Don't add more to the set of known addresses if we're
-		// disconnecting.
-		if !sp.Connected() {
-			return
-		}
-
-		// Set the timestamp to 5 days ago if the timestamp received is
-		// more than 10 minutes in the future so this address is one of
-		// the first to be removed.
-		now := time.Now()
-		if na.Timestamp.After(now.Add(time.Minute * 10)) {
-			na.Timestamp = now.Add(-1 * time.Hour * 24 * 5)
-		}
-
-		// Add to the set of known addresses.
-		sp.addKnownAddresses([]*wire.NetAddressV2{na})
-	}
-
-	// Add the addresses to the addrmanager.
-	sp.server.addrManager.AddAddresses(msg.AddrList, sp.NA())
-}
-
-// OnRead is invoked when a peer receives a message and it is used to update
-// the bytes received by the server.
-func (sp *serverPeer) OnRead(_ *peer.Peer, bytesRead int, msg wire.Message, err error) {
 	sp.server.AddBytesReceived(uint64(bytesRead))
 }
 
 // OnWrite is invoked when a peer sends a message and it is used to update
 // the bytes sent by the server.
-func (sp *serverPeer) OnWrite(_ *peer.Peer, bytesWritten int, msg wire.Message, err error) {
+func (sp *serverPeer) OnWrite(_ *peer.Peer, bytesWritten int,
+	msg wire.HandshakeMessage, err error) {
+
 	sp.server.AddBytesSent(uint64(bytesWritten))
 }
 
 // OnNotFound is invoked when a peer sends a notfound message.
-func (sp *serverPeer) OnNotFound(p *peer.Peer, msg *wire.MsgNotFound) {
+func (sp *serverPeer) OnNotFound(p *peer.Peer, hnsMsg *wire.HnsMsgNotFound) {
 	if !sp.Connected() {
+		return
+	}
+
+	msg, err := legacyNotFoundFromHns(hnsMsg, sp.ProtocolVersion())
+	if err != nil {
+		peerLog.Debugf("Unable to convert notfound from %s: %v", sp, err)
+		sp.Disconnect()
 		return
 	}
 
@@ -2183,29 +1912,25 @@ func disconnectPeer(peerList map[int32]*serverPeer, compareFunc func(*serverPeer
 func newPeerConfig(sp *serverPeer) *peer.Config {
 	return &peer.Config{
 		Listeners: peer.MessageListeners{
-			OnVersion:      sp.OnVersion,
-			OnVerAck:       sp.OnVerAck,
-			OnMemPool:      sp.OnMemPool,
-			OnTx:           sp.OnTx,
-			OnBlock:        sp.OnBlock,
-			OnInv:          sp.OnInv,
-			OnHeaders:      sp.OnHeaders,
-			OnGetData:      sp.OnGetData,
-			OnGetBlocks:    sp.OnGetBlocks,
-			OnGetHeaders:   sp.OnGetHeaders,
-			OnGetCFilters:  sp.OnGetCFilters,
-			OnGetCFHeaders: sp.OnGetCFHeaders,
-			OnGetCFCheckpt: sp.OnGetCFCheckpt,
-			OnFeeFilter:    sp.OnFeeFilter,
-			OnFilterAdd:    sp.OnFilterAdd,
-			OnFilterClear:  sp.OnFilterClear,
-			OnFilterLoad:   sp.OnFilterLoad,
-			OnGetAddr:      sp.OnGetAddr,
-			OnAddr:         sp.OnAddr,
-			OnAddrV2:       sp.OnAddrV2,
-			OnRead:         sp.OnRead,
-			OnWrite:        sp.OnWrite,
-			OnNotFound:     sp.OnNotFound,
+			OnVersion:     sp.OnVersion,
+			OnVerAck:      sp.OnVerAck,
+			OnMemPool:     sp.OnMemPool,
+			OnTx:          sp.OnTx,
+			OnBlock:       sp.OnBlock,
+			OnInv:         sp.OnInv,
+			OnHeaders:     sp.OnHeaders,
+			OnGetData:     sp.OnGetData,
+			OnGetBlocks:   sp.OnGetBlocks,
+			OnGetHeaders:  sp.OnGetHeaders,
+			OnFeeFilter:   sp.OnFeeFilter,
+			OnFilterAdd:   sp.OnFilterAdd,
+			OnFilterClear: sp.OnFilterClear,
+			OnFilterLoad:  sp.OnFilterLoad,
+			OnGetAddr:     sp.OnGetAddr,
+			OnAddr:        sp.OnAddr,
+			OnRead:        sp.OnRead,
+			OnWrite:       sp.OnWrite,
+			OnNotFound:    sp.OnNotFound,
 		},
 		NewestBlock:         sp.newestBlock,
 		HostToNetAddress:    sp.server.addrManager.HostToNetAddress,

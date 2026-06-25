@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mempool"
 	peerpkg "github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -619,7 +619,7 @@ func (sm *SyncManager) handleTxMsg(tmsg *txMsg) {
 		// Convert the error into an appropriate reject message and
 		// send it.
 		code, reason := mempool.ErrToRejectErr(err)
-		peer.PushRejectMsg(wire.CmdTx, code, reason, txHash, false)
+		peer.PushRejectMsg(wire.HnsMsgTypeTx, code, reason, txHash, false)
 		return
 	}
 
@@ -747,7 +747,7 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		// Convert the error into an appropriate reject message and
 		// send it.
 		code, reason := mempool.ErrToRejectErr(err)
-		peer.PushRejectMsg(wire.CmdBlock, code, reason, blockHash, false)
+		peer.PushRejectMsg(wire.HnsMsgTypeBlock, code, reason, blockHash, false)
 		return
 	}
 

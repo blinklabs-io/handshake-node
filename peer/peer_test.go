@@ -221,12 +221,12 @@ func TestPeerConnection(t *testing.T) {
 	verack := make(chan struct{})
 	peer1Cfg := &peer.Config{
 		Listeners: peer.MessageListeners{
-			OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
 				verack <- struct{}{}
 			},
-			OnWrite: func(p *peer.Peer, bytesWritten int, msg wire.Message,
-				err error) {
-				if _, ok := msg.(*wire.MsgVerAck); ok {
+			OnWrite: func(p *peer.Peer, bytesWritten int,
+				msg wire.HandshakeMessage, err error) {
+				if _, ok := msg.(*wire.HnsMsgVerack); ok {
 					verack <- struct{}{}
 				}
 			},
@@ -355,95 +355,74 @@ func TestPeerConnection(t *testing.T) {
 // TestPeerListeners tests that the peer listeners are called as expected.
 func TestPeerListeners(t *testing.T) {
 	verack := make(chan struct{}, 1)
-	ok := make(chan wire.Message, 22)
+	ok := make(chan wire.HandshakeMessage, 22)
 	peerCfg := &peer.Config{
 		Listeners: peer.MessageListeners{
-			OnGetAddr: func(p *peer.Peer, msg *wire.MsgGetAddr) {
+			OnGetAddr: func(p *peer.Peer, msg *wire.HnsMsgGetAddr) {
 				ok <- msg
 			},
-			OnAddr: func(p *peer.Peer, msg *wire.MsgAddr) {
+			OnAddr: func(p *peer.Peer, msg *wire.HnsMsgAddr) {
 				ok <- msg
 			},
-			OnPing: func(p *peer.Peer, msg *wire.MsgPing) {
+			OnPing: func(p *peer.Peer, msg *wire.HnsMsgPing) {
 				ok <- msg
 			},
-			OnPong: func(p *peer.Peer, msg *wire.MsgPong) {
+			OnPong: func(p *peer.Peer, msg *wire.HnsMsgPong) {
 				ok <- msg
 			},
-			OnMemPool: func(p *peer.Peer, msg *wire.MsgMemPool) {
+			OnMemPool: func(p *peer.Peer, msg *wire.HnsMsgMemPool) {
 				ok <- msg
 			},
-			OnTx: func(p *peer.Peer, msg *wire.MsgTx) {
+			OnTx: func(p *peer.Peer, msg *wire.HnsMsgTx) {
 				ok <- msg
 			},
-			OnBlock: func(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
+			OnBlock: func(p *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
 				ok <- msg
 			},
-			OnInv: func(p *peer.Peer, msg *wire.MsgInv) {
+			OnInv: func(p *peer.Peer, msg *wire.HnsMsgInv) {
 				ok <- msg
 			},
-			OnHeaders: func(p *peer.Peer, msg *wire.MsgHeaders) {
+			OnHeaders: func(p *peer.Peer, msg *wire.HnsMsgHeaders) {
 				ok <- msg
 			},
-			OnNotFound: func(p *peer.Peer, msg *wire.MsgNotFound) {
+			OnNotFound: func(p *peer.Peer, msg *wire.HnsMsgNotFound) {
 				ok <- msg
 			},
-			OnGetData: func(p *peer.Peer, msg *wire.MsgGetData) {
+			OnGetData: func(p *peer.Peer, msg *wire.HnsMsgGetData) {
 				ok <- msg
 			},
-			OnGetBlocks: func(p *peer.Peer, msg *wire.MsgGetBlocks) {
+			OnGetBlocks: func(p *peer.Peer, msg *wire.HnsMsgGetBlocks) {
 				ok <- msg
 			},
-			OnGetHeaders: func(p *peer.Peer, msg *wire.MsgGetHeaders) {
+			OnGetHeaders: func(p *peer.Peer, msg *wire.HnsMsgGetHeaders) {
 				ok <- msg
 			},
-			OnGetCFilters: func(p *peer.Peer, msg *wire.MsgGetCFilters) {
+			OnFeeFilter: func(p *peer.Peer, msg *wire.HnsMsgFeeFilter) {
 				ok <- msg
 			},
-			OnGetCFHeaders: func(p *peer.Peer, msg *wire.MsgGetCFHeaders) {
+			OnFilterAdd: func(p *peer.Peer, msg *wire.HnsMsgFilterAdd) {
 				ok <- msg
 			},
-			OnGetCFCheckpt: func(p *peer.Peer, msg *wire.MsgGetCFCheckpt) {
+			OnFilterClear: func(p *peer.Peer, msg *wire.HnsMsgFilterClear) {
 				ok <- msg
 			},
-			OnCFilter: func(p *peer.Peer, msg *wire.MsgCFilter) {
+			OnFilterLoad: func(p *peer.Peer, msg *wire.HnsMsgFilterLoad) {
 				ok <- msg
 			},
-			OnCFHeaders: func(p *peer.Peer, msg *wire.MsgCFHeaders) {
+			OnMerkleBlock: func(p *peer.Peer, msg *wire.HnsMsgMerkleBlock) {
 				ok <- msg
 			},
-			OnFeeFilter: func(p *peer.Peer, msg *wire.MsgFeeFilter) {
-				ok <- msg
-			},
-			OnFilterAdd: func(p *peer.Peer, msg *wire.MsgFilterAdd) {
-				ok <- msg
-			},
-			OnFilterClear: func(p *peer.Peer, msg *wire.MsgFilterClear) {
-				ok <- msg
-			},
-			OnFilterLoad: func(p *peer.Peer, msg *wire.MsgFilterLoad) {
-				ok <- msg
-			},
-			OnMerkleBlock: func(p *peer.Peer, msg *wire.MsgMerkleBlock) {
-				ok <- msg
-			},
-			OnVersion: func(p *peer.Peer, msg *wire.MsgVersion) *wire.MsgReject {
+			OnVersion: func(p *peer.Peer, msg *wire.HnsMsgVersion) *wire.HnsMsgReject {
 				ok <- msg
 				return nil
 			},
-			OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
 				verack <- struct{}{}
 			},
-			OnReject: func(p *peer.Peer, msg *wire.MsgReject) {
+			OnReject: func(p *peer.Peer, msg *wire.HnsMsgReject) {
 				ok <- msg
 			},
-			OnSendHeaders: func(p *peer.Peer, msg *wire.MsgSendHeaders) {
-				ok <- msg
-			},
-			OnSendAddrV2: func(p *peer.Peer, msg *wire.MsgSendAddrV2) {
-				ok <- msg
-			},
-			OnAddrV2: func(p *peer.Peer, msg *wire.MsgAddrV2) {
+			OnSendHeaders: func(p *peer.Peer, msg *wire.HnsMsgSendHeaders) {
 				ok <- msg
 			},
 		},
@@ -458,7 +437,7 @@ func TestPeerListeners(t *testing.T) {
 	inPeer := peer.NewInboundPeer(peerCfg)
 
 	peerCfg.Listeners = peer.MessageListeners{
-		OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
+		OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
 			verack <- struct{}{}
 		},
 	}
@@ -718,8 +697,8 @@ func TestOutboundPeer(t *testing.T) {
 		return
 	}
 
-	p2.PushRejectMsg("block", wire.RejectMalformed, "malformed", nil, false)
-	p2.PushRejectMsg("block", wire.RejectInvalid, "invalid", nil, false)
+	p2.PushRejectMsg(wire.HnsMsgTypeBlock, wire.RejectMalformed, "malformed", nil, false)
+	p2.PushRejectMsg(wire.HnsMsgTypeBlock, wire.RejectInvalid, "invalid", nil, false)
 
 	// Test Queue Messages
 	p2.QueueMessage(wire.NewMsgGetAddr(), nil)
@@ -845,7 +824,7 @@ func TestDuplicateVersionMsg(t *testing.T) {
 	verack := make(chan struct{})
 	peerCfg := &peer.Config{
 		Listeners: peer.MessageListeners{
-			OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
 				verack <- struct{}{}
 			},
 		},
@@ -907,7 +886,7 @@ func TestUpdateLastBlockHeight(t *testing.T) {
 	verack := make(chan struct{})
 	peerCfg := peer.Config{
 		Listeners: peer.MessageListeners{
-			OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
 				verack <- struct{}{}
 			},
 		},
@@ -1031,7 +1010,7 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 	verack := make(chan struct{}, 2)
 	peer1Cfg := &peer.Config{
 		Listeners: peer.MessageListeners{
-			OnVerAck: func(p *peer.Peer, msg *wire.MsgVerAck) {
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
 				verack <- struct{}{}
 			},
 		},
@@ -1056,13 +1035,11 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 	verackErr := errors.New("verack timeout")
 
 	tests := []struct {
-		name      string
-		expectsV2 bool
-		setup     func() (*peer.Peer, *peer.Peer, error)
+		name  string
+		setup func() (*peer.Peer, *peer.Peer, error)
 	}{
 		{
 			"handshake without sendaddrv2",
-			false,
 			func() (*peer.Peer, *peer.Peer, error) {
 				inPeer := peer.NewInboundPeer(newPeer1Cfg())
 				outPeer, err := peer.NewOutboundPeer(
@@ -1090,7 +1067,6 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 		},
 		{
 			"handshake with legacy inbound peer",
-			false,
 			func() (*peer.Peer, *peer.Peer, error) {
 				legacyVersion := wire.AddrV2Version - 1
 				inCfg := newPeer1Cfg()
@@ -1121,7 +1097,6 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 		},
 		{
 			"handshake with legacy outbound peer",
-			false,
 			func() (*peer.Peer, *peer.Peer, error) {
 				inPeer := peer.NewInboundPeer(newPeer1Cfg())
 				legacyVersion := wire.AddrV2Version - 1
@@ -1158,16 +1133,6 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 		if err != nil {
 			t.Fatalf("TestNoSendAddrV2Handshake setup #%d: "+
 				"unexpected err: %v", i, err)
-		}
-
-		if inPeer.WantsAddrV2() != test.expectsV2 {
-			t.Fatalf("TestNoSendAddrV2Handshake #%d expected "+
-				"wantsAddrV2 to be %v instead was %v", i,
-				test.expectsV2, inPeer.WantsAddrV2())
-		} else if outPeer.WantsAddrV2() != test.expectsV2 {
-			t.Fatalf("TestNoSendAddrV2Handshake #%d expected "+
-				"wantsAddrV2 to be %v instead was %v", i,
-				test.expectsV2, outPeer.WantsAddrV2())
 		}
 
 		inPeer.Disconnect()

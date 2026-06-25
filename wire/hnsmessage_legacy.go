@@ -50,11 +50,20 @@ func WriteHnsMessage(w io.Writer, msg Message, pver uint32,
 func WriteHnsMessageWithEncodingN(w io.Writer, msg Message, pver uint32,
 	hnsnet BitcoinNet, encoding MessageEncoding) (int, error) {
 
-	hnsMsg, err := hnsMessageFromLegacy(msg, pver, encoding)
+	hnsMsg, err := HnsMessageFromLegacy(msg, pver, encoding)
 	if err != nil {
 		return 0, err
 	}
-	encoded, err := EncodeHnsMessage(hnsMsg, uint32(hnsnet))
+	return WriteHandshakeMessageN(w, hnsMsg, hnsnet)
+}
+
+// WriteHandshakeMessageN writes msg using the native Handshake 9-byte
+// type-byte envelope. It returns the number of bytes written, including the
+// envelope.
+func WriteHandshakeMessageN(w io.Writer, msg HandshakeMessage,
+	hnsnet BitcoinNet) (int, error) {
+
+	encoded, err := EncodeHnsMessage(msg, uint32(hnsnet))
 	if err != nil {
 		return 0, err
 	}
@@ -83,6 +92,25 @@ func ReadHnsMessage(r io.Reader, pver uint32,
 // Message, and the raw Handshake payload bytes.
 func ReadHnsMessageWithEncodingN(r io.Reader, pver uint32,
 	hnsnet BitcoinNet, enc MessageEncoding) (int, Message, []byte, error) {
+
+	n, hnsMsg, payload, err := ReadHandshakeMessageN(r, hnsnet)
+	if err != nil {
+		return n, nil, nil, err
+	}
+
+	msg, err := LegacyMessageFromHns(hnsMsg, pver, enc)
+	if err != nil {
+		return n, nil, nil, err
+	}
+
+	return n, msg, payload, nil
+}
+
+// ReadHandshakeMessageN reads, validates, and parses the next native
+// Handshake message from r. It returns the number of bytes read, the decoded
+// Handshake message, and the raw Handshake payload bytes.
+func ReadHandshakeMessageN(r io.Reader,
+	hnsnet BitcoinNet) (int, HandshakeMessage, []byte, error) {
 
 	totalBytes := 0
 	var headerBytes [HnsMessageHeaderSize]byte
@@ -145,15 +173,12 @@ func ReadHnsMessageWithEncodingN(r io.Reader, pver uint32,
 		)
 	}
 
-	msg, err := legacyMessageFromHns(hnsMsg, pver, enc)
-	if err != nil {
-		return totalBytes, nil, nil, err
-	}
-
-	return totalBytes, msg, payload, nil
+	return totalBytes, hnsMsg, payload, nil
 }
 
-func hnsMessageFromLegacy(msg Message, pver uint32,
+// HnsMessageFromLegacy converts the btcd-shaped Message structs still used by
+// callers during the Phase 2 migration into native Handshake packet structs.
+func HnsMessageFromLegacy(msg Message, pver uint32,
 	enc MessageEncoding) (HandshakeMessage, error) {
 
 	switch m := msg.(type) {
@@ -281,7 +306,10 @@ func hnsMessageFromLegacy(msg Message, pver uint32,
 	return nil, ErrUnknownMessage
 }
 
-func legacyMessageFromHns(hnsMsg HandshakeMessage, pver uint32,
+// LegacyMessageFromHns converts a native Handshake packet into the
+// btcd-shaped Message structs used by legacy call sites during the Phase 2
+// migration.
+func LegacyMessageFromHns(hnsMsg HandshakeMessage, pver uint32,
 	enc MessageEncoding) (Message, error) {
 
 	switch m := hnsMsg.(type) {

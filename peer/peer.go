@@ -7,6 +7,7 @@ package peer
 
 import (
 	"container/list"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -86,9 +87,9 @@ var (
 	sentNonces = lru.NewCache(50)
 )
 
-// MessageListeners defines callback function pointers to invoke with message
-// listeners for a peer. Any listener which is not set to a concrete callback
-// during peer initialization is ignored. Execution of multiple message
+// MessageListeners defines callback function pointers to invoke with native
+// Handshake message listeners for a peer. Any listener which is not set to a
+// concrete callback during peer initialization is ignored. Execution of multiple message
 // listeners occurs serially, so one callback blocks the execution of the next.
 //
 // NOTE: Unless otherwise documented, these listeners must NOT directly call any
@@ -96,124 +97,106 @@ var (
 // handler goroutine blocks until the callback has completed.  Doing so will
 // result in a deadlock.
 type MessageListeners struct {
-	// OnGetAddr is invoked when a peer receives a getaddr bitcoin message.
-	OnGetAddr func(p *Peer, msg *wire.MsgGetAddr)
+	// OnGetAddr is invoked when a peer receives a getaddr message.
+	OnGetAddr func(p *Peer, msg *wire.HnsMsgGetAddr)
 
-	// OnAddr is invoked when a peer receives an addr bitcoin message.
-	OnAddr func(p *Peer, msg *wire.MsgAddr)
+	// OnAddr is invoked when a peer receives an addr message.
+	OnAddr func(p *Peer, msg *wire.HnsMsgAddr)
 
-	// OnAddrV2 is invoked when a peer receives an addrv2 bitcoin message.
-	OnAddrV2 func(p *Peer, msg *wire.MsgAddrV2)
+	// OnPing is invoked when a peer receives a ping message.
+	OnPing func(p *Peer, msg *wire.HnsMsgPing)
 
-	// OnPing is invoked when a peer receives a ping bitcoin message.
-	OnPing func(p *Peer, msg *wire.MsgPing)
+	// OnPong is invoked when a peer receives a pong message.
+	OnPong func(p *Peer, msg *wire.HnsMsgPong)
 
-	// OnPong is invoked when a peer receives a pong bitcoin message.
-	OnPong func(p *Peer, msg *wire.MsgPong)
+	// OnMemPool is invoked when a peer receives a mempool message.
+	OnMemPool func(p *Peer, msg *wire.HnsMsgMemPool)
 
-	// OnMemPool is invoked when a peer receives a mempool bitcoin message.
-	OnMemPool func(p *Peer, msg *wire.MsgMemPool)
+	// OnTx is invoked when a peer receives a tx message.
+	OnTx func(p *Peer, msg *wire.HnsMsgTx)
 
-	// OnTx is invoked when a peer receives a tx bitcoin message.
-	OnTx func(p *Peer, msg *wire.MsgTx)
+	// OnBlock is invoked when a peer receives a block message.
+	OnBlock func(p *Peer, msg *wire.HnsMsgBlock, buf []byte)
 
-	// OnBlock is invoked when a peer receives a block bitcoin message.
-	OnBlock func(p *Peer, msg *wire.MsgBlock, buf []byte)
+	// OnInv is invoked when a peer receives an inv message.
+	OnInv func(p *Peer, msg *wire.HnsMsgInv)
 
-	// OnCFilter is invoked when a peer receives a cfilter bitcoin message.
-	OnCFilter func(p *Peer, msg *wire.MsgCFilter)
+	// OnHeaders is invoked when a peer receives a headers message.
+	OnHeaders func(p *Peer, msg *wire.HnsMsgHeaders)
 
-	// OnCFHeaders is invoked when a peer receives a cfheaders bitcoin
-	// message.
-	OnCFHeaders func(p *Peer, msg *wire.MsgCFHeaders)
+	// OnNotFound is invoked when a peer receives a notfound message.
+	OnNotFound func(p *Peer, msg *wire.HnsMsgNotFound)
 
-	// OnCFCheckpt is invoked when a peer receives a cfcheckpt bitcoin
-	// message.
-	OnCFCheckpt func(p *Peer, msg *wire.MsgCFCheckpt)
+	// OnGetData is invoked when a peer receives a getdata message.
+	OnGetData func(p *Peer, msg *wire.HnsMsgGetData)
 
-	// OnInv is invoked when a peer receives an inv bitcoin message.
-	OnInv func(p *Peer, msg *wire.MsgInv)
+	// OnGetBlocks is invoked when a peer receives a getblocks message.
+	OnGetBlocks func(p *Peer, msg *wire.HnsMsgGetBlocks)
 
-	// OnHeaders is invoked when a peer receives a headers bitcoin message.
-	OnHeaders func(p *Peer, msg *wire.MsgHeaders)
+	// OnGetHeaders is invoked when a peer receives a getheaders message.
+	OnGetHeaders func(p *Peer, msg *wire.HnsMsgGetHeaders)
 
-	// OnNotFound is invoked when a peer receives a notfound bitcoin
-	// message.
-	OnNotFound func(p *Peer, msg *wire.MsgNotFound)
+	// OnFeeFilter is invoked when a peer receives a feefilter message.
+	OnFeeFilter func(p *Peer, msg *wire.HnsMsgFeeFilter)
 
-	// OnGetData is invoked when a peer receives a getdata bitcoin message.
-	OnGetData func(p *Peer, msg *wire.MsgGetData)
+	// OnFilterAdd is invoked when a peer receives a filteradd message.
+	OnFilterAdd func(p *Peer, msg *wire.HnsMsgFilterAdd)
 
-	// OnGetBlocks is invoked when a peer receives a getblocks bitcoin
-	// message.
-	OnGetBlocks func(p *Peer, msg *wire.MsgGetBlocks)
+	// OnFilterClear is invoked when a peer receives a filterclear message.
+	OnFilterClear func(p *Peer, msg *wire.HnsMsgFilterClear)
 
-	// OnGetHeaders is invoked when a peer receives a getheaders bitcoin
-	// message.
-	OnGetHeaders func(p *Peer, msg *wire.MsgGetHeaders)
+	// OnFilterLoad is invoked when a peer receives a filterload message.
+	OnFilterLoad func(p *Peer, msg *wire.HnsMsgFilterLoad)
 
-	// OnGetCFilters is invoked when a peer receives a getcfilters bitcoin
-	// message.
-	OnGetCFilters func(p *Peer, msg *wire.MsgGetCFilters)
+	// OnMerkleBlock is invoked when a peer receives a merkleblock message.
+	OnMerkleBlock func(p *Peer, msg *wire.HnsMsgMerkleBlock)
 
-	// OnGetCFHeaders is invoked when a peer receives a getcfheaders
-	// bitcoin message.
-	OnGetCFHeaders func(p *Peer, msg *wire.MsgGetCFHeaders)
+	// OnVersion is invoked when a peer receives a version message. The caller
+	// may return a reject message in which case the message will be sent to the
+	// peer and the peer will be disconnected.
+	OnVersion func(p *Peer, msg *wire.HnsMsgVersion) *wire.HnsMsgReject
 
-	// OnGetCFCheckpt is invoked when a peer receives a getcfcheckpt
-	// bitcoin message.
-	OnGetCFCheckpt func(p *Peer, msg *wire.MsgGetCFCheckpt)
+	// OnVerAck is invoked when a peer receives a verack message.
+	OnVerAck func(p *Peer, msg *wire.HnsMsgVerack)
 
-	// OnFeeFilter is invoked when a peer receives a feefilter bitcoin message.
-	OnFeeFilter func(p *Peer, msg *wire.MsgFeeFilter)
+	// OnReject is invoked when a peer receives a reject message.
+	OnReject func(p *Peer, msg *wire.HnsMsgReject)
 
-	// OnFilterAdd is invoked when a peer receives a filteradd bitcoin message.
-	OnFilterAdd func(p *Peer, msg *wire.MsgFilterAdd)
+	// OnSendHeaders is invoked when a peer receives a sendheaders message.
+	OnSendHeaders func(p *Peer, msg *wire.HnsMsgSendHeaders)
 
-	// OnFilterClear is invoked when a peer receives a filterclear bitcoin
-	// message.
-	OnFilterClear func(p *Peer, msg *wire.MsgFilterClear)
+	// OnSendCmpct is invoked when a peer receives a sendcmpct message.
+	OnSendCmpct func(p *Peer, msg *wire.HnsMsgSendCmpct)
 
-	// OnFilterLoad is invoked when a peer receives a filterload bitcoin
-	// message.
-	OnFilterLoad func(p *Peer, msg *wire.MsgFilterLoad)
+	// OnCmpctBlock is invoked when a peer receives a cmpctblock message.
+	OnCmpctBlock func(p *Peer, msg *wire.HnsMsgCmpctBlock)
 
-	// OnMerkleBlock  is invoked when a peer receives a merkleblock bitcoin
-	// message.
-	OnMerkleBlock func(p *Peer, msg *wire.MsgMerkleBlock)
+	// OnGetBlockTxn is invoked when a peer receives a getblocktxn message.
+	OnGetBlockTxn func(p *Peer, msg *wire.HnsMsgGetBlockTxn)
 
-	// OnVersion is invoked when a peer receives a version bitcoin message.
-	// The caller may return a reject message in which case the message will
-	// be sent to the peer and the peer will be disconnected.
-	OnVersion func(p *Peer, msg *wire.MsgVersion) *wire.MsgReject
+	// OnBlockTxn is invoked when a peer receives a blocktxn message.
+	OnBlockTxn func(p *Peer, msg *wire.HnsMsgBlockTxn)
 
-	// OnVerAck is invoked when a peer receives a verack bitcoin message.
-	OnVerAck func(p *Peer, msg *wire.MsgVerAck)
+	// OnGetProof is invoked when a peer receives a getproof message.
+	OnGetProof func(p *Peer, msg *wire.HnsMsgGetProof)
 
-	// OnReject is invoked when a peer receives a reject bitcoin message.
-	OnReject func(p *Peer, msg *wire.MsgReject)
+	// OnProof is invoked when a peer receives a proof message.
+	OnProof func(p *Peer, msg *wire.HnsMsgProof)
 
-	// OnSendHeaders is invoked when a peer receives a sendheaders bitcoin
-	// message.
-	OnSendHeaders func(p *Peer, msg *wire.MsgSendHeaders)
+	// OnClaim is invoked when a peer receives a claim message.
+	OnClaim func(p *Peer, msg *wire.HnsMsgClaim)
 
-	// OnSendAddrV2 is invoked when a peer receives a sendaddrv2 message.
-	OnSendAddrV2 func(p *Peer, msg *wire.MsgSendAddrV2)
+	// OnAirDrop is invoked when a peer receives an airdrop message.
+	OnAirDrop func(p *Peer, msg *wire.HnsMsgAirDrop)
 
-	// OnRead is invoked when a peer receives a bitcoin message.  It
-	// consists of the number of bytes read, the message, and whether or not
-	// an error in the read occurred.  Typically, callers will opt to use
-	// the callbacks for the specific message types, however this can be
-	// useful for circumstances such as keeping track of server-wide byte
-	// counts or working with custom message types for which the peer does
-	// not directly provide a callback.
-	OnRead func(p *Peer, bytesRead int, msg wire.Message, err error)
+	// OnUnknown is invoked when a peer receives a type-30 unknown message.
+	OnUnknown func(p *Peer, msg *wire.HnsMsgUnknown)
 
-	// OnWrite is invoked when we write a bitcoin message to a peer.  It
-	// consists of the number of bytes written, the message, and whether or
-	// not an error in the write occurred.  This can be useful for
-	// circumstances such as keeping track of server-wide byte counts.
-	OnWrite func(p *Peer, bytesWritten int, msg wire.Message, err error)
+	// OnRead is invoked when a peer receives a Handshake message.
+	OnRead func(p *Peer, bytesRead int, msg wire.HandshakeMessage, err error)
+
+	// OnWrite is invoked when we write a Handshake message to a peer.
+	OnWrite func(p *Peer, bytesWritten int, msg wire.HandshakeMessage, err error)
 }
 
 // Config is the struct to hold configuration options useful to Peer.
@@ -344,9 +327,10 @@ func newNetAddress(addr net.Addr, services wire.ServiceFlag) (*wire.NetAddress, 
 // when the message has been sent (or won't be sent due to things such as
 // shutdown)
 type outMsg struct {
-	msg      wire.Message
-	doneChan chan<- struct{}
-	encoding wire.MessageEncoding
+	hnsMsg    wire.HandshakeMessage
+	legacyMsg wire.Message
+	doneChan  chan<- struct{}
+	encoding  wire.MessageEncoding
 }
 
 // stallControlCmd represents the command of a stall control message.
@@ -372,7 +356,7 @@ const (
 // so it can properly detect and handle stalled remote peers.
 type stallControlMsg struct {
 	command stallControlCmd
-	message wire.Message
+	message wire.HandshakeMessage
 }
 
 // StatsSnap is a snapshot of peer stats at a point in time.
@@ -463,7 +447,6 @@ type Peer struct {
 	sendHeadersPreferred bool   // peer sent a sendheaders message
 	verAckReceived       bool
 	witnessEnabled       bool
-	sendAddrV2           bool
 
 	wireEncoding wire.MessageEncoding
 
@@ -830,16 +813,6 @@ func (p *Peer) IsWitnessEnabled() bool {
 	return witnessEnabled
 }
 
-// WantsAddrV2 returns if the peer supports addrv2 messages instead of the
-// legacy addr messages.
-func (p *Peer) WantsAddrV2() bool {
-	p.flagsMtx.Lock()
-	wantsAddrV2 := p.sendAddrV2
-	p.flagsMtx.Unlock()
-
-	return wantsAddrV2
-}
-
 // PushAddrMsg sends an addr message to the connected peer using the provided
 // addresses.  This function is useful over manually sending the message via
 // QueueMessage since it automatically limits the addresses to the maximum
@@ -874,38 +847,6 @@ func (p *Peer) PushAddrMsg(addresses []*wire.NetAddress) ([]*wire.NetAddress, er
 
 	p.QueueMessage(msg, nil)
 	return msg.AddrList, nil
-}
-
-// PushAddrV2Msg is used to push an addrv2 message to the remote peer.
-//
-// This function is safe for concurrent access.
-func (p *Peer) PushAddrV2Msg(addrs []*wire.NetAddressV2) (
-	[]*wire.NetAddressV2, error) {
-
-	count := len(addrs)
-
-	// Nothing to send.
-	if count == 0 {
-		return nil, nil
-	}
-
-	m := wire.NewMsgAddrV2()
-	m.AddrList = make([]*wire.NetAddressV2, count)
-	copy(m.AddrList, addrs)
-
-	// Randomize the addresses sent if there are more than the maximum.
-	if count > wire.MaxV2AddrPerMsg {
-		rand.Shuffle(count, func(i, j int) {
-			m.AddrList[i] = m.AddrList[j]
-			m.AddrList[j] = m.AddrList[i]
-		})
-
-		// Truncate it to the maximum size.
-		m.AddrList = m.AddrList[:wire.MaxV2AddrPerMsg]
-	}
-
-	p.QueueMessage(m, nil)
-	return m.AddrList, nil
 }
 
 // PushGetBlocksMsg sends a getblocks message for the provided block locator
@@ -997,59 +938,79 @@ func (p *Peer) PushGetHeadersMsg(locator blockchain.BlockLocator, stopHash *chai
 	return nil
 }
 
-// PushRejectMsg sends a reject message for the provided command, reject code,
-// reject reason, and hash.  The hash will only be used when the command is a tx
-// or block and should be nil in other cases.  The wait parameter will cause the
-// function to block until the reject message has actually been sent.
+// PushRejectMsg sends a reject message for the provided Handshake message type,
+// reject code, reject reason, and hash. The hash will only be used when the
+// message type requires one and should be nil in other cases. The wait
+// parameter will cause the function to block until the reject message has
+// actually been sent.
 //
 // This function is safe for concurrent access.
-func (p *Peer) PushRejectMsg(command string, code wire.RejectCode, reason string, hash *chainhash.Hash, wait bool) {
+func (p *Peer) PushRejectMsg(msgType wire.HnsMsgType, code wire.RejectCode,
+	reason string, hash *chainhash.Hash, wait bool) {
+
 	// Don't bother sending the reject message if the protocol version
 	// is too low.
 	if p.VersionKnown() && p.ProtocolVersion() < wire.RejectVersion {
 		return
 	}
 
-	msg := wire.NewMsgReject(command, code, reason)
-	if command == wire.CmdTx || command == wire.CmdBlock {
+	msg := &wire.HnsMsgReject{
+		Message: msgType,
+		Code:    code,
+		Reason:  reason,
+	}
+	if hnsRejectMessageRequiresHash(msgType) {
 		if hash == nil {
 			log.Warnf("Sending a reject message for command "+
 				"type %v which should have specified a hash "+
-				"but does not", command)
+				"but does not", msgType)
 			hash = &zeroHash
 		}
-		msg.Hash = *hash
+		copy(msg.Hash[:], hash[:])
 	}
 
 	// Send the message without waiting if the caller has not requested it.
 	if !wait {
-		p.QueueMessage(msg, nil)
+		p.QueueHnsMessage(msg, nil)
 		return
 	}
 
 	// Send the message and block until it has been sent before returning.
 	doneChan := make(chan struct{}, 1)
-	p.QueueMessage(msg, doneChan)
+	p.QueueHnsMessage(msg, doneChan)
 	<-doneChan
 }
 
-// handlePingMsg is invoked when a peer receives a ping bitcoin message.  For
-// recent clients (protocol version > BIP0031Version), it replies with a pong
-// message.  For older clients, it does nothing and anything other than failure
-// is considered a successful ping.
-func (p *Peer) handlePingMsg(msg *wire.MsgPing) {
-	// Only reply with pong if the message is from a new enough client.
-	if p.ProtocolVersion() > wire.BIP0031Version {
-		// Include nonce from ping so pong can be identified.
-		p.QueueMessage(wire.NewMsgPong(msg.Nonce), nil)
+func hnsRejectMessageRequiresHash(msgType wire.HnsMsgType) bool {
+	switch msgType {
+	case wire.HnsMsgTypeBlock, wire.HnsMsgTypeTx, wire.HnsMsgTypeClaim,
+		wire.HnsMsgTypeAirDrop:
+		return true
+	default:
+		return false
 	}
 }
 
-// handlePongMsg is invoked when a peer receives a pong bitcoin message.  It
-// updates the ping statistics as required for recent clients (protocol
-// version > BIP0031Version).  There is no effect for older clients or when a
-// ping was not previously sent.
-func (p *Peer) handlePongMsg(msg *wire.MsgPong) {
+func hnsTimeToTime(sec uint64) time.Time {
+	const maxInt64Unix = uint64(1<<63 - 1)
+	if sec > maxInt64Unix {
+		sec = maxInt64Unix
+	}
+	return time.Unix(int64(sec), 0)
+}
+
+// handlePingMsg is invoked when a peer receives a ping message.
+func (p *Peer) handlePingMsg(msg *wire.HnsMsgPing) {
+	// Only reply with pong if the message is from a new enough client.
+	if p.ProtocolVersion() > wire.BIP0031Version {
+		// Include nonce from ping so pong can be identified.
+		p.QueueHnsMessage(&wire.HnsMsgPong{Nonce: msg.Nonce}, nil)
+	}
+}
+
+// handlePongMsg is invoked when a peer receives a pong message. It updates the
+// ping statistics as required for recent clients.
+func (p *Peer) handlePongMsg(msg *wire.HnsMsgPong) {
 	// Arguably we could use a buffered channel here sending data
 	// in a fifo manner whenever we send a ping, or a list keeping track of
 	// the times of each ping. For now we just make a best effort and
@@ -1059,7 +1020,8 @@ func (p *Peer) handlePongMsg(msg *wire.MsgPong) {
 	// enough that if they overlap we would have timed out the peer.
 	if p.ProtocolVersion() > wire.BIP0031Version {
 		p.statsMtx.Lock()
-		if p.lastPingNonce != 0 && msg.Nonce == p.lastPingNonce {
+		nonce := binary.LittleEndian.Uint64(msg.Nonce[:])
+		if p.lastPingNonce != 0 && nonce == p.lastPingNonce {
 			p.lastPingMicros = time.Since(p.lastPingTime).Nanoseconds()
 			p.lastPingMicros /= 1000 // convert to usec.
 			p.lastPingNonce = 0
@@ -1072,18 +1034,16 @@ func (p *Peer) handlePongMsg(msg *wire.MsgPong) {
 // partial bool is retained for the old BIP324 downgrade path; Handshake uses
 // Brontide/plaintext transports instead.
 func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
-	wire.Message, []byte, error) {
+	wire.HandshakeMessage, []byte, error) {
 
 	var (
 		n   int
-		msg wire.Message
+		msg wire.HandshakeMessage
 		buf []byte
 		err error
 	)
 
-	n, msg, buf, err = wire.ReadHnsMessageWithEncodingN(
-		p.conn, p.ProtocolVersion(), p.cfg.ChainParams.Net, encoding,
-	)
+	n, msg, buf, err = wire.ReadHandshakeMessageN(p.conn, p.cfg.ChainParams.Net)
 
 	atomic.AddUint64(&p.bytesReceived, uint64(n))
 	if p.cfg.Listeners.OnRead != nil {
@@ -1102,7 +1062,7 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 			summary = " (" + summary + ")"
 		}
 		return fmt.Sprintf("Received %v%s from %s",
-			msg.Command(), summary, p)
+			msg.Type(), summary, p)
 	}))
 	log.Tracef("%v", newLogClosure(func() string {
 		return spew.Sdump(msg)
@@ -1115,15 +1075,13 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 }
 
 // writeMessage sends a Handshake message to the peer with logging.
-func (p *Peer) writeMessage(msg wire.Message, enc wire.MessageEncoding) error {
+func (p *Peer) writeMessage(msg wire.HandshakeMessage) error {
 	// Don't do anything if we're disconnecting.
 	if atomic.LoadInt32(&p.disconnect) != 0 {
 		return nil
 	}
 
-	n, err := wire.WriteHnsMessageWithEncodingN(
-		p.conn, msg, p.ProtocolVersion(), p.cfg.ChainParams.Net, enc,
-	)
+	n, err := wire.WriteHandshakeMessageN(p.conn, msg, p.cfg.ChainParams.Net)
 
 	// Use closures to log expensive operations so they are only run when
 	// the logging level requires it.
@@ -1133,7 +1091,7 @@ func (p *Peer) writeMessage(msg wire.Message, enc wire.MessageEncoding) error {
 		if len(summary) > 0 {
 			summary = " (" + summary + ")"
 		}
-		return fmt.Sprintf("Sending %v%s to %s", msg.Command(),
+		return fmt.Sprintf("Sending %v%s to %s", msg.Type(),
 			summary, p)
 	}))
 	log.Tracef("%v", newLogClosure(func() string {
@@ -1199,7 +1157,9 @@ func (p *Peer) shouldHandleReadError(err error) bool {
 
 // maybeAddDeadline potentially adds a deadline for the appropriate expected
 // response for the passed wire protocol command to the pending responses map.
-func (p *Peer) maybeAddDeadline(pendingResponses map[string]time.Time, msgCmd string) {
+func (p *Peer) maybeAddDeadline(pendingResponses map[wire.HnsMsgType]time.Time,
+	msgType wire.HnsMsgType) {
+
 	// Setup a deadline for each message being sent that expects a response.
 	//
 	// NOTE: Pings are intentionally ignored here since they are typically
@@ -1207,32 +1167,32 @@ func (p *Peer) maybeAddDeadline(pendingResponses map[string]time.Time, msgCmd st
 	// such as is typical in the case of initial block download, the
 	// response won't be received in time.
 	deadline := time.Now().Add(stallResponseTimeout)
-	switch msgCmd {
-	case wire.CmdVersion:
+	switch msgType {
+	case wire.HnsMsgTypeVersion:
 		// Expects a verack message.
-		pendingResponses[wire.CmdVerAck] = deadline
+		pendingResponses[wire.HnsMsgTypeVerack] = deadline
 
-	case wire.CmdMemPool:
+	case wire.HnsMsgTypeMempool:
 		// Expects an inv message.
-		pendingResponses[wire.CmdInv] = deadline
+		pendingResponses[wire.HnsMsgTypeInv] = deadline
 
-	case wire.CmdGetBlocks:
+	case wire.HnsMsgTypeGetBlocks:
 		// Expects an inv message.
-		pendingResponses[wire.CmdInv] = deadline
+		pendingResponses[wire.HnsMsgTypeInv] = deadline
 
-	case wire.CmdGetData:
+	case wire.HnsMsgTypeGetData:
 		// Expects a block, merkleblock, tx, or notfound message.
-		pendingResponses[wire.CmdBlock] = deadline
-		pendingResponses[wire.CmdMerkleBlock] = deadline
-		pendingResponses[wire.CmdTx] = deadline
-		pendingResponses[wire.CmdNotFound] = deadline
+		pendingResponses[wire.HnsMsgTypeBlock] = deadline
+		pendingResponses[wire.HnsMsgTypeMerkleBlock] = deadline
+		pendingResponses[wire.HnsMsgTypeTx] = deadline
+		pendingResponses[wire.HnsMsgTypeNotFound] = deadline
 
-	case wire.CmdGetHeaders:
+	case wire.HnsMsgTypeGetHeaders:
 		// Expects a headers message.  Use a longer deadline since it
 		// can take a while for the remote peer to load all of the
 		// headers.
 		deadline = time.Now().Add(stallResponseTimeout * 3)
-		pendingResponses[wire.CmdHeaders] = deadline
+		pendingResponses[wire.HnsMsgTypeHeaders] = deadline
 	}
 }
 
@@ -1250,7 +1210,7 @@ func (p *Peer) stallHandler() {
 	var deadlineOffset time.Duration
 
 	// pendingResponses tracks the expected response deadline times.
-	pendingResponses := make(map[string]time.Time)
+	pendingResponses := make(map[wire.HnsMsgType]time.Time)
 
 	// stallTicker is used to periodically check pending responses that have
 	// exceeded the expected deadline and disconnect the peer due to
@@ -1274,28 +1234,28 @@ out:
 				// Add a deadline for the expected response
 				// message if needed.
 				p.maybeAddDeadline(pendingResponses,
-					msg.message.Command())
+					msg.message.Type())
 
 			case sccReceiveMessage:
 				// Remove received messages from the expected
 				// response map.  Since certain commands expect
 				// one of a group of responses, remove
 				// everything in the expected group accordingly.
-				switch msgCmd := msg.message.Command(); msgCmd {
-				case wire.CmdBlock:
+				switch msgType := msg.message.Type(); msgType {
+				case wire.HnsMsgTypeBlock:
 					fallthrough
-				case wire.CmdMerkleBlock:
+				case wire.HnsMsgTypeMerkleBlock:
 					fallthrough
-				case wire.CmdTx:
+				case wire.HnsMsgTypeTx:
 					fallthrough
-				case wire.CmdNotFound:
-					delete(pendingResponses, wire.CmdBlock)
-					delete(pendingResponses, wire.CmdMerkleBlock)
-					delete(pendingResponses, wire.CmdTx)
-					delete(pendingResponses, wire.CmdNotFound)
+				case wire.HnsMsgTypeNotFound:
+					delete(pendingResponses, wire.HnsMsgTypeBlock)
+					delete(pendingResponses, wire.HnsMsgTypeMerkleBlock)
+					delete(pendingResponses, wire.HnsMsgTypeTx)
+					delete(pendingResponses, wire.HnsMsgTypeNotFound)
 
 				default:
-					delete(pendingResponses, msgCmd)
+					delete(pendingResponses, msgType)
 				}
 
 			case sccHandlerStart:
@@ -1456,8 +1416,10 @@ out:
 				// at least that much of the message was valid, but that is not
 				// currently exposed by wire, so just used malformed for the
 				// command.
-				p.PushRejectMsg("malformed", wire.RejectMalformed, errMsg, nil,
-					true)
+				p.PushRejectMsg(
+					wire.HnsMsgTypeUnknown, wire.RejectMalformed,
+					errMsg, nil, true,
+				)
 			}
 			break out
 		}
@@ -1467,153 +1429,118 @@ out:
 		// Handle each supported message type.
 		p.stallControl <- stallControlMsg{sccHandlerStart, rmsg}
 		switch msg := rmsg.(type) {
-		case *wire.MsgVersion:
+		case *wire.HnsMsgVersion:
 			// Limit to one version message per peer.
-			p.PushRejectMsg(msg.Command(), wire.RejectDuplicate,
+			p.PushRejectMsg(wire.HnsMsgTypeVersion, wire.RejectDuplicate,
 				"duplicate version message", nil, true)
 			break out
 
-		case *wire.MsgVerAck:
+		case *wire.HnsMsgVerack:
 			// Limit to one verack message per peer.
 			p.PushRejectMsg(
-				msg.Command(), wire.RejectDuplicate,
+				wire.HnsMsgTypeVerack, wire.RejectDuplicate,
 				"duplicate verack message", nil, true,
 			)
 			break out
 
-		case *wire.MsgSendAddrV2:
-			// Disconnect if peer sends this after the handshake is
-			// completed.
-			break out
-
-		case *wire.MsgGetAddr:
+		case *wire.HnsMsgGetAddr:
 			if p.cfg.Listeners.OnGetAddr != nil {
 				p.cfg.Listeners.OnGetAddr(p, msg)
 			}
 
-		case *wire.MsgAddr:
+		case *wire.HnsMsgAddr:
 			if p.cfg.Listeners.OnAddr != nil {
 				p.cfg.Listeners.OnAddr(p, msg)
 			}
 
-		case *wire.MsgAddrV2:
-			if p.cfg.Listeners.OnAddrV2 != nil {
-				p.cfg.Listeners.OnAddrV2(p, msg)
-			}
-
-		case *wire.MsgPing:
+		case *wire.HnsMsgPing:
 			p.handlePingMsg(msg)
 			if p.cfg.Listeners.OnPing != nil {
 				p.cfg.Listeners.OnPing(p, msg)
 			}
 
-		case *wire.MsgPong:
+		case *wire.HnsMsgPong:
 			p.handlePongMsg(msg)
 			if p.cfg.Listeners.OnPong != nil {
 				p.cfg.Listeners.OnPong(p, msg)
 			}
 
-		case *wire.MsgMemPool:
+		case *wire.HnsMsgMemPool:
 			if p.cfg.Listeners.OnMemPool != nil {
 				p.cfg.Listeners.OnMemPool(p, msg)
 			}
 
-		case *wire.MsgTx:
+		case *wire.HnsMsgTx:
 			if p.cfg.Listeners.OnTx != nil {
 				p.cfg.Listeners.OnTx(p, msg)
 			}
 
-		case *wire.MsgBlock:
+		case *wire.HnsMsgBlock:
 			if p.cfg.Listeners.OnBlock != nil {
 				p.cfg.Listeners.OnBlock(p, msg, buf)
 			}
 
-		case *wire.MsgInv:
+		case *wire.HnsMsgInv:
 			if p.cfg.Listeners.OnInv != nil {
 				p.cfg.Listeners.OnInv(p, msg)
 			}
 
-		case *wire.MsgHeaders:
+		case *wire.HnsMsgHeaders:
 			if p.cfg.Listeners.OnHeaders != nil {
 				p.cfg.Listeners.OnHeaders(p, msg)
 			}
 
-		case *wire.MsgNotFound:
+		case *wire.HnsMsgNotFound:
 			if p.cfg.Listeners.OnNotFound != nil {
 				p.cfg.Listeners.OnNotFound(p, msg)
 			}
 
-		case *wire.MsgGetData:
+		case *wire.HnsMsgGetData:
 			if p.cfg.Listeners.OnGetData != nil {
 				p.cfg.Listeners.OnGetData(p, msg)
 			}
 
-		case *wire.MsgGetBlocks:
+		case *wire.HnsMsgGetBlocks:
 			if p.cfg.Listeners.OnGetBlocks != nil {
 				p.cfg.Listeners.OnGetBlocks(p, msg)
 			}
 
-		case *wire.MsgGetHeaders:
+		case *wire.HnsMsgGetHeaders:
 			if p.cfg.Listeners.OnGetHeaders != nil {
 				p.cfg.Listeners.OnGetHeaders(p, msg)
 			}
 
-		case *wire.MsgGetCFilters:
-			if p.cfg.Listeners.OnGetCFilters != nil {
-				p.cfg.Listeners.OnGetCFilters(p, msg)
-			}
-
-		case *wire.MsgGetCFHeaders:
-			if p.cfg.Listeners.OnGetCFHeaders != nil {
-				p.cfg.Listeners.OnGetCFHeaders(p, msg)
-			}
-
-		case *wire.MsgGetCFCheckpt:
-			if p.cfg.Listeners.OnGetCFCheckpt != nil {
-				p.cfg.Listeners.OnGetCFCheckpt(p, msg)
-			}
-
-		case *wire.MsgCFilter:
-			if p.cfg.Listeners.OnCFilter != nil {
-				p.cfg.Listeners.OnCFilter(p, msg)
-			}
-
-		case *wire.MsgCFHeaders:
-			if p.cfg.Listeners.OnCFHeaders != nil {
-				p.cfg.Listeners.OnCFHeaders(p, msg)
-			}
-
-		case *wire.MsgFeeFilter:
+		case *wire.HnsMsgFeeFilter:
 			if p.cfg.Listeners.OnFeeFilter != nil {
 				p.cfg.Listeners.OnFeeFilter(p, msg)
 			}
 
-		case *wire.MsgFilterAdd:
+		case *wire.HnsMsgFilterAdd:
 			if p.cfg.Listeners.OnFilterAdd != nil {
 				p.cfg.Listeners.OnFilterAdd(p, msg)
 			}
 
-		case *wire.MsgFilterClear:
+		case *wire.HnsMsgFilterClear:
 			if p.cfg.Listeners.OnFilterClear != nil {
 				p.cfg.Listeners.OnFilterClear(p, msg)
 			}
 
-		case *wire.MsgFilterLoad:
+		case *wire.HnsMsgFilterLoad:
 			if p.cfg.Listeners.OnFilterLoad != nil {
 				p.cfg.Listeners.OnFilterLoad(p, msg)
 			}
 
-		case *wire.MsgMerkleBlock:
+		case *wire.HnsMsgMerkleBlock:
 			if p.cfg.Listeners.OnMerkleBlock != nil {
 				p.cfg.Listeners.OnMerkleBlock(p, msg)
 			}
 
-		case *wire.MsgReject:
+		case *wire.HnsMsgReject:
 			if p.cfg.Listeners.OnReject != nil {
 				p.cfg.Listeners.OnReject(p, msg)
 			}
 
-		case *wire.MsgSendHeaders:
+		case *wire.HnsMsgSendHeaders:
 			p.flagsMtx.Lock()
 			p.sendHeadersPreferred = true
 			p.flagsMtx.Unlock()
@@ -1622,9 +1549,54 @@ out:
 				p.cfg.Listeners.OnSendHeaders(p, msg)
 			}
 
+		case *wire.HnsMsgSendCmpct:
+			if p.cfg.Listeners.OnSendCmpct != nil {
+				p.cfg.Listeners.OnSendCmpct(p, msg)
+			}
+
+		case *wire.HnsMsgCmpctBlock:
+			if p.cfg.Listeners.OnCmpctBlock != nil {
+				p.cfg.Listeners.OnCmpctBlock(p, msg)
+			}
+
+		case *wire.HnsMsgGetBlockTxn:
+			if p.cfg.Listeners.OnGetBlockTxn != nil {
+				p.cfg.Listeners.OnGetBlockTxn(p, msg)
+			}
+
+		case *wire.HnsMsgBlockTxn:
+			if p.cfg.Listeners.OnBlockTxn != nil {
+				p.cfg.Listeners.OnBlockTxn(p, msg)
+			}
+
+		case *wire.HnsMsgGetProof:
+			if p.cfg.Listeners.OnGetProof != nil {
+				p.cfg.Listeners.OnGetProof(p, msg)
+			}
+
+		case *wire.HnsMsgProof:
+			if p.cfg.Listeners.OnProof != nil {
+				p.cfg.Listeners.OnProof(p, msg)
+			}
+
+		case *wire.HnsMsgClaim:
+			if p.cfg.Listeners.OnClaim != nil {
+				p.cfg.Listeners.OnClaim(p, msg)
+			}
+
+		case *wire.HnsMsgAirDrop:
+			if p.cfg.Listeners.OnAirDrop != nil {
+				p.cfg.Listeners.OnAirDrop(p, msg)
+			}
+
+		case *wire.HnsMsgUnknown:
+			if p.cfg.Listeners.OnUnknown != nil {
+				p.cfg.Listeners.OnUnknown(p, msg)
+			}
+
 		default:
 			log.Debugf("Received unhandled message of type %v "+
-				"from %v", rmsg.Command(), p)
+				"from %v", rmsg.Type(), p)
 		}
 		p.stallControl <- stallControlMsg{sccHandlerDone, rmsg}
 
@@ -1695,7 +1667,7 @@ out:
 
 					invMsg := wire.NewMsgInvSizeHint(1)
 					invMsg.AddInvVect(iv)
-					waiting = queuePacket(outMsg{msg: invMsg},
+					waiting = queuePacket(outMsg{legacyMsg: invMsg},
 						pendingMsgs, waiting)
 				} else {
 					invSendQueue.PushBack(iv)
@@ -1726,7 +1698,7 @@ out:
 				invMsg.AddInvVect(iv)
 				if len(invMsg.InvList) >= maxInvTrickleSize {
 					waiting = queuePacket(
-						outMsg{msg: invMsg},
+						outMsg{legacyMsg: invMsg},
 						pendingMsgs, waiting)
 					invMsg = wire.NewMsgInvSizeHint(uint(invSendQueue.Len()))
 				}
@@ -1736,7 +1708,7 @@ out:
 				p.AddKnownInventory(iv)
 			}
 			if len(invMsg.InvList) > 0 {
-				waiting = queuePacket(outMsg{msg: invMsg},
+				waiting = queuePacket(outMsg{legacyMsg: invMsg},
 					pendingMsgs, waiting)
 			}
 
@@ -1792,6 +1764,18 @@ func (p *Peer) shouldLogWriteError(err error) bool {
 	return true
 }
 
+func (p *Peer) outboundHnsMessage(msg outMsg) (wire.HandshakeMessage, error) {
+	if msg.hnsMsg != nil {
+		return msg.hnsMsg, nil
+	}
+	if msg.legacyMsg == nil {
+		return nil, wire.ErrUnknownMessage
+	}
+	return wire.HnsMessageFromLegacy(
+		msg.legacyMsg, p.ProtocolVersion(), msg.encoding,
+	)
+}
+
 // outHandler handles all outgoing messages for the peer.  It must be run as a
 // goroutine.  It uses a buffered channel to serialize output messages while
 // allowing the sender to continue running asynchronously.
@@ -1800,21 +1784,34 @@ out:
 	for {
 		select {
 		case msg := <-p.sendQueue:
-			switch m := msg.msg.(type) {
-			case *wire.MsgPing:
+			hnsMsg, err := p.outboundHnsMessage(msg)
+			if err != nil {
+				p.Disconnect()
+				if p.shouldLogWriteError(err) {
+					log.Errorf("Failed to prepare message for "+
+						"%s: %v", p, err)
+				}
+				if msg.doneChan != nil {
+					msg.doneChan <- struct{}{}
+				}
+				continue
+			}
+
+			switch m := hnsMsg.(type) {
+			case *wire.HnsMsgPing:
 				// Only expects a pong message in later protocol
 				// versions.  Also set up statistics.
 				if p.ProtocolVersion() > wire.BIP0031Version {
 					p.statsMtx.Lock()
-					p.lastPingNonce = m.Nonce
+					p.lastPingNonce = binary.LittleEndian.Uint64(m.Nonce[:])
 					p.lastPingTime = time.Now()
 					p.statsMtx.Unlock()
 				}
 			}
 
-			p.stallControl <- stallControlMsg{sccSendMessage, msg.msg}
+			p.stallControl <- stallControlMsg{sccSendMessage, hnsMsg}
 
-			err := p.writeMessage(msg.msg, msg.encoding)
+			err = p.writeMessage(hnsMsg)
 			if err != nil {
 				p.Disconnect()
 				if p.shouldLogWriteError(err) {
@@ -1887,7 +1884,29 @@ out:
 	}
 }
 
-// QueueMessage adds the passed bitcoin message to the peer send queue.
+// QueueHnsMessage adds the passed native Handshake message to the peer send
+// queue.
+//
+// This function is safe for concurrent access.
+func (p *Peer) QueueHnsMessage(msg wire.HandshakeMessage,
+	doneChan chan<- struct{}) {
+
+	// Avoid risk of deadlock if goroutine already exited.  The goroutine
+	// we will be sending to hangs around until it knows for a fact that
+	// it is marked as disconnected and *then* it drains the channels.
+	if !p.Connected() {
+		if doneChan != nil {
+			go func() {
+				doneChan <- struct{}{}
+			}()
+		}
+		return
+	}
+	p.outputQueue <- outMsg{hnsMsg: msg, doneChan: doneChan}
+}
+
+// QueueMessage adds the passed legacy message to the peer send queue. The
+// message is converted to a native Handshake packet by the output goroutine.
 //
 // This function is safe for concurrent access.
 func (p *Peer) QueueMessage(msg wire.Message, doneChan chan<- struct{}) {
@@ -1914,7 +1933,11 @@ func (p *Peer) QueueMessageWithEncoding(msg wire.Message, doneChan chan<- struct
 		}
 		return
 	}
-	p.outputQueue <- outMsg{msg: msg, encoding: encoding, doneChan: doneChan}
+	p.outputQueue <- outMsg{
+		legacyMsg: msg,
+		encoding:  encoding,
+		doneChan:  doneChan,
+	}
 }
 
 // QueueInventory adds the passed inventory to the inventory send queue which
@@ -1980,7 +2003,7 @@ func (p *Peer) Disconnect() {
 // happens with implicitly downgraded v2->v1 connections.
 func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 	var (
-		remoteMsg wire.Message
+		remoteMsg wire.HandshakeMessage
 		err       error
 	)
 
@@ -1991,27 +2014,33 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 
 	// Notify and disconnect clients if the first message is not a version
 	// message.
-	msg, ok := remoteMsg.(*wire.MsgVersion)
+	msg, ok := remoteMsg.(*wire.HnsMsgVersion)
 	if !ok {
 		reason := "a version message must precede all others"
-		rejectMsg := wire.NewMsgReject(msg.Command(), wire.RejectMalformed,
-			reason)
-		_ = p.writeMessage(rejectMsg, wire.LatestEncoding)
+		rejectMsg := &wire.HnsMsgReject{
+			Message: remoteMsg.Type(),
+			Code:    wire.RejectMalformed,
+			Reason:  reason,
+		}
+		if p.ProtocolVersion() >= wire.RejectVersion {
+			_ = p.writeMessage(rejectMsg)
+		}
 		return errors.New(reason)
 	}
 
 	// Detect self connections.
-	if !p.cfg.AllowSelfConns && sentNonces.Contains(msg.Nonce) {
+	nonce := binary.LittleEndian.Uint64(msg.Nonce[:])
+	if !p.cfg.AllowSelfConns && sentNonces.Contains(nonce) {
 		return errors.New("disconnecting peer connected to self")
 	}
 
 	// Negotiate the protocol version and set the services to what the remote
 	// peer advertised.
 	p.flagsMtx.Lock()
-	p.advertisedProtoVer = uint32(msg.ProtocolVersion)
+	p.advertisedProtoVer = msg.Version
 	p.protocolVersion = minUint32(p.protocolVersion, p.advertisedProtoVer)
 	p.versionKnown = true
-	p.services = msg.Services
+	p.services = wire.ServiceFlag(msg.Services)
 	p.flagsMtx.Unlock()
 	log.Debugf("Negotiated protocol version %d for peer %s",
 		p.protocolVersion, p)
@@ -2019,16 +2048,16 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 	// Updating a bunch of stats including block based stats, and the
 	// peer's time offset.
 	p.statsMtx.Lock()
-	p.lastBlock = msg.LastBlock
-	p.startingHeight = msg.LastBlock
-	p.timeOffset = msg.Timestamp.Unix() - time.Now().Unix()
+	p.lastBlock = int32(msg.Height)
+	p.startingHeight = int32(msg.Height)
+	p.timeOffset = hnsTimeToTime(msg.Time).Unix() - time.Now().Unix()
 	p.statsMtx.Unlock()
 
 	// Set the peer's ID, user agent, and potentially the flag which
 	// specifies the witness support is enabled.
 	p.flagsMtx.Lock()
 	p.id = atomic.AddInt32(&nodeCount, 1)
-	p.userAgent = msg.UserAgent
+	p.userAgent = msg.Agent
 
 	// Determine if the peer would like to receive witness data with
 	// transactions, or not.
@@ -2050,7 +2079,9 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 	if p.cfg.Listeners.OnVersion != nil {
 		rejectMsg := p.cfg.Listeners.OnVersion(p, msg)
 		if rejectMsg != nil {
-			_ = p.writeMessage(rejectMsg, wire.LatestEncoding)
+			if p.ProtocolVersion() >= wire.RejectVersion {
+				_ = p.writeMessage(rejectMsg)
+			}
 			return errors.New(rejectMsg.Reason)
 		}
 	}
@@ -2061,15 +2092,20 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 	// NOTE: If minAcceptableProtocolVersion is raised to be higher than
 	// wire.RejectVersion, this should send a reject packet before
 	// disconnecting.
-	if uint32(msg.ProtocolVersion) < MinAcceptableProtocolVersion {
+	if msg.Version < MinAcceptableProtocolVersion {
 		// Send a reject message indicating the protocol version is
 		// obsolete and wait for the message to be sent before
 		// disconnecting.
 		reason := fmt.Sprintf("protocol version must be %d or greater",
 			MinAcceptableProtocolVersion)
-		rejectMsg := wire.NewMsgReject(msg.Command(), wire.RejectObsolete,
-			reason)
-		_ = p.writeMessage(rejectMsg, wire.LatestEncoding)
+		rejectMsg := &wire.HnsMsgReject{
+			Message: wire.HnsMsgTypeVersion,
+			Code:    wire.RejectObsolete,
+			Reason:  reason,
+		}
+		if p.ProtocolVersion() >= wire.RejectVersion {
+			_ = p.writeMessage(rejectMsg)
+		}
 		return errors.New(reason)
 	}
 
@@ -2077,7 +2113,7 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 }
 
 // processRemoteVerAckMsg takes the verack from the remote peer and handles it.
-func (p *Peer) processRemoteVerAckMsg(msg *wire.MsgVerAck) {
+func (p *Peer) processRemoteVerAckMsg(msg *wire.HnsMsgVerack) {
 	p.flagsMtx.Lock()
 	p.verAckReceived = true
 	p.flagsMtx.Unlock()
@@ -2164,7 +2200,13 @@ func (p *Peer) writeLocalVersionMsg() error {
 		return err
 	}
 
-	return p.writeMessage(localVerMsg, wire.LatestEncoding)
+	hnsMsg, err := wire.HnsMessageFromLegacy(
+		localVerMsg, p.ProtocolVersion(), wire.LatestEncoding,
+	)
+	if err != nil {
+		return err
+	}
+	return p.writeMessage(hnsMsg)
 }
 
 // writeSendAddrV2Msg is retained as a negotiation hook while the peer package
@@ -2187,7 +2229,7 @@ func (p *Peer) waitToFinishNegotiation(_ uint32) error {
 		}
 
 		switch m := remoteMsg.(type) {
-		case *wire.MsgVerAck:
+		case *wire.HnsMsgVerack:
 			// Receiving a verack means we are done with the
 			// handshake.
 			p.processRemoteVerAckMsg(m)
@@ -2227,7 +2269,7 @@ func (p *Peer) negotiateInboundProtocol() error {
 		return err
 	}
 
-	err := p.writeMessage(wire.NewMsgVerAck(), wire.LatestEncoding)
+	err := p.writeMessage(&wire.HnsMsgVerack{})
 	if err != nil {
 		return err
 	}
@@ -2263,7 +2305,7 @@ func (p *Peer) negotiateOutboundProtocol() error {
 		return err
 	}
 
-	err := p.writeMessage(wire.NewMsgVerAck(), wire.LatestEncoding)
+	err := p.writeMessage(&wire.HnsMsgVerack{})
 	if err != nil {
 		return err
 	}
