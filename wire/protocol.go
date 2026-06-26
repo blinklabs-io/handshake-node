@@ -10,9 +10,18 @@ import (
 	"strings"
 )
 
-// XXX pedro: we will probably need to bump this.
 const (
-	// ProtocolVersion is the latest protocol version this package supports.
+	// HnsProtocolVersion is the latest Handshake protocol version this
+	// package supports for live peer negotiation.
+	HnsProtocolVersion uint32 = 3
+
+	// HnsMinProtocolVersion is the lowest Handshake protocol version this
+	// package will accept from peers.
+	HnsMinProtocolVersion uint32 = 1
+
+	// ProtocolVersion is the latest legacy Bitcoin protocol version retained
+	// by the btcd-shaped serializers. Live peer negotiation uses
+	// HnsProtocolVersion.
 	ProtocolVersion uint32 = 70016
 
 	// MultipleAddressVersion is the protocol version which added multiple
@@ -66,76 +75,60 @@ const (
 	NodeNetworkLimitedBlockThreshold = 288
 )
 
-// ServiceFlag identifies services supported by a bitcoin peer.
+// ServiceFlag identifies services supported by a Handshake peer.
 type ServiceFlag uint64
 
 const (
 	// SFNodeNetwork is a flag used to indicate a peer is a full node.
-	SFNodeNetwork ServiceFlag = 1 << iota
+	SFNodeNetwork ServiceFlag = 1 << 0
 
-	// SFNodeGetUTXO is a flag used to indicate a peer supports the
-	// getutxos and utxos commands (BIP0064).
-	SFNodeGetUTXO
+	// SFNodeBloom is a flag used to indicate a peer supports bloom filtering.
+	SFNodeBloom ServiceFlag = 1 << 1
 
-	// SFNodeBloom is a flag used to indicate a peer supports bloom
-	// filtering.
-	SFNodeBloom
+	// SFNodeGetUTXO is a legacy Bitcoin-only flag retained for API
+	// compatibility while the fork is migrated.
+	SFNodeGetUTXO ServiceFlag = 1 << 2
 
-	// SFNodeWitness is a flag used to indicate a peer supports blocks
-	// and transactions including witness data (BIP0144).
-	SFNodeWitness
+	// SFNodeWitness is a legacy Bitcoin-only flag retained for API
+	// compatibility while the fork is migrated.
+	SFNodeWitness ServiceFlag = 1 << 3
 
-	// SFNodeXthin is a flag used to indicate a peer supports xthin blocks.
-	SFNodeXthin
+	// SFNodeXthin is a legacy Bitcoin-only flag retained for API
+	// compatibility while the fork is migrated.
+	SFNodeXthin ServiceFlag = 1 << 4
 
-	// SFNodeBit5 is a flag used to indicate a peer supports a service
-	// defined by bit 5.
-	SFNodeBit5
+	// SFNodeBit5 is a legacy Bitcoin-only flag retained for API
+	// compatibility while the fork is migrated.
+	SFNodeBit5 ServiceFlag = 1 << 5
 
-	// SFNodeCF is a flag used to indicate a peer supports committed
-	// filters (CFs).
-	SFNodeCF
+	// SFNodeCF is a legacy Bitcoin-only flag retained for API compatibility
+	// while the fork is migrated.
+	SFNodeCF ServiceFlag = 1 << 6
 
-	// SFNode2X is a flag used to indicate a peer is running the Segwit2X
-	// software.
-	SFNode2X
+	// SFNode2X is a legacy Bitcoin-only flag retained for API compatibility
+	// while the fork is migrated.
+	SFNode2X ServiceFlag = 1 << 7
 
-	// SFNodeNetWorkLimited is a flag used to indicate a peer supports serving
-	// the last 288 blocks.
-	SFNodeNetworkLimited = 1 << 10
+	// SFNodeNetWorkLimited is a legacy Bitcoin-only flag retained for API
+	// compatibility while the fork is migrated.
+	SFNodeNetworkLimited ServiceFlag = 1 << 10
 
-	// SFNodeP2PV2 is a flag used to indicate a peer supports BIP324 v2
-	// connections.
-	SFNodeP2PV2 = 1 << 11
+	// SFNodeP2PV2 is a legacy Bitcoin-only flag retained for API
+	// compatibility while the fork is migrated.
+	SFNodeP2PV2 ServiceFlag = 1 << 11
 )
 
 // Map of service flags back to their constant names for pretty printing.
 var sfStrings = map[ServiceFlag]string{
-	SFNodeNetwork:        "SFNodeNetwork",
-	SFNodeGetUTXO:        "SFNodeGetUTXO",
-	SFNodeBloom:          "SFNodeBloom",
-	SFNodeWitness:        "SFNodeWitness",
-	SFNodeXthin:          "SFNodeXthin",
-	SFNodeBit5:           "SFNodeBit5",
-	SFNodeCF:             "SFNodeCF",
-	SFNode2X:             "SFNode2X",
-	SFNodeNetworkLimited: "SFNodeNetworkLimited",
-	SFNodeP2PV2:          "SFNodeP2PV2",
+	SFNodeNetwork: "SFNodeNetwork",
+	SFNodeBloom:   "SFNodeBloom",
 }
 
-// orderedSFStrings is an ordered list of service flags from highest to
-// lowest.
+// orderedSFStrings is the stable order used when stringifying known Handshake
+// service flags.
 var orderedSFStrings = []ServiceFlag{
 	SFNodeNetwork,
-	SFNodeGetUTXO,
 	SFNodeBloom,
-	SFNodeWitness,
-	SFNodeXthin,
-	SFNodeBit5,
-	SFNodeCF,
-	SFNode2X,
-	SFNodeNetworkLimited,
-	SFNodeP2PV2,
 }
 
 // HasFlag returns a bool indicating if the service has the given flag.

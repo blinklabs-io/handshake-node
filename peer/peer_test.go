@@ -235,7 +235,7 @@ func TestPeerConnection(t *testing.T) {
 		UserAgentVersion:  "1.0",
 		UserAgentComments: []string{"comment"},
 		ChainParams:       &chaincfg.MainNetParams,
-		ProtocolVersion:   wire.RejectVersion, // Configure with older version
+		ProtocolVersion:   wire.HnsMinProtocolVersion,
 		Services:          0,
 		TrickleInterval:   time.Second * 10,
 		AllowSelfConns:    true,
@@ -246,7 +246,7 @@ func TestPeerConnection(t *testing.T) {
 		UserAgentVersion:  "1.0",
 		UserAgentComments: []string{"comment"},
 		ChainParams:       &chaincfg.MainNetParams,
-		Services:          wire.SFNodeNetwork | wire.SFNodeWitness,
+		Services:          wire.SFNodeNetwork,
 		TrickleInterval:   time.Second * 10,
 		AllowSelfConns:    true,
 	}
@@ -254,7 +254,7 @@ func TestPeerConnection(t *testing.T) {
 	wantStats1 := peerStats{
 		wantUserAgent:       wire.DefaultUserAgent + "peer:1.0(comment)/",
 		wantServices:        0,
-		wantProtocolVersion: wire.RejectVersion,
+		wantProtocolVersion: wire.HnsMinProtocolVersion,
 		wantConnected:       true,
 		wantVersionKnown:    true,
 		wantVerAckReceived:  true,
@@ -268,8 +268,8 @@ func TestPeerConnection(t *testing.T) {
 	}
 	wantStats2 := peerStats{
 		wantUserAgent:       wire.DefaultUserAgent + "peer:1.0(comment)/",
-		wantServices:        wire.SFNodeNetwork | wire.SFNodeWitness,
-		wantProtocolVersion: wire.RejectVersion,
+		wantServices:        wire.SFNodeNetwork,
+		wantProtocolVersion: wire.HnsMinProtocolVersion,
 		wantConnected:       true,
 		wantVersionKnown:    true,
 		wantVerAckReceived:  true,
@@ -279,7 +279,7 @@ func TestPeerConnection(t *testing.T) {
 		wantTimeOffset:      int64(0),
 		wantBytesSent:       173, // 164 version + 9 verack
 		wantBytesReceived:   173,
-		wantWitnessEnabled:  true,
+		wantWitnessEnabled:  false,
 	}
 
 	tests := []struct {
@@ -461,10 +461,18 @@ func TestPeerListeners(t *testing.T) {
 			return
 		}
 	}
+	select {
+	case msg := <-ok:
+		if _, ok := msg.(*wire.HnsMsgVersion); !ok {
+			t.Fatalf("TestPeerListeners: got %T, want *wire.HnsMsgVersion", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TestPeerListeners: version callback timeout")
+	}
 
 	tests := []struct {
 		listener string
-		msg      wire.Message
+		msg      interface{}
 	}{
 		{
 			"OnGetAddr",
@@ -544,7 +552,11 @@ func TestPeerListeners(t *testing.T) {
 		// only one verack message is allowed
 		{
 			"OnReject",
-			wire.NewMsgReject("block", wire.RejectDuplicate, "dupe block"),
+			&wire.HnsMsgReject{
+				Message: wire.HnsMsgTypeVersion,
+				Code:    wire.RejectDuplicate,
+				Reason:  "dupe version",
+			},
 		},
 		{
 			"OnSendHeaders",
@@ -554,11 +566,19 @@ func TestPeerListeners(t *testing.T) {
 	t.Logf("Running %d tests", len(tests))
 	for _, test := range tests {
 		// Queue the test message
-		outPeer.QueueMessage(test.msg, nil)
+		switch msg := test.msg.(type) {
+		case wire.HandshakeMessage:
+			outPeer.QueueHnsMessage(msg, nil)
+		case wire.Message:
+			outPeer.QueueMessage(msg, nil)
+		default:
+			t.Fatalf("unsupported test message type %T", test.msg)
+		}
 		select {
 		case <-ok:
 		case <-time.After(time.Second * 1):
-			t.Errorf("TestPeerListeners: %s timeout", test.listener)
+			t.Errorf("TestPeerListeners: %s timeout (in connected=%v, out connected=%v)",
+				test.listener, inPeer.Connected(), outPeer.Connected())
 			return
 		}
 	}
@@ -745,13 +765,12 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	}
 	p.AssociateConnection(localConn)
 
-	// Read outbound messages to peer into a channel
-	outboundMessages := make(chan wire.Message)
+	// Read outbound messages to peer into a channel.
+	outboundMessages := make(chan wire.HandshakeMessage)
 	go func() {
 		for {
-			_, msg, _, err := wire.ReadHnsMessageN(
+			_, msg, _, err := wire.ReadHandshakeMessageN(
 				remoteConn,
-				p.ProtocolVersion(),
 				peerCfg.ChainParams.Net,
 			)
 			if err == io.EOF {
@@ -770,16 +789,16 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	// Read version message sent to remote peer
 	select {
 	case msg := <-outboundMessages:
-		if _, ok := msg.(*wire.MsgVersion); !ok {
-			t.Fatalf("Expected version message, got [%s]", msg.Command())
+		if _, ok := msg.(*wire.HnsMsgVersion); !ok {
+			t.Fatalf("Expected version message, got [%s]", msg.Type())
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Peer did not send version message")
 	}
 
-	// Remote peer writes version message advertising invalid protocol version 1
+	// Remote peer writes version message advertising invalid protocol version 0.
 	invalidVersionMsg := wire.NewMsgVersion(remoteNA, localNA, 0, 0)
-	invalidVersionMsg.ProtocolVersion = 1
+	invalidVersionMsg.ProtocolVersion = 0
 
 	_, err = wire.WriteHnsMessageN(
 		remoteConn.Writer,
@@ -789,6 +808,24 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("wire.WriteHnsMessageN: unexpected err - %v\n", err)
+	}
+
+	select {
+	case msg := <-outboundMessages:
+		reject, ok := msg.(*wire.HnsMsgReject)
+		if !ok {
+			t.Fatalf("Expected reject message, got [%s]", msg.Type())
+		}
+		if reject.Message != wire.HnsMsgTypeVersion {
+			t.Fatalf("Reject message type: got %s, want %s",
+				reject.Message, wire.HnsMsgTypeVersion)
+		}
+		if reject.Code != wire.RejectObsolete {
+			t.Fatalf("Reject code: got %s, want %s",
+				reject.Code, wire.RejectObsolete)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Peer did not send reject message")
 	}
 
 	// Expect peer to disconnect automatically
@@ -809,7 +846,7 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	select {
 	case msg, chanOpen := <-outboundMessages:
 		if chanOpen {
-			t.Fatalf("Expected no further messages, received [%s]", msg.Command())
+			t.Fatalf("Expected no further messages, received [%s]", msg.Type())
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Timeout waiting for remote reader to close")
@@ -1066,11 +1103,10 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 			},
 		},
 		{
-			"handshake with legacy inbound peer",
+			"handshake with minimum-version inbound peer",
 			func() (*peer.Peer, *peer.Peer, error) {
-				legacyVersion := wire.AddrV2Version - 1
 				inCfg := newPeer1Cfg()
-				inCfg.ProtocolVersion = legacyVersion
+				inCfg.ProtocolVersion = wire.HnsMinProtocolVersion
 				inPeer := peer.NewInboundPeer(inCfg)
 				outPeer, err := peer.NewOutboundPeer(
 					newPeer2Cfg(), "10.0.0.2:8333",
@@ -1096,12 +1132,11 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 			},
 		},
 		{
-			"handshake with legacy outbound peer",
+			"handshake with minimum-version outbound peer",
 			func() (*peer.Peer, *peer.Peer, error) {
 				inPeer := peer.NewInboundPeer(newPeer1Cfg())
-				legacyVersion := wire.AddrV2Version - 1
 				outCfg := newPeer2Cfg()
-				outCfg.ProtocolVersion = legacyVersion
+				outCfg.ProtocolVersion = wire.HnsMinProtocolVersion
 				outPeer, err := peer.NewOutboundPeer(
 					outCfg, "10.0.0.2:8333",
 				)

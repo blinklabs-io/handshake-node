@@ -395,7 +395,7 @@ func TestHnsLegacyRejectUnsupportedCommand(t *testing.T) {
 	}
 }
 
-func TestHnsLegacyRejectRequiresRejectVersionOnRead(t *testing.T) {
+func TestHnsLegacyRejectRequiresHandshakeVersionOnRead(t *testing.T) {
 	encoded, err := EncodeHnsMessage(&HnsMsgReject{
 		Message: HnsMsgTypeVersion,
 		Code:    RejectMalformed,
@@ -406,10 +406,10 @@ func TestHnsLegacyRejectRequiresRejectVersionOnRead(t *testing.T) {
 	}
 
 	_, _, _, err = ReadHnsMessageN(
-		bytes.NewReader(encoded), RejectVersion-1, MainNet,
+		bytes.NewReader(encoded), HnsMinProtocolVersion-1, MainNet,
 	)
 	if err == nil {
-		t.Fatal("expected reject message error below RejectVersion")
+		t.Fatal("expected reject message error below HnsMinProtocolVersion")
 	}
 	var msgErr *MessageError
 	if !errors.As(err, &msgErr) {

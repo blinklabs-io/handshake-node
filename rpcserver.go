@@ -72,8 +72,9 @@ const (
 	// in the memory pool.
 	gbtRegenerateSeconds = 60
 
-	// maxProtocolVersion is the max protocol version the server supports.
-	maxProtocolVersion = 70002
+	// maxProtocolVersion is the max legacy wire protocol version used when
+	// serializing messages for hex-encoded RPC responses.
+	maxProtocolVersion = wire.ProtocolVersion
 
 	// defaultMaxFeeRate is the default value to use (0.1 HNS/kvB, i.e.
 	// 100,000 doo/kvB) when the `MaxFee` field is not set when calling
@@ -511,7 +512,8 @@ func peerExists(connMgr rpcserverConnManager, addr string, nodeID int32) bool {
 }
 
 // messageToHex serializes a message to the wire protocol encoding using the
-// latest protocol version and returns a hex-encoded string of the result.
+// latest legacy protocol version and returns a hex-encoded string of the
+// result.
 func messageToHex(msg wire.Message) (string, error) {
 	var buf bytes.Buffer
 	if err := msg.BtcEncode(&buf, maxProtocolVersion, wire.WitnessEncoding); err != nil {
@@ -2369,7 +2371,7 @@ func handleGetInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (in
 	best := s.cfg.Chain.BestSnapshot()
 	ret := &hnsjson.InfoChainResult{
 		Version:         int32(1000000*appMajor + 10000*appMinor + 100*appPatch),
-		ProtocolVersion: int32(maxProtocolVersion),
+		ProtocolVersion: int32(wire.HnsProtocolVersion),
 		Blocks:          best.Height,
 		TimeOffset:      int64(s.cfg.TimeSource.Offset().Seconds()),
 		Connections:     s.cfg.ConnMgr.ConnectedCount(),
