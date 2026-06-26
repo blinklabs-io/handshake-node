@@ -370,20 +370,6 @@ func (sm *SyncManager) isSyncCandidate(peer *peerpkg.Peer) bool {
 		return true
 	}
 
-	// If the segwit soft-fork package has activated, then the peer must
-	// also be upgraded.
-	segwitActive, err := sm.chain.IsDeploymentActive(
-		chaincfg.DeploymentSegwit,
-	)
-	if err != nil {
-		log.Errorf("Unable to query for segwit soft-fork state: %v",
-			err)
-	}
-
-	if segwitActive && !peer.IsWitnessEnabled() {
-		return false
-	}
-
 	var (
 		nodeServices = peer.Services()
 		fullNode     = nodeServices.HasFlag(wire.SFNodeNetwork)
@@ -932,13 +918,6 @@ func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.MsgGetData {
 			sm.requestedBlocks[*hash] = struct{}{}
 			peerState.requestedBlocks[*hash] = struct{}{}
 
-			// If we're fetching from a witness enabled peer
-			// post-fork, then ensure that we receive all the
-			// witness data in the blocks.
-			if peer.IsWitnessEnabled() {
-				iv.Type = wire.InvTypeWitnessBlock
-			}
-
 			gdmsg.AddInvVect(iv)
 			numRequested++
 		}
@@ -1178,14 +1157,6 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 				}
 			}
 
-			// Ignore invs block invs from non-witness enabled
-			// peers, as after segwit activation we only want to
-			// download from peers that can provide us full witness
-			// data for blocks.
-			if !peer.IsWitnessEnabled() && iv.Type == wire.InvTypeBlock {
-				continue
-			}
-
 			// Add it to the request queue.
 			state.requestQueue = append(state.requestQueue, iv)
 			continue
@@ -1252,10 +1223,6 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 				limitAdd(sm.requestedBlocks, iv.Hash, maxRequestedBlocks)
 				limitAdd(state.requestedBlocks, iv.Hash, maxRequestedBlocks)
 
-				if peer.IsWitnessEnabled() {
-					iv.Type = wire.InvTypeWitnessBlock
-				}
-
 				gdmsg.AddInvVect(iv)
 				numRequested++
 			}
@@ -1268,12 +1235,6 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 			if _, exists := sm.requestedTxns[iv.Hash]; !exists {
 				limitAdd(sm.requestedTxns, iv.Hash, maxRequestedTxns)
 				limitAdd(state.requestedTxns, iv.Hash, maxRequestedTxns)
-
-				// If the peer is capable, request the txn
-				// including all witness data.
-				if peer.IsWitnessEnabled() {
-					iv.Type = wire.InvTypeWitnessTx
-				}
 
 				gdmsg.AddInvVect(iv)
 				numRequested++

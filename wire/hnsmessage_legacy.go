@@ -258,7 +258,7 @@ func HnsMessageFromLegacy(msg Message, pver uint32,
 		return &HnsMsgTx{Tx: *m}, nil
 
 	case *MsgReject:
-		if pver < RejectVersion {
+		if pver < HnsMinProtocolVersion {
 			str := fmt.Sprintf("reject message invalid for protocol "+
 				"version %d", pver)
 			return nil, messageError("MsgReject", str)
@@ -293,7 +293,10 @@ func HnsMessageFromLegacy(msg Message, pver uint32,
 		return &HnsMsgFilterClear{}, nil
 
 	case *MsgMerkleBlock:
-		payload, err := encodeLegacyPayload(m, pver, enc)
+		// Merkleblock remains an opaque legacy payload during the Phase 2
+		// cutover. Encode it with the retained legacy serializer version so
+		// Bitcoin BIP0037 gates do not reject Handshake protocol v3.
+		payload, err := encodeLegacyPayload(m, ProtocolVersion, enc)
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +385,7 @@ func LegacyMessageFromHns(hnsMsg HandshakeMessage, pver uint32,
 		return &m.Tx, nil
 
 	case *HnsMsgReject:
-		if pver < RejectVersion {
+		if pver < HnsMinProtocolVersion {
 			str := fmt.Sprintf("reject message invalid for protocol "+
 				"version %d", pver)
 			return nil, messageError("MsgReject", str)
@@ -417,7 +420,7 @@ func LegacyMessageFromHns(hnsMsg HandshakeMessage, pver uint32,
 
 	case *HnsMsgMerkleBlock:
 		msg := &MsgMerkleBlock{}
-		if err := decodeLegacyPayload(msg, m.Payload, pver, enc); err != nil {
+		if err := decodeLegacyPayload(msg, m.Payload, ProtocolVersion, enc); err != nil {
 			return nil, err
 		}
 		return msg, nil

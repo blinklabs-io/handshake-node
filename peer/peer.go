@@ -30,7 +30,7 @@ import (
 
 const (
 	// MaxProtocolVersion is the max protocol version the peer supports.
-	MaxProtocolVersion = wire.AddrV2Version
+	MaxProtocolVersion = wire.HnsProtocolVersion
 
 	// DefaultTrickleInterval is the min time between attempts to send an
 	// inv message to a peer.
@@ -38,7 +38,7 @@ const (
 
 	// MinAcceptableProtocolVersion is the lowest protocol version that a
 	// connected peer may support.
-	MinAcceptableProtocolVersion = wire.MultipleAddressVersion
+	MinAcceptableProtocolVersion = wire.HnsMinProtocolVersion
 
 	// outputBufferSize is the number of elements the output channels use.
 	outputBufferSize = 50
@@ -948,9 +948,9 @@ func (p *Peer) PushGetHeadersMsg(locator blockchain.BlockLocator, stopHash *chai
 func (p *Peer) PushRejectMsg(msgType wire.HnsMsgType, code wire.RejectCode,
 	reason string, hash *chainhash.Hash, wait bool) {
 
-	// Don't bother sending the reject message if the protocol version
-	// is too low.
-	if p.VersionKnown() && p.ProtocolVersion() < wire.RejectVersion {
+	// Don't bother sending the reject message if the Handshake protocol
+	// version is too low.
+	if p.VersionKnown() && p.ProtocolVersion() < wire.HnsMinProtocolVersion {
 		return
 	}
 
@@ -1001,11 +1001,8 @@ func hnsTimeToTime(sec uint64) time.Time {
 
 // handlePingMsg is invoked when a peer receives a ping message.
 func (p *Peer) handlePingMsg(msg *wire.HnsMsgPing) {
-	// Only reply with pong if the message is from a new enough client.
-	if p.ProtocolVersion() > wire.BIP0031Version {
-		// Include nonce from ping so pong can be identified.
-		p.QueueHnsMessage(&wire.HnsMsgPong{Nonce: msg.Nonce}, nil)
-	}
+	// Include nonce from ping so pong can be identified.
+	p.QueueHnsMessage(&wire.HnsMsgPong{Nonce: msg.Nonce}, nil)
 }
 
 // handlePongMsg is invoked when a peer receives a pong message. It updates the
@@ -1018,16 +1015,14 @@ func (p *Peer) handlePongMsg(msg *wire.HnsMsgPong) {
 	// and overlapping pings will be ignored. It is unlikely to occur
 	// without large usage of the ping rpc call since we ping infrequently
 	// enough that if they overlap we would have timed out the peer.
-	if p.ProtocolVersion() > wire.BIP0031Version {
-		p.statsMtx.Lock()
-		nonce := binary.LittleEndian.Uint64(msg.Nonce[:])
-		if p.lastPingNonce != 0 && nonce == p.lastPingNonce {
-			p.lastPingMicros = time.Since(p.lastPingTime).Nanoseconds()
-			p.lastPingMicros /= 1000 // convert to usec.
-			p.lastPingNonce = 0
-		}
-		p.statsMtx.Unlock()
+	p.statsMtx.Lock()
+	nonce := binary.LittleEndian.Uint64(msg.Nonce[:])
+	if p.lastPingNonce != 0 && nonce == p.lastPingNonce {
+		p.lastPingMicros = time.Since(p.lastPingTime).Nanoseconds()
+		p.lastPingMicros /= 1000 // convert to usec.
+		p.lastPingNonce = 0
 	}
+	p.statsMtx.Unlock()
 }
 
 // readMessage reads the next Handshake message from the peer with logging. The
@@ -1799,14 +1794,10 @@ out:
 
 			switch m := hnsMsg.(type) {
 			case *wire.HnsMsgPing:
-				// Only expects a pong message in later protocol
-				// versions.  Also set up statistics.
-				if p.ProtocolVersion() > wire.BIP0031Version {
-					p.statsMtx.Lock()
-					p.lastPingNonce = binary.LittleEndian.Uint64(m.Nonce[:])
-					p.lastPingTime = time.Now()
-					p.statsMtx.Unlock()
-				}
+				p.statsMtx.Lock()
+				p.lastPingNonce = binary.LittleEndian.Uint64(m.Nonce[:])
+				p.lastPingTime = time.Now()
+				p.statsMtx.Unlock()
 			}
 
 			p.stallControl <- stallControlMsg{sccSendMessage, hnsMsg}
@@ -2022,9 +2013,7 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 			Code:    wire.RejectMalformed,
 			Reason:  reason,
 		}
-		if p.ProtocolVersion() >= wire.RejectVersion {
-			_ = p.writeMessage(rejectMsg)
-		}
+		_ = p.writeMessage(rejectMsg)
 		return errors.New(reason)
 	}
 
@@ -2079,9 +2068,7 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 	if p.cfg.Listeners.OnVersion != nil {
 		rejectMsg := p.cfg.Listeners.OnVersion(p, msg)
 		if rejectMsg != nil {
-			if p.ProtocolVersion() >= wire.RejectVersion {
-				_ = p.writeMessage(rejectMsg)
-			}
+			_ = p.writeMessage(rejectMsg)
 			return errors.New(rejectMsg.Reason)
 		}
 	}
@@ -2089,9 +2076,6 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 	// Notify and disconnect clients that have a protocol version that is
 	// too old.
 	//
-	// NOTE: If minAcceptableProtocolVersion is raised to be higher than
-	// wire.RejectVersion, this should send a reject packet before
-	// disconnecting.
 	if msg.Version < MinAcceptableProtocolVersion {
 		// Send a reject message indicating the protocol version is
 		// obsolete and wait for the message to be sent before
@@ -2103,9 +2087,7 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 			Code:    wire.RejectObsolete,
 			Reason:  reason,
 		}
-		if p.ProtocolVersion() >= wire.RejectVersion {
-			_ = p.writeMessage(rejectMsg)
-		}
+		_ = p.writeMessage(rejectMsg)
 		return errors.New(reason)
 	}
 

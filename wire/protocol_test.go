@@ -18,15 +18,15 @@ func TestServiceFlagStringer(t *testing.T) {
 	}{
 		{0, "0x0"},
 		{SFNodeNetwork, "SFNodeNetwork"},
-		{SFNodeGetUTXO, "SFNodeGetUTXO"},
 		{SFNodeBloom, "SFNodeBloom"},
-		{SFNodeWitness, "SFNodeWitness"},
-		{SFNodeXthin, "SFNodeXthin"},
-		{SFNodeBit5, "SFNodeBit5"},
-		{SFNodeCF, "SFNodeCF"},
-		{SFNode2X, "SFNode2X"},
-		{SFNodeNetworkLimited, "SFNodeNetworkLimited"},
-		{0xffffffff, "SFNodeNetwork|SFNodeGetUTXO|SFNodeBloom|SFNodeWitness|SFNodeXthin|SFNodeBit5|SFNodeCF|SFNode2X|SFNodeNetworkLimited|SFNodeP2PV2|0xfffff300"},
+		{SFNodeGetUTXO, "0x4"},
+		{SFNodeWitness, "0x8"},
+		{SFNodeXthin, "0x10"},
+		{SFNodeBit5, "0x20"},
+		{SFNodeCF, "0x40"},
+		{SFNode2X, "0x80"},
+		{SFNodeNetworkLimited, "0x400"},
+		{0xffffffff, "SFNodeNetwork|SFNodeBloom|0xfffffffc"},
 	}
 
 	t.Logf("Running %d tests", len(tests))
@@ -69,11 +69,18 @@ func TestHasFlag(t *testing.T) {
 		want  bool
 	}{
 		{0, SFNodeNetwork, false},
-		{SFNodeNetwork | SFNodeNetworkLimited | SFNodeWitness, SFNodeBloom, false},
-		{SFNodeNetwork | SFNodeNetworkLimited | SFNodeWitness, SFNodeNetworkLimited, true},
+		{SFNodeNetwork, SFNodeBloom, false},
+		{SFNodeNetwork | SFNodeBloom, SFNodeBloom, true},
 	}
 
 	for _, test := range tests {
 		require.Equal(t, test.want, test.in.HasFlag(test.check))
 	}
+}
+
+func TestHandshakeProtocolConstants(t *testing.T) {
+	require.Equal(t, uint32(3), HnsProtocolVersion)
+	require.Equal(t, uint32(1), HnsMinProtocolVersion)
+	require.Equal(t, ServiceFlag(1), SFNodeNetwork)
+	require.Equal(t, ServiceFlag(2), SFNodeBloom)
 }

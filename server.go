@@ -44,8 +44,7 @@ import (
 const (
 	// defaultServices describes the default services that are supported by
 	// the server.
-	defaultServices = wire.SFNodeNetwork | wire.SFNodeNetworkLimited |
-		wire.SFNodeBloom | wire.SFNodeWitness | wire.SFNodeCF | wire.SFNodeP2PV2
+	defaultServices = wire.SFNodeNetwork | wire.SFNodeBloom
 
 	// defaultRequiredServices describes the default services that are
 	// required to be supported by outbound peers.
@@ -517,26 +516,6 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.HnsMsgVersion) *wire.Hns
 		}
 	}
 
-	if !cfg.RegressionTest && !isInbound {
-		// After soft-fork activation, only make outbound
-		// connection to peers if they flag that they're segwit
-		// enabled.
-		chain := sp.server.chain
-		segwitActive, err := chain.IsDeploymentActive(chaincfg.DeploymentSegwit)
-		if err != nil {
-			peerLog.Errorf("Unable to query for segwit soft-fork state: %v",
-				err)
-			return nil
-		}
-
-		if segwitActive && !sp.IsWitnessEnabled() {
-			peerLog.Infof("Disconnecting non-segwit peer %v, isn't segwit "+
-				"enabled and we need more segwit enabled peers", sp)
-			sp.Disconnect()
-			return nil
-		}
-	}
-
 	// Add the remote peer time as a sample for creating an offset against
 	// the local clock to keep the network time in sync.
 	sp.server.timeSource.AddTimeSample(sp.Addr(), hnsTimeToTime(msg.Time))
@@ -679,15 +658,10 @@ func (sp *serverPeer) OnInv(_ *peer.Peer, hnsMsg *wire.HnsMsgInv) {
 	newInv := wire.NewMsgInvSizeHint(uint(len(msg.InvList)))
 	for _, invVect := range msg.InvList {
 		if invVect.Type == wire.InvTypeTx {
-			peerLog.Tracef("Ignoring tx %v in inv from %v -- "+
-				"blocksonly enabled", invVect.Hash, sp)
-			if sp.ProtocolVersion() >= wire.BIP0037Version {
-				peerLog.Infof("Peer %v is announcing "+
-					"transactions -- disconnecting", sp)
-				sp.Disconnect()
-				return
-			}
-			continue
+			peerLog.Infof("Peer %v is announcing "+
+				"transactions -- disconnecting", sp)
+			sp.Disconnect()
+			return
 		}
 		err := newInv.AddInvVect(invVect)
 		if err != nil {
@@ -964,22 +938,18 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) 
 }
 
 // enforceNodeBloomFlag disconnects the peer if the server is not configured to
-// allow bloom filters.  Additionally, if the peer has negotiated to a protocol
-// version  that is high enough to observe the bloom filter service support bit,
-// it will be banned since it is intentionally violating the protocol.
+// allow bloom filters. Additionally, the peer will be banned since it is
+// intentionally violating the negotiated service support bit.
 func (sp *serverPeer) enforceNodeBloomFlag(msgType wire.HnsMsgType) bool {
 	if sp.server.services&wire.SFNodeBloom != wire.SFNodeBloom {
-		// Ban the peer if the protocol version is high enough that the
-		// peer is knowingly violating the protocol and banning is
-		// enabled.
+		// Ban the peer if it is knowingly violating the negotiated service
+		// bit and banning is enabled.
 		//
 		// NOTE: Even though the addBanScore function already examines
 		// whether or not banning is enabled, it is checked here as well
 		// to ensure the violation is logged and the peer is
 		// disconnected regardless.
-		if sp.ProtocolVersion() >= wire.BIP0111Version &&
-			!cfg.DisableBanning {
-
+		if !cfg.DisableBanning {
 			// Disconnect the peer regardless of whether it was
 			// banned.
 			sp.addBanScore(100, 0, msgType.String())
@@ -1129,11 +1099,6 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.HnsMsgAddr) {
 	// it will not be able to learn about other peers that have not
 	// specifically been provided.
 	if cfg.RegressionTest {
-		return
-	}
-
-	// Ignore old style addresses which don't include a timestamp.
-	if sp.ProtocolVersion() < wire.NetAddressTimeVersion {
 		return
 	}
 
@@ -1582,11 +1547,8 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 			}
 		}
 
-		// Request known addresses if the server address manager needs
-		// more and the peer has a protocol version new enough to
-		// include a timestamp with addresses.
-		hasTimestamp := sp.ProtocolVersion() >= wire.NetAddressTimeVersion
-		if s.addrManager.NeedMoreAddresses() && hasTimestamp {
+		// Request known addresses if the server address manager needs more.
+		if s.addrManager.NeedMoreAddresses() {
 			sp.QueueMessage(wire.NewMsgGetAddr(), nil)
 		}
 
