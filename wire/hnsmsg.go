@@ -65,6 +65,75 @@ const (
 	HnsMsgTypeUnknown     HnsMsgType = 30
 )
 
+func (t HnsMsgType) String() string {
+	switch t {
+	case HnsMsgTypeVersion:
+		return "version"
+	case HnsMsgTypeVerack:
+		return "verack"
+	case HnsMsgTypePing:
+		return "ping"
+	case HnsMsgTypePong:
+		return "pong"
+	case HnsMsgTypeGetAddr:
+		return "getaddr"
+	case HnsMsgTypeAddr:
+		return "addr"
+	case HnsMsgTypeInv:
+		return "inv"
+	case HnsMsgTypeGetData:
+		return "getdata"
+	case HnsMsgTypeNotFound:
+		return "notfound"
+	case HnsMsgTypeGetBlocks:
+		return "getblocks"
+	case HnsMsgTypeGetHeaders:
+		return "getheaders"
+	case HnsMsgTypeHeaders:
+		return "headers"
+	case HnsMsgTypeSendHeaders:
+		return "sendheaders"
+	case HnsMsgTypeBlock:
+		return "block"
+	case HnsMsgTypeTx:
+		return "tx"
+	case HnsMsgTypeReject:
+		return "reject"
+	case HnsMsgTypeMempool:
+		return "mempool"
+	case HnsMsgTypeFilterLoad:
+		return "filterload"
+	case HnsMsgTypeFilterAdd:
+		return "filteradd"
+	case HnsMsgTypeFilterClear:
+		return "filterclear"
+	case HnsMsgTypeMerkleBlock:
+		return "merkleblock"
+	case HnsMsgTypeFeeFilter:
+		return "feefilter"
+	case HnsMsgTypeSendCmpct:
+		return "sendcmpct"
+	case HnsMsgTypeCmpctBlock:
+		return "cmpctblock"
+	case HnsMsgTypeGetBlockTxn:
+		return "getblocktxn"
+	case HnsMsgTypeBlockTxn:
+		return "blocktxn"
+	case HnsMsgTypeGetProof:
+		return "getproof"
+	case HnsMsgTypeProof:
+		return "proof"
+	case HnsMsgTypeClaim:
+		return "claim"
+	case HnsMsgTypeAirDrop:
+		return "airdrop"
+	case HnsMsgTypeUnknown:
+		return "unknown"
+	default:
+		return fmt.Sprintf("unknown(%d)", uint8(t))
+	}
+}
+
 // HandshakeMessage is the interface implemented by every Handshake P2P
 // message. The byte-slice Encode/Decode shape mirrors cdnsd's reference
 // implementation; it differs from btcd's `Message` interface by design while

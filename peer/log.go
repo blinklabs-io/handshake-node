@@ -108,6 +108,35 @@ func invSummary(invList []*wire.InvVect) string {
 	return fmt.Sprintf("size %d", invLen)
 }
 
+func hnsInvSummary(invList []wire.HnsInvItem) string {
+	invLen := len(invList)
+	if invLen == 0 {
+		return "empty"
+	}
+
+	if invLen == 1 {
+		iv := invList[0]
+		hash := chainhash.Hash{}
+		copy(hash[:], iv.Hash[:])
+		switch wire.InvType(iv.Type) {
+		case wire.InvTypeError:
+			return fmt.Sprintf("error %s", hash)
+		case wire.InvTypeWitnessBlock:
+			return fmt.Sprintf("witness block %s", hash)
+		case wire.InvTypeBlock:
+			return fmt.Sprintf("block %s", hash)
+		case wire.InvTypeWitnessTx:
+			return fmt.Sprintf("witness tx %s", hash)
+		case wire.InvTypeTx:
+			return fmt.Sprintf("tx %s", hash)
+		}
+
+		return fmt.Sprintf("unknown (%d) %s", iv.Type, hash)
+	}
+
+	return fmt.Sprintf("size %d", invLen)
+}
+
 // locatorSummary returns a block locator as a human-readable string.
 func locatorSummary(locator []*chainhash.Hash, stopHash *chainhash.Hash) string {
 	if len(locator) > 0 {
@@ -116,6 +145,18 @@ func locatorSummary(locator []*chainhash.Hash, stopHash *chainhash.Hash) string 
 
 	return fmt.Sprintf("no locator, stop %s", stopHash)
 
+}
+
+func hnsLocatorSummary(locator [][32]byte, stopHash [32]byte) string {
+	stop := chainhash.Hash{}
+	copy(stop[:], stopHash[:])
+	if len(locator) > 0 {
+		first := chainhash.Hash{}
+		copy(first[:], locator[0][:])
+		return fmt.Sprintf("locator %s, stop %s", first, stop)
+	}
+
+	return fmt.Sprintf("no locator, stop %s", stop)
 }
 
 // sanitizeString strips any characters which are even remotely dangerous, such
@@ -144,77 +185,72 @@ func sanitizeString(str string, maxLength uint) string {
 
 // messageSummary returns a human-readable string which summarizes a message.
 // Not all messages have or need a summary.  This is used for debug logging.
-func messageSummary(msg wire.Message) string {
+func messageSummary(msg wire.HandshakeMessage) string {
 	switch msg := msg.(type) {
-	case *wire.MsgVersion:
+	case *wire.HnsMsgVersion:
 		return fmt.Sprintf("agent %s, pver %d, block %d",
-			msg.UserAgent, msg.ProtocolVersion, msg.LastBlock)
+			msg.Agent, msg.Version, msg.Height)
 
-	case *wire.MsgVerAck:
+	case *wire.HnsMsgVerack:
 		// No summary.
 
-	case *wire.MsgGetAddr:
+	case *wire.HnsMsgGetAddr:
 		// No summary.
 
-	case *wire.MsgAddr:
-		return fmt.Sprintf("%d addr", len(msg.AddrList))
+	case *wire.HnsMsgAddr:
+		return fmt.Sprintf("%d addr", len(msg.Peers))
 
-	case *wire.MsgPing:
+	case *wire.HnsMsgPing:
 		// No summary - perhaps add nonce.
 
-	case *wire.MsgPong:
+	case *wire.HnsMsgPong:
 		// No summary - perhaps add nonce.
 
-	case *wire.MsgMemPool:
+	case *wire.HnsMsgMemPool:
 		// No summary.
 
-	case *wire.MsgTx:
+	case *wire.HnsMsgTx:
 		return fmt.Sprintf("hash %s, %d inputs, %d outputs, lock %s",
-			msg.TxHash(), len(msg.TxIn), len(msg.TxOut),
-			formatLockTime(msg.LockTime))
+			msg.Tx.TxHash(), len(msg.Tx.TxIn), len(msg.Tx.TxOut),
+			formatLockTime(msg.Tx.LockTime))
 
-	case *wire.MsgBlock:
-		header := &msg.Header
-		return fmt.Sprintf("hash %s, ver %d, %d tx, %s", msg.BlockHash(),
-			header.Version, len(msg.Transactions), header.Timestamp)
+	case *wire.HnsMsgBlock:
+		header := &msg.Block.Header
+		return fmt.Sprintf("hash %s, ver %d, %d tx, %s",
+			msg.Block.BlockHash(), header.Version,
+			len(msg.Block.Transactions), header.Timestamp)
 
-	case *wire.MsgInv:
-		return invSummary(msg.InvList)
+	case *wire.HnsMsgInv:
+		return hnsInvSummary(msg.Inventory)
 
-	case *wire.MsgNotFound:
-		return invSummary(msg.InvList)
+	case *wire.HnsMsgNotFound:
+		return hnsInvSummary(msg.Inventory)
 
-	case *wire.MsgGetData:
-		return invSummary(msg.InvList)
+	case *wire.HnsMsgGetData:
+		return hnsInvSummary(msg.Inventory)
 
-	case *wire.MsgGetBlocks:
-		return locatorSummary(msg.BlockLocatorHashes, &msg.HashStop)
+	case *wire.HnsMsgGetBlocks:
+		return hnsLocatorSummary(msg.Locator, msg.StopHash)
 
-	case *wire.MsgGetHeaders:
-		return locatorSummary(msg.BlockLocatorHashes, &msg.HashStop)
+	case *wire.HnsMsgGetHeaders:
+		return hnsLocatorSummary(msg.Locator, msg.StopHash)
 
-	case *wire.MsgHeaders:
+	case *wire.HnsMsgHeaders:
 		return fmt.Sprintf("num %d", len(msg.Headers))
 
-	case *wire.MsgGetCFHeaders:
-		return fmt.Sprintf("start_height=%d, stop_hash=%v",
-			msg.StartHeight, msg.StopHash)
-
-	case *wire.MsgCFHeaders:
-		return fmt.Sprintf("stop_hash=%v, num_filter_hashes=%d",
-			msg.StopHash, len(msg.FilterHashes))
-
-	case *wire.MsgReject:
+	case *wire.HnsMsgReject:
 		// Ensure the variable length strings don't contain any
 		// characters which are even remotely dangerous such as HTML
 		// control characters, etc.  Also limit them to sane length for
 		// logging.
-		rejCommand := sanitizeString(msg.Cmd, wire.CommandSize)
+		rejCommand := sanitizeString(msg.Message.String(), wire.CommandSize)
 		rejReason := sanitizeString(msg.Reason, maxRejectReasonLen)
 		summary := fmt.Sprintf("cmd %v, code %v, reason %v", rejCommand,
 			msg.Code, rejReason)
-		if rejCommand == wire.CmdBlock || rejCommand == wire.CmdTx {
-			summary += fmt.Sprintf(", hash %v", msg.Hash)
+		if hnsRejectMessageRequiresHash(msg.Message) {
+			hash := chainhash.Hash{}
+			copy(hash[:], msg.Hash[:])
+			summary += fmt.Sprintf(", hash %v", hash)
 		}
 		return summary
 	}
