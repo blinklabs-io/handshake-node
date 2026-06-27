@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/netsync"
 	"github.com/blinklabs-io/handshake-node/peer"
@@ -203,7 +203,7 @@ func (cm *rpcConnManager) PersistentPeers() []rpcserverPeer {
 //
 // This function is safe for concurrent access and is part of the
 // rpcserverConnManager interface implementation.
-func (cm *rpcConnManager) BroadcastMessage(msg wire.Message) {
+func (cm *rpcConnManager) BroadcastMessage(msg wire.HandshakeMessage) {
 	cm.server.BroadcastMessage(msg)
 }
 

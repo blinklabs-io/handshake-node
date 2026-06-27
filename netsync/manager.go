@@ -66,21 +66,21 @@ type blockMsg struct {
 // invMsg packages a bitcoin inv message and the peer it came from together
 // so the block handler has access to that information.
 type invMsg struct {
-	inv  *wire.MsgInv
+	inv  *wire.HnsMsgInv
 	peer *peerpkg.Peer
 }
 
 // headersMsg packages a bitcoin headers message and the peer it came from
 // together so the block handler has access to that information.
 type headersMsg struct {
-	headers *wire.MsgHeaders
+	headers *wire.HnsMsgHeaders
 	peer    *peerpkg.Peer
 }
 
 // notFoundMsg packages a bitcoin notfound message and the peer it came from
 // together so the block handler has access to that information.
 type notFoundMsg struct {
-	notFound *wire.MsgNotFound
+	notFound *wire.HnsMsgNotFound
 	peer     *peerpkg.Peer
 }
 
@@ -858,7 +858,7 @@ func (sm *SyncManager) fetchHeaderBlocks(peer *peerpkg.Peer) {
 	}
 
 	gdmsg := sm.buildBlockRequest(peer)
-	if len(gdmsg.InvList) > 0 {
+	if len(gdmsg.Inventory) > 0 {
 		peer.QueueMessage(gdmsg, nil)
 	}
 }
@@ -871,10 +871,10 @@ func (sm *SyncManager) fetchHeaderBlocks(peer *peerpkg.Peer) {
 // When the best header chain has diverged (e.g. due to a reorg),
 // blocks between the fork point and the current height on the new
 // chain are different and must also be downloaded.
-func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.MsgGetData {
+func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.HnsMsgGetData {
 	// Return early if the peer is nil.
 	if peer == nil {
-		return wire.NewMsgGetDataSizeHint(0)
+		return wire.NewHnsMsgGetDataSizeHint(0)
 	}
 
 	_, bestHeaderHeight := sm.chain.BestHeader()
@@ -882,10 +882,10 @@ func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.MsgGetData {
 	if bestHeaderHeight < forkHeight {
 		// Should never happen but we're guarding against the uint cast
 		// that happens below.
-		return wire.NewMsgGetDataSizeHint(0)
+		return wire.NewHnsMsgGetDataSizeHint(0)
 	}
 	length := bestHeaderHeight - forkHeight
-	gdmsg := wire.NewMsgGetDataSizeHint(uint(length))
+	gdmsg := wire.NewHnsMsgGetDataSizeHint(uint(length))
 	numRequested := 0
 	for h := forkHeight + 1; h <= bestHeaderHeight; h++ {
 		hash, err := sm.chain.HeaderHashByHeight(h)
@@ -997,7 +997,7 @@ func (sm *SyncManager) handleNotFoundMsg(nfmsg *notFoundMsg) {
 		log.Warnf("Received notfound message from unknown peer %s", peer)
 		return
 	}
-	for _, inv := range nfmsg.notFound.InvList {
+	for _, inv := range nfmsg.notFound.InvVects() {
 		// verify the hash was actually announced by the peer
 		// before deleting from the global requested maps.
 		switch inv.Type {
@@ -1084,7 +1084,7 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 	// Attempt to find the final block in the inventory list.  There may
 	// not be one.
 	lastBlock := -1
-	invVects := imsg.inv.InvList
+	invVects := imsg.inv.InvVects()
 	for i := len(invVects) - 1; i >= 0; i-- {
 		if invVects[i].Type == wire.InvTypeBlock {
 			lastBlock = i
@@ -1206,7 +1206,7 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 	// Request as much as possible at once.  Anything that won't fit into
 	// the request will be requested on the next inv message.
 	numRequested := 0
-	gdmsg := wire.NewMsgGetData()
+	gdmsg := wire.NewHnsMsgGetData()
 	requestQueue := state.requestQueue
 	for len(requestQueue) != 0 {
 		iv := requestQueue[0]
@@ -1246,7 +1246,7 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 		}
 	}
 	state.requestQueue = requestQueue
-	if len(gdmsg.InvList) > 0 {
+	if len(gdmsg.Inventory) > 0 {
 		peer.QueueMessage(gdmsg, nil)
 	}
 }
@@ -1473,7 +1473,7 @@ func (sm *SyncManager) QueueBlock(block *hnsutil.Block, peer *peerpkg.Peer, done
 }
 
 // QueueInv adds the passed inv message and peer to the block handling queue.
-func (sm *SyncManager) QueueInv(inv *wire.MsgInv, peer *peerpkg.Peer) {
+func (sm *SyncManager) QueueInv(inv *wire.HnsMsgInv, peer *peerpkg.Peer) {
 	// No channel handling here because peers do not need to block on inv
 	// messages.
 	if atomic.LoadInt32(&sm.shutdown) != 0 {
@@ -1485,7 +1485,7 @@ func (sm *SyncManager) QueueInv(inv *wire.MsgInv, peer *peerpkg.Peer) {
 
 // QueueHeaders adds the passed headers message and peer to the block handling
 // queue.
-func (sm *SyncManager) QueueHeaders(headers *wire.MsgHeaders, peer *peerpkg.Peer) {
+func (sm *SyncManager) QueueHeaders(headers *wire.HnsMsgHeaders, peer *peerpkg.Peer) {
 	// No channel handling here because peers do not need to block on
 	// headers messages.
 	if atomic.LoadInt32(&sm.shutdown) != 0 {
@@ -1497,7 +1497,7 @@ func (sm *SyncManager) QueueHeaders(headers *wire.MsgHeaders, peer *peerpkg.Peer
 
 // QueueNotFound adds the passed notfound message and peer to the block handling
 // queue.
-func (sm *SyncManager) QueueNotFound(notFound *wire.MsgNotFound, peer *peerpkg.Peer) {
+func (sm *SyncManager) QueueNotFound(notFound *wire.HnsMsgNotFound, peer *peerpkg.Peer) {
 	// No channel handling here because peers do not need to block on
 	// reject messages.
 	if atomic.LoadInt32(&sm.shutdown) != 0 {

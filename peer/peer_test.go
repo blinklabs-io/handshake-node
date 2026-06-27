@@ -472,81 +472,80 @@ func TestPeerListeners(t *testing.T) {
 
 	tests := []struct {
 		listener string
-		msg      interface{}
+		msg      wire.HandshakeMessage
 	}{
 		{
 			"OnGetAddr",
-			wire.NewMsgGetAddr(),
+			&wire.HnsMsgGetAddr{},
 		},
 		{
 			"OnAddr",
-			wire.NewMsgAddr(),
+			&wire.HnsMsgAddr{},
 		},
 		{
 			"OnPing",
-			wire.NewMsgPing(42),
+			wire.NewHnsMsgPing(42),
 		},
 		{
 			"OnPong",
-			wire.NewMsgPong(42),
+			&wire.HnsMsgPong{Nonce: [8]byte{42}},
 		},
 		{
 			"OnMemPool",
-			wire.NewMsgMemPool(),
+			&wire.HnsMsgMemPool{},
 		},
 		{
 			"OnTx",
-			wire.NewMsgTx(wire.TxVersion),
+			&wire.HnsMsgTx{Tx: *wire.NewMsgTx(wire.TxVersion)},
 		},
 		{
 			"OnBlock",
-			wire.NewMsgBlock(wire.NewBlockHeader(1,
-				&chainhash.Hash{}, &chainhash.Hash{}, &chainhash.Hash{}, &chainhash.Hash{}, 1, 1)),
+			&wire.HnsMsgBlock{Block: *wire.NewMsgBlock(wire.NewBlockHeader(1,
+				&chainhash.Hash{}, &chainhash.Hash{}, &chainhash.Hash{}, &chainhash.Hash{}, 1, 1))},
 		},
 		{
 			"OnInv",
-			wire.NewMsgInv(),
+			wire.NewHnsMsgInv(),
 		},
 		{
 			"OnHeaders",
-			wire.NewMsgHeaders(),
+			&wire.HnsMsgHeaders{},
 		},
 		{
 			"OnNotFound",
-			wire.NewMsgNotFound(),
+			wire.NewHnsMsgNotFound(),
 		},
 		{
 			"OnGetData",
-			wire.NewMsgGetData(),
+			wire.NewHnsMsgGetData(),
 		},
 		{
 			"OnGetBlocks",
-			wire.NewMsgGetBlocks(&chainhash.Hash{}),
+			&wire.HnsMsgGetBlocks{},
 		},
 		{
 			"OnGetHeaders",
-			wire.NewMsgGetHeaders(),
+			&wire.HnsMsgGetHeaders{},
 		},
 		{
 			"OnFeeFilter",
-			wire.NewMsgFeeFilter(15000),
+			&wire.HnsMsgFeeFilter{Rate: 15000},
 		},
 		{
 			"OnFilterAdd",
-			wire.NewMsgFilterAdd([]byte{0x01}),
+			&wire.HnsMsgFilterAdd{Data: []byte{0x01}},
 		},
 		{
 			"OnFilterClear",
-			wire.NewMsgFilterClear(),
+			&wire.HnsMsgFilterClear{},
 		},
 		{
 			"OnFilterLoad",
-			wire.NewMsgFilterLoad([]byte{0x01}, 10, 0, wire.BloomUpdateNone),
+			&wire.HnsMsgFilterLoad{Filter: []byte{0x01}, HashFuncs: 10, Flags: wire.BloomUpdateNone},
 		},
 		{
 			"OnMerkleBlock",
-			wire.NewMsgMerkleBlock(wire.NewBlockHeader(1,
-				&chainhash.Hash{}, &chainhash.Hash{}, &chainhash.Hash{}, &chainhash.Hash{}, 1, 1)),
+			&wire.HnsMsgMerkleBlock{Payload: []byte{0x01}},
 		},
 		// only one version message is allowed
 		// only one verack message is allowed
@@ -560,20 +559,13 @@ func TestPeerListeners(t *testing.T) {
 		},
 		{
 			"OnSendHeaders",
-			wire.NewMsgSendHeaders(),
+			&wire.HnsMsgSendHeaders{},
 		},
 	}
 	t.Logf("Running %d tests", len(tests))
 	for _, test := range tests {
 		// Queue the test message
-		switch msg := test.msg.(type) {
-		case wire.HandshakeMessage:
-			outPeer.QueueHnsMessage(msg, nil)
-		case wire.Message:
-			outPeer.QueueMessage(msg, nil)
-		default:
-			t.Fatalf("unsupported test message type %T", test.msg)
-		}
+		outPeer.QueueHnsMessage(test.msg, nil)
 		select {
 		case <-ok:
 		case <-time.After(time.Second * 1):
@@ -641,7 +633,7 @@ func TestOutboundPeer(t *testing.T) {
 	p.AddKnownInventory(fakeInv)
 	p.QueueInventory(fakeInv)
 
-	fakeMsg := wire.NewMsgVerAck()
+	fakeMsg := &wire.HnsMsgVerack{}
 	p.QueueMessage(fakeMsg, nil)
 	done := make(chan struct{})
 	p.QueueMessage(fakeMsg, done)
@@ -721,12 +713,12 @@ func TestOutboundPeer(t *testing.T) {
 	p2.PushRejectMsg(wire.HnsMsgTypeBlock, wire.RejectInvalid, "invalid", nil, false)
 
 	// Test Queue Messages
-	p2.QueueMessage(wire.NewMsgGetAddr(), nil)
-	p2.QueueMessage(wire.NewMsgPing(1), nil)
-	p2.QueueMessage(wire.NewMsgMemPool(), nil)
-	p2.QueueMessage(wire.NewMsgGetData(), nil)
-	p2.QueueMessage(wire.NewMsgGetHeaders(), nil)
-	p2.QueueMessage(wire.NewMsgFeeFilter(20000), nil)
+	p2.QueueMessage(&wire.HnsMsgGetAddr{}, nil)
+	p2.QueueMessage(wire.NewHnsMsgPing(1), nil)
+	p2.QueueMessage(&wire.HnsMsgMemPool{}, nil)
+	p2.QueueMessage(wire.NewHnsMsgGetData(), nil)
+	p2.QueueMessage(&wire.HnsMsgGetHeaders{}, nil)
+	p2.QueueMessage(&wire.HnsMsgFeeFilter{Rate: 20000}, nil)
 
 	p2.Disconnect()
 }
@@ -744,11 +736,6 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 		AllowSelfConns:    true,
 	}
 
-	localNA := wire.NewNetAddressIPPort(
-		net.ParseIP("10.0.0.1"),
-		uint16(8333),
-		wire.SFNodeNetwork,
-	)
 	remoteNA := wire.NewNetAddressIPPort(
 		net.ParseIP("10.0.0.2"),
 		uint16(8333),
@@ -797,13 +784,17 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	}
 
 	// Remote peer writes version message advertising invalid protocol version 0.
-	invalidVersionMsg := wire.NewMsgVersion(remoteNA, localNA, 0, 0)
-	invalidVersionMsg.ProtocolVersion = 0
+	invalidVersionMsg := &wire.HnsMsgVersion{
+		Version:  0,
+		Services: uint64(peerCfg.Services),
+		Time:     uint64(time.Now().Unix()),
+		Remote:   wire.NewHnsNetAddress(remoteNA),
+		Agent:    wire.DefaultUserAgent,
+	}
 
 	_, err = wire.WriteHnsMessageN(
 		remoteConn.Writer,
 		invalidVersionMsg,
-		uint32(invalidVersionMsg.ProtocolVersion),
 		peerCfg.ChainParams.Net,
 	)
 	if err != nil {
@@ -893,7 +884,7 @@ func TestDuplicateVersionMsg(t *testing.T) {
 	// Queue a duplicate version message from the outbound peer and wait until
 	// it is sent.
 	done := make(chan struct{})
-	outPeer.QueueMessage(&wire.MsgVersion{}, done)
+	outPeer.QueueMessage(&wire.HnsMsgVersion{}, done)
 	select {
 	case <-done:
 	case <-time.After(time.Second):

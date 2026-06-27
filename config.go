@@ -110,6 +110,8 @@ type config struct {
 	BlockMinWeight       uint32        `long:"blockminweight" description:"Minimum block weight to be used when creating a block"`
 	BlockPrioritySize    uint32        `long:"blockprioritysize" description:"Size in bytes for high-priority/low-fee transactions when creating a block"`
 	BlocksOnly           bool          `long:"blocksonly" description:"Do not accept transactions from remote peers."`
+	BrontideTransport    bool          `long:"brontide" description:"Enable Handshake Brontide encrypted P2P transport with plaintext fallback"`
+	BrontideKey          string        `long:"brontidekey" description:"Path to the Brontide node identity private key"`
 	ConfigFile           string        `short:"C" long:"configfile" description:"Path to configuration file"`
 	ConnectPeers         []string      `long:"connect" description:"Connect only to the specified peers at startup"`
 	CPUProfile           string        `long:"cpuprofile" description:"Write CPU profile to the specified file"`
@@ -170,7 +172,7 @@ type config struct {
 	TrickleInterval      time.Duration `long:"trickleinterval" description:"Minimum time between attempts to send new inventory to a connected peer"`
 	UtxoCacheMaxSizeMiB  uint          `long:"utxocachemaxsize" description:"The maximum size in MiB of the UTXO cache"`
 	TxIndex              bool          `long:"txindex" description:"Maintain a full hash-based transaction index which makes all transactions available via the getrawtransaction RPC"`
-	V2Transport          bool          `long:"v2transport" description:"Enable P2P v2 encrypted transport protocol (BIP324) (default: false)"`
+	V2Transport          bool          `long:"v2transport" description:"Deprecated Bitcoin BIP324 transport flag; ignored by Handshake Brontide transport"`
 	UserAgentComments    []string      `long:"uacomment" description:"Comment to add to the user agent -- See BIP 14 for more information."`
 	Upnp                 bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
 	ShowVersion          bool          `short:"V" long:"version" description:"Display version information and exit"`
@@ -436,7 +438,7 @@ func loadConfig() (*config, []string, error) {
 		Generate:             defaultGenerate,
 		TxIndex:              defaultTxIndex,
 		AddrIndex:            defaultAddrIndex,
-		V2Transport:          false,
+		BrontideTransport:    true,
 	}
 
 	// Service options which are only added on Windows.

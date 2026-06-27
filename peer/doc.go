@@ -3,22 +3,22 @@
 // license that can be found in the LICENSE file.
 
 /*
-Package peer provides a common base for creating and managing Bitcoin network
-peers.
+Package peer provides a common base for creating and managing Handshake
+network peers.
 
 # Overview
 
 This package builds upon the wire package, which provides the fundamental
-primitives necessary to speak the bitcoin wire protocol, in order to simplify
-the process of creating fully functional peers.  In essence, it provides a
-common base for creating concurrent safe fully validating nodes, Simplified
-Payment Verification (SPV) nodes, proxies, etc.
+primitives necessary to speak the Handshake wire protocol, in order to
+simplify the process of creating fully functional peers.  In essence, it
+provides a common base for creating concurrent safe fully validating nodes,
+Simplified Payment Verification (SPV) nodes, proxies, etc.
 
 A quick overview of the major features peer provides are as follows:
 
-  - Provides a basic concurrent safe bitcoin peer for handling bitcoin
+  - Provides a basic concurrent safe Handshake peer for handling Handshake
     communications via the peer-to-peer protocol
-  - Full duplex reading and writing of bitcoin protocol messages
+  - Full duplex reading and writing of Handshake protocol messages
   - Automatic handling of the initial handshake process including protocol
     version negotiation
   - Asynchronous message queuing of outbound messages with optional channel for
@@ -28,18 +28,14 @@ A quick overview of the major features peer provides are as follows:
     incoming connections so they have flexibility to establish connections as
     they see fit (proxies, etc)
     2. User agent name and version
-    3. Bitcoin network
+    3. Handshake network
     4. Service support signalling (full nodes, bloom filters, etc)
     5. Maximum supported protocol version
-    6. Ability to register callbacks for handling bitcoin protocol messages
+    6. Ability to register callbacks for handling Handshake protocol messages
   - Inventory message batching and send trickling with known inventory detection
     and avoidance
   - Automatic periodic keep-alive pinging and pong responses
   - Random nonce generation and self connection detection
-  - Proper handling of bloom filter related commands when the caller does not
-    specify the related flag to signal support
-    1. Disconnects the peer when the protocol version is high enough
-    2. Does not invoke the related callbacks for older protocol versions
   - Snapshottable peer statistics such as the total number of bytes read and
     written, the remote address, user agent, and negotiated protocol version
   - Helper functions pushing addresses, getblocks, getheaders, and reject
@@ -53,10 +49,10 @@ A quick overview of the major features peer provides are as follows:
 # Peer Configuration
 
 All peer configuration is handled with the Config struct.  This allows the
-caller to specify things such as the user agent name and version, the bitcoin
-network to use, which services it supports, and callbacks to invoke when bitcoin
-messages are received.  See the documentation for each field of the Config
-struct for more details.
+caller to specify things such as the user agent name and version, the
+Handshake network to use, which services it supports, and callbacks to invoke
+when Handshake messages are received.  See the documentation for each field of
+the Config struct for more details.
 
 # Inbound and Outbound Peers
 
@@ -75,18 +71,20 @@ cleanup has completed.
 
 # Callbacks
 
-In order to do anything useful with a peer, it is necessary to react to bitcoin
-messages.  This is accomplished by creating an instance of the MessageListeners
-struct with the callbacks to be invoke specified and setting the Listeners field
-of the Config struct specified when creating a peer to it.
+In order to do anything useful with a peer, it is necessary to react to
+Handshake messages.  This is accomplished by creating an instance of the
+MessageListeners struct with the callbacks to be invoke specified and setting
+the Listeners field of the Config struct specified when creating a peer to it.
 
-For convenience, a callback hook for all of the currently supported bitcoin
-messages is exposed which receives the peer instance and the concrete message
-type.  In addition, a hook for OnRead is provided so even custom messages types
-for which this package does not directly provide a hook, as long as they
-implement the wire.Message interface, can be used.  Finally, the OnWrite hook
-is provided, which in conjunction with OnRead, can be used to track server-wide
-byte counts.
+Message dispatch is keyed on the one-byte Handshake message type carried in
+the wire envelope, and each callback receives the concrete HnsMsg* struct for
+its packet.  The block and tx callbacks are the exception: since those packets
+carry the canonical block and transaction data structures, OnBlock and OnTx
+receive the decoded wire.MsgBlock and wire.MsgTx directly.  In addition, a
+hook for OnRead is provided so message types for which this package does not
+directly provide a hook, as long as they implement the wire.HandshakeMessage
+interface, can be used.  Finally, the OnWrite hook is provided, which in
+conjunction with OnRead, can be used to track server-wide byte counts.
 
 It is often useful to use closures which encapsulate state when specifying the
 callback handlers.  This provides a clean method for accessing that state when
@@ -100,11 +98,11 @@ channel which will be notified when the message is actually sent can optionally
 be specified.  There are certain message types which are better sent using other
 functions which provide additional functionality.
 
-Of special interest are inventory messages.  Rather than manually sending MsgInv
-messages via Queuemessage, the inventory vectors should be queued using the
-QueueInventory function.  It employs batching and trickling along with
-intelligent known remote peer inventory detection and avoidance through the use
-of a most-recently used algorithm.
+Of special interest are inventory messages.  Rather than manually sending
+HnsMsgInv messages via QueueMessage, the inventory vectors should be queued
+using the QueueInventory function.  It employs batching and trickling along
+with intelligent known remote peer inventory detection and avoidance through
+the use of a most-recently used algorithm.
 
 # Message Sending Helper Functions
 
@@ -141,10 +139,5 @@ function which allows a btclog.Logger to be specified.  For example, logging at
 the debug level provides summaries of every message sent and received, and
 logging at the trace level provides full dumps of parsed messages as well as the
 raw message bytes using a format similar to hexdump -C.
-
-# Bitcoin Improvement Proposals
-
-This package supports all BIPS supported by the wire package.
-(https://pkg.go.dev/github.com/blinklabs-io/handshake-node/wire#hdr-Bitcoin_Improvement_Proposals)
 */
 package peer

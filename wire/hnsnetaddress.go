@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"time"
 )
 
 // HnsNetAddressSize is the on-wire size in bytes of a Handshake NetAddress.
@@ -93,6 +94,40 @@ func (n *HnsNetAddress) Decode(data []byte) error {
 	n.Port = binary.BigEndian.Uint16(data[53:55])
 	copy(n.Key[:], data[55:88])
 	return nil
+}
+
+// NewHnsNetAddress converts the in-memory NetAddress representation into a
+// Handshake wire address. The reserved region and identity key are zeroed;
+// nodes that have not learned a peer's key advertise it as all zeroes.
+func NewHnsNetAddress(na *NetAddress) HnsNetAddress {
+	if na == nil {
+		return HnsNetAddress{}
+	}
+	sec := na.Timestamp.Unix()
+	if sec < 0 {
+		sec = 0
+	}
+	return HnsNetAddress{
+		Time:     uint64(sec),
+		Services: uint64(na.Services),
+		Host:     append(net.IP(nil), na.IP...),
+		Port:     na.Port,
+	}
+}
+
+// NetAddress converts the Handshake wire address into the in-memory
+// NetAddress representation shared with the address manager.
+func (n *HnsNetAddress) NetAddress() *NetAddress {
+	sec := n.Time
+	if sec > uint64(1<<63-1) {
+		sec = uint64(1<<63 - 1)
+	}
+	return &NetAddress{
+		Timestamp: time.Unix(int64(sec), 0),
+		Services:  ServiceFlag(n.Services),
+		IP:        append(net.IP(nil), n.Host...),
+		Port:      n.Port,
+	}
 }
 
 func isHnsIPv4Mapped(ip net.IP) bool {

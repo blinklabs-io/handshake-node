@@ -408,12 +408,12 @@ func TestBuildBlockRequestSkipsInflightBlocks(t *testing.T) {
 			gdmsg := sm.buildBlockRequest(syncPeer)
 
 			// Collect the hashes from the getdata message.
-			got := make(map[chainhash.Hash]struct{}, len(gdmsg.InvList))
-			for _, iv := range gdmsg.InvList {
-				got[iv.Hash] = struct{}{}
+			got := make(map[chainhash.Hash]struct{}, len(gdmsg.Inventory))
+			for _, item := range gdmsg.Inventory {
+				got[item.InvVect().Hash] = struct{}{}
 			}
 
-			require.Equal(t, len(tc.wantRequestedHeights), len(gdmsg.InvList))
+			require.Equal(t, len(tc.wantRequestedHeights), len(gdmsg.Inventory))
 			for _, h := range tc.wantRequestedHeights {
 				hash, err := sm.chain.HeaderHashByHeight(h)
 				require.NoError(t, err)
@@ -878,10 +878,9 @@ func syncSendHeaders(t *testing.T, sm *SyncManager,
 	// that handleHeadersMsg advances it.
 	progressBefore := sm.lastProgressTime
 
-	headers := wire.NewMsgHeaders()
+	headers := &wire.HnsMsgHeaders{}
 	for _, block := range blocks {
-		err := headers.AddBlockHeader(&block.MsgBlock().Header)
-		require.NoError(t, err)
+		headers.Headers = append(headers.Headers, &block.MsgBlock().Header)
 	}
 
 	sm.handleHeadersMsg(&headersMsg{
@@ -1034,11 +1033,10 @@ func syncStalledHeaderRecovery(t *testing.T, sm *SyncManager,
 	// Deliver partial headers from the stalled peer.  When
 	// headersSent is 0, this is a no-op (peer stalls immediately).
 	if headersSent > 0 {
-		headers := wire.NewMsgHeaders()
+		headers := &wire.HnsMsgHeaders{}
 		for _, block := range blocks[:headersSent] {
-			err := headers.AddBlockHeader(
+			headers.Headers = append(headers.Headers,
 				&block.MsgBlock().Header)
-			require.NoError(t, err)
 		}
 
 		sm.handleHeadersMsg(&headersMsg{
@@ -1086,11 +1084,10 @@ func syncStalledHeaderRecovery(t *testing.T, sm *SyncManager,
 
 	// Deliver remaining headers from the replacement peer.  When
 	// headersSent is 0, this is all headers.
-	remainingHeaders := wire.NewMsgHeaders()
+	remainingHeaders := &wire.HnsMsgHeaders{}
 	for _, block := range blocks[headersSent:] {
-		err := remainingHeaders.AddBlockHeader(
+		remainingHeaders.Headers = append(remainingHeaders.Headers,
 			&block.MsgBlock().Header)
-		require.NoError(t, err)
 	}
 	sm.handleHeadersMsg(&headersMsg{
 		headers: remainingHeaders,

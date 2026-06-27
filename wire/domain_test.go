@@ -267,9 +267,9 @@ func TestDomainResourceDataRoundTrip(t *testing.T) {
 func TestDomainResourceDataLenientDecode(t *testing.T) {
 	// version=0 + NS("x.") + unknown record type 0xff.
 	buf := []byte{
-		0x00,       // version
-		0x01,       // NS
-		0x01, 'x',  // label "x"
+		0x00,      // version
+		0x01,      // NS
+		0x01, 'x', // label "x"
 		0x00,       // terminator
 		0xff,       // unknown record type -> stop
 		0xde, 0xad, // trailing junk
@@ -297,12 +297,12 @@ func TestDomainResourceDataLenientDecode(t *testing.T) {
 func TestDomainResourceDataTruncatedRecord(t *testing.T) {
 	// version=0 + NS("y.") + GLUE4 header but truncated mid-address.
 	buf := []byte{
-		0x00,       // version
-		0x01,       // NS
-		0x01, 'y',  // label "y"
-		0x00,       // terminator
-		0x02,       // GLUE4
-		0x01, 'z',  // label "z"
+		0x00,      // version
+		0x01,      // NS
+		0x01, 'y', // label "y"
+		0x00,      // terminator
+		0x02,      // GLUE4
+		0x01, 'z', // label "z"
 		0x00,       // name terminator
 		0x7f, 0x00, // only 2 bytes of what should be a 4-byte IPv4
 	}

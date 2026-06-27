@@ -153,3 +153,123 @@ func TestCipherStateRejectsNilCipher(t *testing.T) {
 		t.Fatalf("Decrypt error: got %v, want %v", err, ErrInvalidCipher)
 	}
 }
+
+// hsdCipherKey and hsdCipherSalt are the CipherState fixtures from hsd's
+// test/brontide-test.js.
+func hsdCipherKey(t *testing.T) (*CipherState, []byte, []byte) {
+	t.Helper()
+
+	key := mustHex(t,
+		"2121212121212121212121212121212121212121212121212121212121212121")
+	salt := mustHex(t,
+		"1111111111111111111111111111111111111111111111111111111111111111")
+
+	c := NewCipherState()
+	if err := c.InitSalt(key, salt); err != nil {
+		t.Fatalf("InitSalt: %v", err)
+	}
+	return c, key, salt
+}
+
+func TestCipherStateHsdRotationVector(t *testing.T) {
+	c, key, salt := hsdCipherKey(t)
+	if !bytes.Equal(c.key[:], key) {
+		t.Fatalf("key: got %x, want %x", c.key, key)
+	}
+	if !bytes.Equal(c.salt[:], salt) {
+		t.Fatalf("salt: got %x, want %x", c.salt, salt)
+	}
+
+	c.rotateKey()
+
+	wantKey := mustHex(t,
+		"0b579ba44366e4d49ac7a44a8203925cb6d610e950aee7a23c47a5448173af11")
+	wantSalt := mustHex(t,
+		"be23775b41e7c67d1ec6dcfc21299f32461e145d4164f65943b4b99fcaff6dee")
+	if !bytes.Equal(c.key[:], wantKey) {
+		t.Fatalf("rotated key: got %x, want %x", c.key, wantKey)
+	}
+	if !bytes.Equal(c.salt[:], wantSalt) {
+		t.Fatalf("rotated salt: got %x, want %x", c.salt, wantSalt)
+	}
+	if c.Nonce() != 0 {
+		t.Fatalf("nonce after rotation: got %d, want 0", c.Nonce())
+	}
+}
+
+func TestCipherStateHsdEncryptVectors(t *testing.T) {
+	tests := []struct {
+		name string
+		ad   string
+		tag1 string
+		tag2 string
+	}{
+		{
+			name: "empty ad",
+			tag1: "f11ae60b9df4c6ea25aea58ce1b6df83",
+			tag2: "d840242a1e817cd8374d45fb5621a5fc",
+		},
+		{
+			name: "with ad",
+			ad:   "222222222222222222222222222222222222",
+			tag1: "81ad416f62157481c8af8ace16b64e15",
+			tag2: "df3f8257977dfb8d283c6fb149d2d49d",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _, _ := hsdCipherKey(t)
+
+			var ad []byte
+			if test.ad != "" {
+				ad = mustHex(t, test.ad)
+			}
+
+			ct1, tag1, err := c.Encrypt([]byte("hello"), ad)
+			if err != nil {
+				t.Fatalf("Encrypt #1: %v", err)
+			}
+			if !bytes.Equal(ct1, mustHex(t, "0935b4c530")) {
+				t.Fatalf("ciphertext #1: got %x", ct1)
+			}
+			if !bytes.Equal(tag1, mustHex(t, test.tag1)) {
+				t.Fatalf("tag #1: got %x, want %s", tag1, test.tag1)
+			}
+
+			ct2, tag2, err := c.Encrypt([]byte("hello"), ad)
+			if err != nil {
+				t.Fatalf("Encrypt #2: %v", err)
+			}
+			if !bytes.Equal(ct2, mustHex(t, "74898781da")) {
+				t.Fatalf("ciphertext #2: got %x", ct2)
+			}
+			if !bytes.Equal(tag2, mustHex(t, test.tag2)) {
+				t.Fatalf("tag #2: got %x, want %s", tag2, test.tag2)
+			}
+		})
+	}
+}
+
+func TestCipherStateHsdRotateAfterEncrypt(t *testing.T) {
+	c, _, _ := hsdCipherKey(t)
+	c.nonce = RotationInterval - 1
+
+	if _, _, err := c.Encrypt([]byte("hello"), nil); err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if c.Nonce() != 0 {
+		t.Fatalf("nonce: got %d, want 0", c.Nonce())
+	}
+
+	wantKey := mustHex(t,
+		"0b579ba44366e4d49ac7a44a8203925cb6d610e950aee7a23c47a5448173af11")
+	wantSalt := mustHex(t,
+		"be23775b41e7c67d1ec6dcfc21299f32461e145d4164f65943b4b99fcaff6dee")
+	if !bytes.Equal(c.key[:], wantKey) {
+		t.Fatalf("rotated key: got %x, want %x", c.key, wantKey)
+	}
+	if !bytes.Equal(c.salt[:], wantSalt) {
+		t.Fatalf("rotated salt: got %x, want %x", c.salt, wantSalt)
+	}
+}
