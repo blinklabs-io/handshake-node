@@ -10,8 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -1194,8 +1194,8 @@ func (c *Client) InvalidateBlock(blockHash *chainhash.Hash) error {
 type FutureGetCFilterResult chan *Response
 
 // Receive waits for the Response promised by the future and returns the raw
-// filter requested from the server given its block hash.
-func (r FutureGetCFilterResult) Receive() (*wire.MsgCFilter, error) {
+// filter bytes requested from the server given its block hash.
+func (r FutureGetCFilterResult) Receive() ([]byte, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
@@ -1208,18 +1208,7 @@ func (r FutureGetCFilterResult) Receive() (*wire.MsgCFilter, error) {
 		return nil, err
 	}
 
-	// Decode the serialized cf hex to raw bytes.
-	serializedFilter, err := hex.DecodeString(filterHex)
-	if err != nil {
-		return nil, err
-	}
-
-	// Assign the filter bytes to the correct field of the wire message.
-	// We aren't going to set the block hash or extended flag, since we
-	// don't actually get that back in the RPC response.
-	var msgCFilter wire.MsgCFilter
-	msgCFilter.Data = serializedFilter
-	return &msgCFilter, nil
+	return hex.DecodeString(filterHex)
 }
 
 // GetCFilterAsync returns an instance of a type that can be used to get the
@@ -1238,9 +1227,9 @@ func (c *Client) GetCFilterAsync(blockHash *chainhash.Hash,
 	return c.SendCmd(cmd)
 }
 
-// GetCFilter returns a raw filter from the server given its block hash.
+// GetCFilter returns raw filter bytes from the server given its block hash.
 func (c *Client) GetCFilter(blockHash *chainhash.Hash,
-	filterType wire.FilterType) (*wire.MsgCFilter, error) {
+	filterType wire.FilterType) ([]byte, error) {
 	return c.GetCFilterAsync(blockHash, filterType).Receive()
 }
 
@@ -1248,9 +1237,9 @@ func (c *Client) GetCFilter(blockHash *chainhash.Hash,
 // GetCFilterHeaderAsync RPC invocation (or an applicable error).
 type FutureGetCFilterHeaderResult chan *Response
 
-// Receive waits for the Response promised by the future and returns the raw
-// filter header requested from the server given its block hash.
-func (r FutureGetCFilterHeaderResult) Receive() (*wire.MsgCFHeaders, error) {
+// Receive waits for the Response promised by the future and returns the filter
+// header requested from the server given its block hash.
+func (r FutureGetCFilterHeaderResult) Receive() (*chainhash.Hash, error) {
 	res, err := ReceiveFuture(r)
 	if err != nil {
 		return nil, err
@@ -1263,16 +1252,7 @@ func (r FutureGetCFilterHeaderResult) Receive() (*wire.MsgCFHeaders, error) {
 		return nil, err
 	}
 
-	// Assign the decoded header into a hash
-	headerHash, err := chainhash.NewHashFromStr(headerHex)
-	if err != nil {
-		return nil, err
-	}
-
-	// Assign the hash to a headers message and return it.
-	msgCFHeaders := wire.MsgCFHeaders{PrevFilterHeader: *headerHash}
-	return &msgCFHeaders, nil
-
+	return chainhash.NewHashFromStr(headerHex)
 }
 
 // GetCFilterHeaderAsync returns an instance of a type that can be used to get
@@ -1291,10 +1271,10 @@ func (c *Client) GetCFilterHeaderAsync(blockHash *chainhash.Hash,
 	return c.SendCmd(cmd)
 }
 
-// GetCFilterHeader returns a raw filter header from the server given its block
+// GetCFilterHeader returns a filter header from the server given its block
 // hash.
 func (c *Client) GetCFilterHeader(blockHash *chainhash.Hash,
-	filterType wire.FilterType) (*wire.MsgCFHeaders, error) {
+	filterType wire.FilterType) (*chainhash.Hash, error) {
 	return c.GetCFilterHeaderAsync(blockHash, filterType).Receive()
 }
 

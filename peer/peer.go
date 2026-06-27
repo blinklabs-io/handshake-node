@@ -15,6 +15,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -327,10 +328,8 @@ func newNetAddress(addr net.Addr, services wire.ServiceFlag) (*wire.NetAddress, 
 // when the message has been sent (or won't be sent due to things such as
 // shutdown)
 type outMsg struct {
-	hnsMsg    wire.HandshakeMessage
-	legacyMsg wire.Message
-	doneChan  chan<- struct{}
-	encoding  wire.MessageEncoding
+	message  wire.HandshakeMessage
+	doneChan chan<- struct{}
 }
 
 // stallControlCmd represents the command of a stall control message.
@@ -829,24 +828,27 @@ func (p *Peer) PushAddrMsg(addresses []*wire.NetAddress) ([]*wire.NetAddress, er
 		return nil, nil
 	}
 
-	msg := wire.NewMsgAddr()
-	msg.AddrList = make([]*wire.NetAddress, addressCount)
-	copy(msg.AddrList, addresses)
+	addrList := make([]*wire.NetAddress, addressCount)
+	copy(addrList, addresses)
 
 	// Randomize the addresses sent if there are more than the maximum allowed.
 	if addressCount > wire.MaxAddrPerMsg {
 		// Shuffle the address list.
 		for i := 0; i < wire.MaxAddrPerMsg; i++ {
 			j := i + rand.Intn(addressCount-i)
-			msg.AddrList[i], msg.AddrList[j] = msg.AddrList[j], msg.AddrList[i]
+			addrList[i], addrList[j] = addrList[j], addrList[i]
 		}
 
 		// Truncate it to the maximum size.
-		msg.AddrList = msg.AddrList[:wire.MaxAddrPerMsg]
+		addrList = addrList[:wire.MaxAddrPerMsg]
 	}
 
+	msg := &wire.HnsMsgAddr{Peers: make([]wire.HnsNetAddress, len(addrList))}
+	for i := range addrList {
+		msg.Peers[i] = wire.NewHnsNetAddress(addrList[i])
+	}
 	p.QueueMessage(msg, nil)
-	return msg.AddrList, nil
+	return addrList, nil
 }
 
 // PushGetBlocksMsg sends a getblocks message for the provided block locator
@@ -875,7 +877,8 @@ func (p *Peer) PushGetBlocksMsg(locator blockchain.BlockLocator, stopHash *chain
 	}
 
 	// Construct the getblocks request and queue it to be sent.
-	msg := wire.NewMsgGetBlocks(stopHash)
+	msg := &wire.HnsMsgGetBlocks{}
+	copy(msg.StopHash[:], stopHash[:])
 	for _, hash := range locator {
 		err := msg.AddBlockLocatorHash(hash)
 		if err != nil {
@@ -919,8 +922,8 @@ func (p *Peer) PushGetHeadersMsg(locator blockchain.BlockLocator, stopHash *chai
 	}
 
 	// Construct the getheaders request and queue it to be sent.
-	msg := wire.NewMsgGetHeaders()
-	msg.HashStop = *stopHash
+	msg := &wire.HnsMsgGetHeaders{}
+	copy(msg.StopHash[:], stopHash[:])
 	for _, hash := range locator {
 		err := msg.AddBlockLocatorHash(hash)
 		if err != nil {
@@ -1026,8 +1029,8 @@ func (p *Peer) handlePongMsg(msg *wire.HnsMsgPong) {
 }
 
 // readMessage reads the next Handshake message from the peer with logging. The
-// partial bool is retained for the old BIP324 downgrade path; Handshake uses
-// Brontide/plaintext transports instead.
+// partial bool is retained for the old transport-downgrade path; Handshake
+// uses Brontide/plaintext transports instead.
 func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 	wire.HandshakeMessage, []byte, error) {
 
@@ -1660,9 +1663,9 @@ out:
 				if iv.Type == wire.InvTypeBlock ||
 					iv.Type == wire.InvTypeWitnessBlock {
 
-					invMsg := wire.NewMsgInvSizeHint(1)
+					invMsg := wire.NewHnsMsgInvSizeHint(1)
 					invMsg.AddInvVect(iv)
-					waiting = queuePacket(outMsg{legacyMsg: invMsg},
+					waiting = queuePacket(outMsg{message: invMsg},
 						pendingMsgs, waiting)
 				} else {
 					invSendQueue.PushBack(iv)
@@ -1680,7 +1683,7 @@ out:
 
 			// Create and send as many inv messages as needed to
 			// drain the inventory send queue.
-			invMsg := wire.NewMsgInvSizeHint(uint(invSendQueue.Len()))
+			invMsg := wire.NewHnsMsgInvSizeHint(uint(invSendQueue.Len()))
 			for e := invSendQueue.Front(); e != nil; e = invSendQueue.Front() {
 				iv := invSendQueue.Remove(e).(*wire.InvVect)
 
@@ -1691,19 +1694,19 @@ out:
 				}
 
 				invMsg.AddInvVect(iv)
-				if len(invMsg.InvList) >= maxInvTrickleSize {
+				if len(invMsg.Inventory) >= maxInvTrickleSize {
 					waiting = queuePacket(
-						outMsg{legacyMsg: invMsg},
+						outMsg{message: invMsg},
 						pendingMsgs, waiting)
-					invMsg = wire.NewMsgInvSizeHint(uint(invSendQueue.Len()))
+					invMsg = wire.NewHnsMsgInvSizeHint(uint(invSendQueue.Len()))
 				}
 
 				// Add the inventory that is being relayed to
 				// the known inventory for the peer.
 				p.AddKnownInventory(iv)
 			}
-			if len(invMsg.InvList) > 0 {
-				waiting = queuePacket(outMsg{legacyMsg: invMsg},
+			if len(invMsg.Inventory) > 0 {
+				waiting = queuePacket(outMsg{message: invMsg},
 					pendingMsgs, waiting)
 			}
 
@@ -1759,18 +1762,6 @@ func (p *Peer) shouldLogWriteError(err error) bool {
 	return true
 }
 
-func (p *Peer) outboundHnsMessage(msg outMsg) (wire.HandshakeMessage, error) {
-	if msg.hnsMsg != nil {
-		return msg.hnsMsg, nil
-	}
-	if msg.legacyMsg == nil {
-		return nil, wire.ErrUnknownMessage
-	}
-	return wire.HnsMessageFromLegacy(
-		msg.legacyMsg, p.ProtocolVersion(), msg.encoding,
-	)
-}
-
 // outHandler handles all outgoing messages for the peer.  It must be run as a
 // goroutine.  It uses a buffered channel to serialize output messages while
 // allowing the sender to continue running asynchronously.
@@ -1779,20 +1770,15 @@ out:
 	for {
 		select {
 		case msg := <-p.sendQueue:
-			hnsMsg, err := p.outboundHnsMessage(msg)
-			if err != nil {
+			if msg.message == nil {
 				p.Disconnect()
-				if p.shouldLogWriteError(err) {
-					log.Errorf("Failed to prepare message for "+
-						"%s: %v", p, err)
-				}
 				if msg.doneChan != nil {
 					msg.doneChan <- struct{}{}
 				}
 				continue
 			}
 
-			switch m := hnsMsg.(type) {
+			switch m := msg.message.(type) {
 			case *wire.HnsMsgPing:
 				p.statsMtx.Lock()
 				p.lastPingNonce = binary.LittleEndian.Uint64(m.Nonce[:])
@@ -1800,9 +1786,9 @@ out:
 				p.statsMtx.Unlock()
 			}
 
-			p.stallControl <- stallControlMsg{sccSendMessage, hnsMsg}
+			p.stallControl <- stallControlMsg{sccSendMessage, msg.message}
 
-			err = p.writeMessage(hnsMsg)
+			err := p.writeMessage(msg.message)
 			if err != nil {
 				p.Disconnect()
 				if p.shouldLogWriteError(err) {
@@ -1867,7 +1853,7 @@ out:
 				log.Errorf("Not sending ping to %s: %v", p, err)
 				continue
 			}
-			p.QueueMessage(wire.NewMsgPing(nonce), nil)
+			p.QueueMessage(wire.NewHnsMsgPing(nonce), nil)
 
 		case <-p.quit:
 			break out
@@ -1882,6 +1868,13 @@ out:
 func (p *Peer) QueueHnsMessage(msg wire.HandshakeMessage,
 	doneChan chan<- struct{}) {
 
+	p.QueueMessage(msg, doneChan)
+}
+
+// QueueMessage adds the passed Handshake message to the peer send queue.
+//
+// This function is safe for concurrent access.
+func (p *Peer) QueueMessage(msg wire.HandshakeMessage, doneChan chan<- struct{}) {
 	// Avoid risk of deadlock if goroutine already exited.  The goroutine
 	// we will be sending to hangs around until it knows for a fact that
 	// it is marked as disconnected and *then* it drains the channels.
@@ -1893,42 +1886,7 @@ func (p *Peer) QueueHnsMessage(msg wire.HandshakeMessage,
 		}
 		return
 	}
-	p.outputQueue <- outMsg{hnsMsg: msg, doneChan: doneChan}
-}
-
-// QueueMessage adds the passed legacy message to the peer send queue. The
-// message is converted to a native Handshake packet by the output goroutine.
-//
-// This function is safe for concurrent access.
-func (p *Peer) QueueMessage(msg wire.Message, doneChan chan<- struct{}) {
-	p.QueueMessageWithEncoding(msg, doneChan, wire.BaseEncoding)
-}
-
-// QueueMessageWithEncoding adds the passed bitcoin message to the peer send
-// queue. This function is identical to QueueMessage, however it allows the
-// caller to specify the wire encoding type that should be used when
-// encoding/decoding blocks and transactions.
-//
-// This function is safe for concurrent access.
-func (p *Peer) QueueMessageWithEncoding(msg wire.Message, doneChan chan<- struct{},
-	encoding wire.MessageEncoding) {
-
-	// Avoid risk of deadlock if goroutine already exited.  The goroutine
-	// we will be sending to hangs around until it knows for a fact that
-	// it is marked as disconnected and *then* it drains the channels.
-	if !p.Connected() {
-		if doneChan != nil {
-			go func() {
-				doneChan <- struct{}{}
-			}()
-		}
-		return
-	}
-	p.outputQueue <- outMsg{
-		legacyMsg: msg,
-		encoding:  encoding,
-		doneChan:  doneChan,
-	}
+	p.outputQueue <- outMsg{message: msg, doneChan: doneChan}
 }
 
 // QueueInventory adds the passed inventory to the inventory send queue which
@@ -1959,6 +1917,12 @@ func (p *Peer) QueueInventory(invVect *wire.InvVect) {
 func (p *Peer) Connected() bool {
 	return atomic.LoadInt32(&p.connected) != 0 &&
 		atomic.LoadInt32(&p.disconnect) == 0
+}
+
+// SetBrontideConnection records whether the underlying transport was upgraded
+// to Handshake Brontide. It is set by the server after transport negotiation.
+func (p *Peer) SetBrontideConnection(encrypted bool) {
+	p.cfg.UsingV2Conn = encrypted
 }
 
 // recoverFromPanic catches any panic that occurs in a peer goroutine,
@@ -2107,7 +2071,7 @@ func (p *Peer) processRemoteVerAckMsg(msg *wire.HnsMsgVerack) {
 
 // localVersionMsg creates a version message that can be used to send to the
 // remote peer.
-func (p *Peer) localVersionMsg() (*wire.MsgVersion, error) {
+func (p *Peer) localVersionMsg() (*wire.HnsMsgVersion, error) {
 	var blockNum int32
 	if p.cfg.NewestBlock != nil {
 		var err error
@@ -2139,39 +2103,32 @@ func (p *Peer) localVersionMsg() (*wire.MsgVersion, error) {
 		}
 	}
 
-	// Create a wire.NetAddress with only the services set to use as the
-	// "addrme" in the version message.
-	//
-	// Older nodes previously added the IP and port information to the
-	// address manager which proved to be unreliable as an inbound
-	// connection from a peer didn't necessarily mean the peer itself
-	// accepted inbound connections.
-	//
-	// Also, the timestamp is unused in the version message.
-	ourNA := &wire.NetAddress{
-		Services: p.cfg.Services,
-	}
-
 	// Generate a unique nonce for this peer so self connections can be
 	// detected.  This is accomplished by adding it to a size-limited map of
 	// recently seen nonces.
 	nonce := uint64(rand.Int63())
 	sentNonces.Add(nonce)
 
-	// Version message.
-	msg := wire.NewMsgVersion(ourNA, theirNA, nonce, blockNum)
-	msg.AddUserAgent(p.cfg.UserAgentName, p.cfg.UserAgentVersion,
-		p.cfg.UserAgentComments...)
+	agent := wire.DefaultUserAgent
+	if p.cfg.UserAgentName != "" || p.cfg.UserAgentVersion != "" {
+		comment := ""
+		if len(p.cfg.UserAgentComments) > 0 {
+			comment = "(" + strings.Join(p.cfg.UserAgentComments, "; ") + ")"
+		}
+		agent += fmt.Sprintf("%s:%s%s/",
+			p.cfg.UserAgentName, p.cfg.UserAgentVersion, comment)
+	}
 
-	// Advertise local services.
-	msg.Services = p.cfg.Services
-
-	// Advertise our max supported protocol version.
-	msg.ProtocolVersion = int32(p.cfg.ProtocolVersion)
-
-	// Advertise if inv messages for transactions are desired.
-	msg.DisableRelayTx = p.cfg.DisableRelayTx
-
+	msg := &wire.HnsMsgVersion{
+		Version:  p.cfg.ProtocolVersion,
+		Services: uint64(p.cfg.Services),
+		Time:     uint64(time.Now().Unix()), //nolint:gosec
+		Remote:   wire.NewHnsNetAddress(theirNA),
+		Agent:    agent,
+		Height:   uint32(blockNum), //nolint:gosec
+		NoRelay:  p.cfg.DisableRelayTx,
+	}
+	msg.SetNonce(nonce)
 	return msg, nil
 }
 
@@ -2182,13 +2139,7 @@ func (p *Peer) writeLocalVersionMsg() error {
 		return err
 	}
 
-	hnsMsg, err := wire.HnsMessageFromLegacy(
-		localVerMsg, p.ProtocolVersion(), wire.LatestEncoding,
-	)
-	if err != nil {
-		return err
-	}
-	return p.writeMessage(hnsMsg)
+	return p.writeMessage(localVerMsg)
 }
 
 // writeSendAddrV2Msg is retained as a negotiation hook while the peer package
@@ -2384,13 +2335,12 @@ func (p *Peer) WaitForDisconnect() {
 	<-p.quit
 }
 
-// ShouldDowngradeToV1 is called when we try to connect to a peer via v2 BIP324
-// transport and they hang up. In this case, we should reconnect with the
-// legacy transport.
+// ShouldDowngradeToV1 is retained for the old transport downgrade hook.
+// Handshake Brontide/plaintext fallback is handled before peer negotiation.
 //
 // This function is safe for concurrent access.
 func (p *Peer) ShouldDowngradeToV1() bool {
-	// v2 transport (BIP324) has been removed; Handshake uses Brontide.
+	// Brontide fallback is handled before the peer protocol starts.
 	return false
 }
 
@@ -2433,7 +2383,8 @@ func newPeerBase(origCfg *Config, inbound bool) *Peer {
 		protocolVersion: cfg.ProtocolVersion,
 	}
 
-	// v2 transport (BIP324) has been removed; Handshake uses Brontide.
+	// Transport encryption is set by the server after Brontide/plaintext
+	// connection setup.
 	p.cfg.UsingV2Conn = false
 
 	return &p

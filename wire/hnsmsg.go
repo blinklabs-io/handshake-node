@@ -14,6 +14,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
 // HnsMessageHeaderSize is the size in bytes of the Handshake P2P message
@@ -65,73 +67,49 @@ const (
 	HnsMsgTypeUnknown     HnsMsgType = 30
 )
 
+// hnsMsgTypeNames maps Handshake message types to the packet names used by
+// hsd. The names are used for logging and error reporting only; the wire
+// format identifies messages by the one-byte type.
+var hnsMsgTypeNames = map[HnsMsgType]string{
+	HnsMsgTypeVersion:     "version",
+	HnsMsgTypeVerack:      "verack",
+	HnsMsgTypePing:        "ping",
+	HnsMsgTypePong:        "pong",
+	HnsMsgTypeGetAddr:     "getaddr",
+	HnsMsgTypeAddr:        "addr",
+	HnsMsgTypeInv:         "inv",
+	HnsMsgTypeGetData:     "getdata",
+	HnsMsgTypeNotFound:    "notfound",
+	HnsMsgTypeGetBlocks:   "getblocks",
+	HnsMsgTypeGetHeaders:  "getheaders",
+	HnsMsgTypeHeaders:     "headers",
+	HnsMsgTypeSendHeaders: "sendheaders",
+	HnsMsgTypeBlock:       "block",
+	HnsMsgTypeTx:          "tx",
+	HnsMsgTypeReject:      "reject",
+	HnsMsgTypeMempool:     "mempool",
+	HnsMsgTypeFilterLoad:  "filterload",
+	HnsMsgTypeFilterAdd:   "filteradd",
+	HnsMsgTypeFilterClear: "filterclear",
+	HnsMsgTypeMerkleBlock: "merkleblock",
+	HnsMsgTypeFeeFilter:   "feefilter",
+	HnsMsgTypeSendCmpct:   "sendcmpct",
+	HnsMsgTypeCmpctBlock:  "cmpctblock",
+	HnsMsgTypeGetBlockTxn: "getblocktxn",
+	HnsMsgTypeBlockTxn:    "blocktxn",
+	HnsMsgTypeGetProof:    "getproof",
+	HnsMsgTypeProof:       "proof",
+	HnsMsgTypeClaim:       "claim",
+	HnsMsgTypeAirDrop:     "airdrop",
+	HnsMsgTypeUnknown:     "unknown",
+}
+
+// String returns the hsd packet name for the message type.
 func (t HnsMsgType) String() string {
-	switch t {
-	case HnsMsgTypeVersion:
-		return "version"
-	case HnsMsgTypeVerack:
-		return "verack"
-	case HnsMsgTypePing:
-		return "ping"
-	case HnsMsgTypePong:
-		return "pong"
-	case HnsMsgTypeGetAddr:
-		return "getaddr"
-	case HnsMsgTypeAddr:
-		return "addr"
-	case HnsMsgTypeInv:
-		return "inv"
-	case HnsMsgTypeGetData:
-		return "getdata"
-	case HnsMsgTypeNotFound:
-		return "notfound"
-	case HnsMsgTypeGetBlocks:
-		return "getblocks"
-	case HnsMsgTypeGetHeaders:
-		return "getheaders"
-	case HnsMsgTypeHeaders:
-		return "headers"
-	case HnsMsgTypeSendHeaders:
-		return "sendheaders"
-	case HnsMsgTypeBlock:
-		return "block"
-	case HnsMsgTypeTx:
-		return "tx"
-	case HnsMsgTypeReject:
-		return "reject"
-	case HnsMsgTypeMempool:
-		return "mempool"
-	case HnsMsgTypeFilterLoad:
-		return "filterload"
-	case HnsMsgTypeFilterAdd:
-		return "filteradd"
-	case HnsMsgTypeFilterClear:
-		return "filterclear"
-	case HnsMsgTypeMerkleBlock:
-		return "merkleblock"
-	case HnsMsgTypeFeeFilter:
-		return "feefilter"
-	case HnsMsgTypeSendCmpct:
-		return "sendcmpct"
-	case HnsMsgTypeCmpctBlock:
-		return "cmpctblock"
-	case HnsMsgTypeGetBlockTxn:
-		return "getblocktxn"
-	case HnsMsgTypeBlockTxn:
-		return "blocktxn"
-	case HnsMsgTypeGetProof:
-		return "getproof"
-	case HnsMsgTypeProof:
-		return "proof"
-	case HnsMsgTypeClaim:
-		return "claim"
-	case HnsMsgTypeAirDrop:
-		return "airdrop"
-	case HnsMsgTypeUnknown:
-		return "unknown"
-	default:
-		return fmt.Sprintf("unknown(%d)", uint8(t))
+	if name, ok := hnsMsgTypeNames[t]; ok {
+		return name
 	}
+	return fmt.Sprintf("unknown (%d)", uint8(t))
 }
 
 // HandshakeMessage is the interface implemented by every Handshake P2P
@@ -335,6 +313,19 @@ type HnsMsgPing struct {
 	Nonce [8]byte
 }
 
+// NewHnsMsgPing returns a ping message carrying the given nonce in the
+// little-endian byte order used on the wire.
+func NewHnsMsgPing(nonce uint64) *HnsMsgPing {
+	msg := &HnsMsgPing{}
+	binary.LittleEndian.PutUint64(msg.Nonce[:], nonce)
+	return msg
+}
+
+// NonceUint64 returns the ping nonce as a little-endian uint64.
+func (m *HnsMsgPing) NonceUint64() uint64 {
+	return binary.LittleEndian.Uint64(m.Nonce[:])
+}
+
 func (*HnsMsgPing) Type() HnsMsgType { return HnsMsgTypePing }
 func (m *HnsMsgPing) Encode() []byte {
 	out := make([]byte, 8)
@@ -353,6 +344,11 @@ func (m *HnsMsgPing) Decode(data []byte) error {
 // HnsMsgPong is the Handshake "pong" message, echoing the nonce from a Ping.
 type HnsMsgPong struct {
 	Nonce [8]byte
+}
+
+// NonceUint64 returns the pong nonce as a little-endian uint64.
+func (m *HnsMsgPong) NonceUint64() uint64 {
+	return binary.LittleEndian.Uint64(m.Nonce[:])
 }
 
 func (*HnsMsgPong) Type() HnsMsgType { return HnsMsgTypePong }
@@ -468,10 +464,62 @@ func (i *HnsInvItem) Decode(data []byte) error {
 	return nil
 }
 
+// NewHnsInvItem converts an in-memory inventory vector into its Handshake
+// wire representation.
+func NewHnsInvItem(iv *InvVect) HnsInvItem {
+	item := HnsInvItem{Type: uint32(iv.Type)}
+	copy(item.Hash[:], iv.Hash[:])
+	return item
+}
+
+// InvVect converts the Handshake inventory item into the in-memory inventory
+// vector representation shared with the rest of the codebase.
+func (i *HnsInvItem) InvVect() *InvVect {
+	iv := &InvVect{Type: InvType(i.Type)}
+	copy(iv.Hash[:], i.Hash[:])
+	return iv
+}
+
+// hnsInvItemsToInvVects converts Handshake inventory items into the in-memory
+// inventory vector representation shared with the rest of the codebase.
+func hnsInvItemsToInvVects(inventory []HnsInvItem) []*InvVect {
+	invVects := make([]*InvVect, len(inventory))
+	for i := range inventory {
+		invVects[i] = inventory[i].InvVect()
+	}
+	return invVects
+}
+
+// hnsInvSizeHint returns an inventory slice with a capacity hint, limited to
+// the maximum number of inventory items allowed per message.
+func hnsInvSizeHint(invListHint uint) []HnsInvItem {
+	if invListHint > MaxInvPerMsg {
+		invListHint = MaxInvPerMsg
+	}
+	return make([]HnsInvItem, 0, invListHint)
+}
+
 // HnsMsgInv is the Handshake "inv" message. It announces inventory available
 // from the peer.
 type HnsMsgInv struct {
 	Inventory []HnsInvItem
+}
+
+// NewHnsMsgInv returns a new Handshake inv message.
+func NewHnsMsgInv() *HnsMsgInv {
+	return &HnsMsgInv{}
+}
+
+// NewHnsMsgInvSizeHint returns a new Handshake inv message with the backing
+// inventory slice sized for the given hint, limited to the maximum allowed
+// per message.
+func NewHnsMsgInvSizeHint(invListHint uint) *HnsMsgInv {
+	return &HnsMsgInv{Inventory: hnsInvSizeHint(invListHint)}
+}
+
+// InvVects returns the message inventory as in-memory inventory vectors.
+func (m *HnsMsgInv) InvVects() []*InvVect {
+	return hnsInvItemsToInvVects(m.Inventory)
 }
 
 func (*HnsMsgInv) Type() HnsMsgType { return HnsMsgTypeInv }
@@ -488,10 +536,39 @@ func (m *HnsMsgInv) Decode(data []byte) error {
 	return nil
 }
 
+// AddInvVect appends an inventory vector to the message. It returns an error
+// when the message already carries the maximum number of inventory items.
+func (m *HnsMsgInv) AddInvVect(iv *InvVect) error {
+	if len(m.Inventory)+1 > MaxInvPerMsg {
+		return messageError("HnsMsgInv.AddInvVect", fmt.Sprintf(
+			"too many invvect in message [max %v]", MaxInvPerMsg,
+		))
+	}
+	m.Inventory = append(m.Inventory, NewHnsInvItem(iv))
+	return nil
+}
+
 // HnsMsgGetData is the Handshake "getdata" message. It requests inventory
 // items previously announced by a peer.
 type HnsMsgGetData struct {
 	Inventory []HnsInvItem
+}
+
+// NewHnsMsgGetData returns a new Handshake getdata message.
+func NewHnsMsgGetData() *HnsMsgGetData {
+	return &HnsMsgGetData{}
+}
+
+// NewHnsMsgGetDataSizeHint returns a new Handshake getdata message with the
+// backing inventory slice sized for the given hint, limited to the maximum
+// allowed per message.
+func NewHnsMsgGetDataSizeHint(invListHint uint) *HnsMsgGetData {
+	return &HnsMsgGetData{Inventory: hnsInvSizeHint(invListHint)}
+}
+
+// InvVects returns the message inventory as in-memory inventory vectors.
+func (m *HnsMsgGetData) InvVects() []*InvVect {
+	return hnsInvItemsToInvVects(m.Inventory)
 }
 
 func (*HnsMsgGetData) Type() HnsMsgType { return HnsMsgTypeGetData }
@@ -508,10 +585,32 @@ func (m *HnsMsgGetData) Decode(data []byte) error {
 	return nil
 }
 
+// AddInvVect appends an inventory vector to the message. It returns an error
+// when the message already carries the maximum number of inventory items.
+func (m *HnsMsgGetData) AddInvVect(iv *InvVect) error {
+	if len(m.Inventory)+1 > MaxInvPerMsg {
+		return messageError("HnsMsgGetData.AddInvVect", fmt.Sprintf(
+			"too many invvect in message [max %v]", MaxInvPerMsg,
+		))
+	}
+	m.Inventory = append(m.Inventory, NewHnsInvItem(iv))
+	return nil
+}
+
 // HnsMsgNotFound is the Handshake "notfound" message. It returns requested
 // inventory items that the peer could not provide.
 type HnsMsgNotFound struct {
 	Inventory []HnsInvItem
+}
+
+// NewHnsMsgNotFound returns a new Handshake notfound message.
+func NewHnsMsgNotFound() *HnsMsgNotFound {
+	return &HnsMsgNotFound{}
+}
+
+// InvVects returns the message inventory as in-memory inventory vectors.
+func (m *HnsMsgNotFound) InvVects() []*InvVect {
+	return hnsInvItemsToInvVects(m.Inventory)
 }
 
 func (*HnsMsgNotFound) Type() HnsMsgType { return HnsMsgTypeNotFound }
@@ -525,6 +624,18 @@ func (m *HnsMsgNotFound) Decode(data []byte) error {
 		return err
 	}
 	m.Inventory = inventory
+	return nil
+}
+
+// AddInvVect appends an inventory vector to the message. It returns an error
+// when the message already carries the maximum number of inventory items.
+func (m *HnsMsgNotFound) AddInvVect(iv *InvVect) error {
+	if len(m.Inventory)+1 > MaxInvPerMsg {
+		return messageError("HnsMsgNotFound.AddInvVect", fmt.Sprintf(
+			"too many invvect in message [max %v]", MaxInvPerMsg,
+		))
+	}
+	m.Inventory = append(m.Inventory, NewHnsInvItem(iv))
 	return nil
 }
 
@@ -622,6 +733,27 @@ func (m *HnsMsgGetBlocks) Decode(data []byte) error {
 	return nil
 }
 
+// AddBlockLocatorHash appends a block locator hash. It returns an error when
+// the message already carries the maximum number of locator hashes.
+func (m *HnsMsgGetBlocks) AddBlockLocatorHash(hash *chainhash.Hash) error {
+	if len(m.Locator)+1 > MaxBlockLocatorsPerMsg {
+		return messageError("HnsMsgGetBlocks.AddBlockLocatorHash",
+			fmt.Sprintf("too many block locator hashes for message [max %v]",
+				MaxBlockLocatorsPerMsg))
+	}
+	m.Locator = append(m.Locator, [32]byte(*hash))
+	return nil
+}
+
+// LocatorHashes returns the block locator as chain hashes.
+func (m *HnsMsgGetBlocks) LocatorHashes() []*chainhash.Hash {
+	hashes := make([]*chainhash.Hash, len(m.Locator))
+	for i := range m.Locator {
+		hashes[i] = (*chainhash.Hash)(&m.Locator[i])
+	}
+	return hashes
+}
+
 // HnsMsgGetHeaders is the Handshake "getheaders" message. It requests a
 // header chain after one of the locator hashes, stopping at StopHash when set.
 type HnsMsgGetHeaders struct {
@@ -673,6 +805,27 @@ func (m *HnsMsgGetHeaders) Decode(data []byte) error {
 	}
 	copy(m.StopHash[:], data[:32])
 	return nil
+}
+
+// AddBlockLocatorHash appends a block locator hash. It returns an error when
+// the message already carries the maximum number of locator hashes.
+func (m *HnsMsgGetHeaders) AddBlockLocatorHash(hash *chainhash.Hash) error {
+	if len(m.Locator)+1 > MaxBlockLocatorsPerMsg {
+		return messageError("HnsMsgGetHeaders.AddBlockLocatorHash",
+			fmt.Sprintf("too many block locator hashes for message [max %v]",
+				MaxBlockLocatorsPerMsg))
+	}
+	m.Locator = append(m.Locator, [32]byte(*hash))
+	return nil
+}
+
+// LocatorHashes returns the block locator as chain hashes.
+func (m *HnsMsgGetHeaders) LocatorHashes() []*chainhash.Hash {
+	hashes := make([]*chainhash.Hash, len(m.Locator))
+	for i := range m.Locator {
+		hashes[i] = (*chainhash.Hash)(&m.Locator[i])
+	}
+	return hashes
 }
 
 // HnsMsgHeaders is the Handshake "headers" message. It carries a count

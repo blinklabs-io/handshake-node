@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/addrmgr"
 	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
+	"github.com/blinklabs-io/handshake-node/brontide"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/connmgr"
@@ -38,6 +40,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/decred/dcrd/lru"
 )
 
@@ -119,7 +122,7 @@ var _ net.Addr = simpleAddr{}
 // broadcastMsg provides the ability to house a bitcoin message to be broadcast
 // to all connected peers except specified excluded peers.
 type broadcastMsg struct {
-	message      wire.Message
+	message      wire.HandshakeMessage
 	excludePeers []*serverPeer
 }
 
@@ -215,6 +218,8 @@ type server struct {
 	chain                *blockchain.BlockChain
 	txMemPool            *mempool.TxPool
 	cpuMiner             *cpuminer.CPUMiner
+	brontideIdentity     *btcec.PrivateKey
+	brontideStaticKey    [brontide.PublicKeySize]byte
 	modifyRebroadcastInv chan interface{}
 	p2pDowngrader        *peer.P2PDowngrader
 	newPeers             chan *serverPeer
@@ -342,9 +347,18 @@ func (sp *serverPeer) relayTxDisabled() bool {
 }
 
 // pushAddrMsg sends a Handshake addr message to the connected peer using the
-// provided addresses.
-func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2) {
-	addrs := make([]*wire.NetAddress, 0, len(addresses))
+// provided addresses. When localIdentity is set, it is included as the static
+// Brontide key for each advertised local address.
+func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2,
+	localIdentity ...*[brontide.PublicKeySize]byte) {
+
+	var identity *[brontide.PublicKeySize]byte
+	if len(localIdentity) > 0 {
+		identity = localIdentity[0]
+	}
+
+	msg := &wire.HnsMsgAddr{}
+	knownAddrs := make([]*wire.NetAddressV2, 0, len(addresses))
 	for _, addr := range addresses {
 		// Filter addresses already known to the peer.
 		if sp.addressKnown(addr) {
@@ -357,27 +371,24 @@ func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2) {
 		}
 
 		// Convert the NetAddressV2 to a legacy address.
-		addrs = append(addrs, addr.ToLegacy())
+		legacy := addr.ToLegacy()
+		if legacy == nil {
+			continue
+		}
+
+		hnsAddr := wire.NewHnsNetAddress(legacy)
+		if identity != nil {
+			copy(hnsAddr.Key[:], identity[:])
+		}
+		msg.Peers = append(msg.Peers, hnsAddr)
+		knownAddrs = append(knownAddrs, addr)
+		if len(msg.Peers) >= wire.MaxAddrPerMsg {
+			break
+		}
 	}
 
-	known, err := sp.PushAddrMsg(addrs)
-	if err != nil {
-		peerLog.Errorf(
-			"Can't push address message to %s: %v", sp.Peer, err,
-		)
-		sp.Disconnect()
-		return
-	}
-
-	// Convert all of the known addresses to NetAddressV2 to add them to
-	// the set of known addresses.
-	knownAddrs := make([]*wire.NetAddressV2, 0, len(known))
-	for _, knownAddr := range known {
-		currentKna := wire.NetAddressV2FromBytes(
-			knownAddr.Timestamp, knownAddr.Services,
-			knownAddr.IP, knownAddr.Port,
-		)
-		knownAddrs = append(knownAddrs, currentKna)
+	if len(msg.Peers) > 0 {
+		sp.QueueMessage(msg, nil)
 	}
 	sp.addKnownAddresses(knownAddrs)
 }
@@ -437,32 +448,23 @@ func hnsTimeToTime(sec uint64) time.Time {
 	return time.Unix(int64(sec), 0)
 }
 
-func legacyMessageFromHns(msg wire.HandshakeMessage, pver uint32) (wire.Message, error) {
-	return wire.LegacyMessageFromHns(msg, pver, wire.WitnessEncoding)
+type prefixedConn struct {
+	net.Conn
+	reader io.Reader
 }
 
-func legacyInvFromHns(msg wire.HandshakeMessage, pver uint32) (*wire.MsgInv, error) {
-	legacy, err := legacyMessageFromHns(msg, pver)
-	if err != nil {
-		return nil, err
-	}
-	inv, ok := legacy.(*wire.MsgInv)
-	if !ok {
-		return nil, fmt.Errorf("converted %T to %T, want *wire.MsgInv", msg, legacy)
-	}
-	return inv, nil
+func (c *prefixedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
 }
 
-func legacyNotFoundFromHns(msg wire.HandshakeMessage, pver uint32) (*wire.MsgNotFound, error) {
-	legacy, err := legacyMessageFromHns(msg, pver)
-	if err != nil {
-		return nil, err
+func looksLikePlaintextHnsVersionHeader(prefix []byte, hnsnet wire.BitcoinNet) bool {
+	if len(prefix) != wire.HnsMessageHeaderSize {
+		return false
 	}
-	notFound, ok := legacy.(*wire.MsgNotFound)
-	if !ok {
-		return nil, fmt.Errorf("converted %T to %T, want *wire.MsgNotFound", msg, legacy)
+	if binary.LittleEndian.Uint32(prefix[0:4]) != uint32(hnsnet) {
+		return false
 	}
-	return notFound, nil
+	return wire.HnsMsgType(prefix[4]) == wire.HnsMsgTypeVersion
 }
 
 // ShouldReconnectV1 is invoked when we need to determine if we are going to
@@ -562,7 +564,7 @@ func (sp *serverPeer) OnMemPool(_ *peer.Peer, msg *wire.HnsMsgMemPool) {
 	// without double checking it here.
 	txMemPool := sp.server.txMemPool
 	txDescs := txMemPool.TxDescs()
-	invMsg := wire.NewMsgInvSizeHint(uint(len(txDescs)))
+	invMsg := wire.NewHnsMsgInvSizeHint(uint(len(txDescs)))
 
 	for _, txDesc := range txDescs {
 		// Either add all transactions when there is no bloom filter,
@@ -571,14 +573,14 @@ func (sp *serverPeer) OnMemPool(_ *peer.Peer, msg *wire.HnsMsgMemPool) {
 		if !sp.filter.IsLoaded() || sp.filter.MatchTxAndUpdate(txDesc.Tx) {
 			iv := wire.NewInvVect(wire.InvTypeTx, txDesc.Tx.Hash())
 			invMsg.AddInvVect(iv)
-			if len(invMsg.InvList)+1 > wire.MaxInvPerMsg {
+			if len(invMsg.Inventory)+1 > wire.MaxInvPerMsg {
 				break
 			}
 		}
 	}
 
 	// Send the inventory message if there is anything to send.
-	if len(invMsg.InvList) > 0 {
+	if len(invMsg.Inventory) > 0 {
 		sp.QueueMessage(invMsg, nil)
 	}
 }
@@ -641,22 +643,15 @@ func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
 // accordingly.  We pass the message down to blockmanager which will call
 // QueueMessage with any appropriate responses.
 func (sp *serverPeer) OnInv(_ *peer.Peer, hnsMsg *wire.HnsMsgInv) {
-	msg, err := legacyInvFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert inv from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-
 	if !cfg.BlocksOnly {
-		if len(msg.InvList) > 0 {
-			sp.server.syncManager.QueueInv(msg, sp.Peer)
+		if len(hnsMsg.Inventory) > 0 {
+			sp.server.syncManager.QueueInv(hnsMsg, sp.Peer)
 		}
 		return
 	}
 
-	newInv := wire.NewMsgInvSizeHint(uint(len(msg.InvList)))
-	for _, invVect := range msg.InvList {
+	newInv := wire.NewHnsMsgInvSizeHint(uint(len(hnsMsg.Inventory)))
+	for _, invVect := range hnsMsg.InvVects() {
 		if invVect.Type == wire.InvTypeTx {
 			peerLog.Infof("Peer %v is announcing "+
 				"transactions -- disconnecting", sp)
@@ -670,7 +665,7 @@ func (sp *serverPeer) OnInv(_ *peer.Peer, hnsMsg *wire.HnsMsgInv) {
 		}
 	}
 
-	if len(newInv.InvList) > 0 {
+	if len(newInv.Inventory) > 0 {
 		sp.server.syncManager.QueueInv(newInv, sp.Peer)
 	}
 }
@@ -678,42 +673,17 @@ func (sp *serverPeer) OnInv(_ *peer.Peer, hnsMsg *wire.HnsMsgInv) {
 // OnHeaders is invoked when a peer receives a headers message. The message is
 // passed down to the sync manager.
 func (sp *serverPeer) OnHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgHeaders) {
-	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert headers from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-	msg, ok := legacy.(*wire.MsgHeaders)
-	if !ok {
-		peerLog.Debugf("Unexpected headers conversion type %T from %s", legacy, sp)
-		sp.Disconnect()
-		return
-	}
-	sp.server.syncManager.QueueHeaders(msg, sp.Peer)
+	sp.server.syncManager.QueueHeaders(hnsMsg, sp.Peer)
 }
 
 // OnGetData is invoked when a peer receives a getdata message and is
 // used to deliver block and transaction information.
 func (sp *serverPeer) OnGetData(_ *peer.Peer, hnsMsg *wire.HnsMsgGetData) {
-	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert getdata from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-	msg, ok := legacy.(*wire.MsgGetData)
-	if !ok {
-		peerLog.Debugf("Unexpected getdata conversion type %T from %s", legacy, sp)
-		sp.Disconnect()
-		return
-	}
-
 	// failedMsg is an inventory that stores all the failed msgs - either
 	// the msg is an unknown type, or there's an error processing it.
-	failedMsg := wire.NewMsgNotFound()
+	failedMsg := wire.NewHnsMsgNotFound()
 
-	length := len(msg.InvList)
+	length := len(hnsMsg.Inventory)
 
 	// A decaying ban score increase is applied to prevent exhausting
 	// resources with unusually large inventory queries.
@@ -739,7 +709,7 @@ func (sp *serverPeer) OnGetData(_ *peer.Peer, hnsMsg *wire.HnsMsgGetData) {
 	const numBuffered = 5
 	doneChans := make([]chan struct{}, 0, numBuffered)
 
-	for i, iv := range msg.InvList {
+	for i, iv := range hnsMsg.InvVects() {
 		// doneChan behaves like a semaphore - every time a msg is
 		// processed, either succeeded or failed, a signal is sent to
 		// this doneChan.
@@ -778,7 +748,7 @@ func (sp *serverPeer) OnGetData(_ *peer.Peer, hnsMsg *wire.HnsMsgGetData) {
 		doneChans = make([]chan struct{}, 0, numBuffered)
 	}
 
-	if len(failedMsg.InvList) != 0 {
+	if len(failedMsg.Inventory) != 0 {
 		doneChan := make(chan struct{}, 1)
 
 		// Add this doneChan for tracking.
@@ -847,19 +817,6 @@ func (s *server) pushInventory(sp *serverPeer, iv *wire.InvVect,
 
 // OnGetBlocks is invoked when a peer receives a getblocks message.
 func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, hnsMsg *wire.HnsMsgGetBlocks) {
-	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert getblocks from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-	msg, ok := legacy.(*wire.MsgGetBlocks)
-	if !ok {
-		peerLog.Debugf("Unexpected getblocks conversion type %T from %s", legacy, sp)
-		sp.Disconnect()
-		return
-	}
-
 	// Find the most recent known block in the best chain based on the block
 	// locator and fetch all of the block hashes after it until either
 	// wire.MaxBlocksPerMsg have been fetched or the provided stop hash is
@@ -871,25 +828,26 @@ func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, hnsMsg *wire.HnsMsgGetBlocks) {
 	//
 	// This mirrors the behavior in the reference implementation.
 	chain := sp.server.chain
-	hashList := chain.LocateBlocks(msg.BlockLocatorHashes, &msg.HashStop,
+	stopHash := chainhash.Hash(hnsMsg.StopHash)
+	hashList := chain.LocateBlocks(hnsMsg.LocatorHashes(), &stopHash,
 		wire.MaxBlocksPerMsg)
 
 	// Generate inventory message.
-	invMsg := wire.NewMsgInv()
+	invMsg := wire.NewHnsMsgInv()
 	for i := range hashList {
 		iv := wire.NewInvVect(wire.InvTypeBlock, &hashList[i])
 		invMsg.AddInvVect(iv)
 	}
 
 	// Send the inventory message if there is anything to send.
-	if len(invMsg.InvList) > 0 {
-		invListLen := len(invMsg.InvList)
+	if len(invMsg.Inventory) > 0 {
+		invListLen := len(hashList)
 		if invListLen == wire.MaxBlocksPerMsg {
 			// Intentionally use a copy of the final hash so there
 			// is not a reference into the inventory slice which
 			// would prevent the entire slice from being eligible
 			// for GC as soon as it's sent.
-			continueHash := invMsg.InvList[invListLen-1].Hash
+			continueHash := hashList[invListLen-1]
 			sp.continueHash = &continueHash
 		}
 		sp.QueueMessage(invMsg, nil)
@@ -898,19 +856,6 @@ func (sp *serverPeer) OnGetBlocks(_ *peer.Peer, hnsMsg *wire.HnsMsgGetBlocks) {
 
 // OnGetHeaders is invoked when a peer receives a getheaders message.
 func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) {
-	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert getheaders from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-	msg, ok := legacy.(*wire.MsgGetHeaders)
-	if !ok {
-		peerLog.Debugf("Unexpected getheaders conversion type %T from %s", legacy, sp)
-		sp.Disconnect()
-		return
-	}
-
 	// Ignore getheaders requests if not in sync.
 	if !sp.server.syncManager.IsCurrent() {
 		return
@@ -927,14 +872,15 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) 
 	//
 	// This mirrors the behavior in the reference implementation.
 	chain := sp.server.chain
-	headers := chain.LocateHeaders(msg.BlockLocatorHashes, &msg.HashStop)
+	stopHash := chainhash.Hash(hnsMsg.StopHash)
+	headers := chain.LocateHeaders(hnsMsg.LocatorHashes(), &stopHash)
 
 	// Send found headers to the requesting peer.
 	blockHeaders := make([]*wire.BlockHeader, len(headers))
 	for i := range headers {
 		blockHeaders[i] = &headers[i]
 	}
-	sp.QueueMessage(&wire.MsgHeaders{Headers: blockHeaders}, nil)
+	sp.QueueMessage(&wire.HnsMsgHeaders{Headers: blockHeaders}, nil)
 }
 
 // enforceNodeBloomFlag disconnects the peer if the server is not configured to
@@ -1040,17 +986,11 @@ func (sp *serverPeer) OnFilterLoad(_ *peer.Peer, hnsMsg *wire.HnsMsgFilterLoad) 
 
 	sp.setDisableRelayTx(false)
 
-	legacy, err := legacyMessageFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert filterload from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-	msg, ok := legacy.(*wire.MsgFilterLoad)
-	if !ok {
-		peerLog.Debugf("Unexpected filterload conversion type %T from %s", legacy, sp)
-		sp.Disconnect()
-		return
+	msg := &wire.MsgFilterLoad{
+		Filter:    append([]byte(nil), hnsMsg.Filter...),
+		HashFuncs: hnsMsg.HashFuncs,
+		Tweak:     hnsMsg.Tweak,
+		Flags:     hnsMsg.Flags,
 	}
 	sp.filter.Reload(msg)
 }
@@ -1166,15 +1106,8 @@ func (sp *serverPeer) OnNotFound(p *peer.Peer, hnsMsg *wire.HnsMsgNotFound) {
 		return
 	}
 
-	msg, err := legacyNotFoundFromHns(hnsMsg, sp.ProtocolVersion())
-	if err != nil {
-		peerLog.Debugf("Unable to convert notfound from %s: %v", sp, err)
-		sp.Disconnect()
-		return
-	}
-
 	var numBlocks, numTxns uint32
-	for _, inv := range msg.InvList {
+	for _, inv := range hnsMsg.InvVects() {
 		switch inv.Type {
 		case wire.InvTypeBlock:
 			numBlocks++
@@ -1206,7 +1139,7 @@ func (sp *serverPeer) OnNotFound(p *peer.Peer, hnsMsg *wire.HnsMsgNotFound) {
 		}
 	}
 
-	sp.server.syncManager.QueueNotFound(msg, p)
+	sp.server.syncManager.QueueNotFound(hnsMsg, p)
 }
 
 // randomUint16Number returns a random uint16 in a specified input range.  Note
@@ -1305,7 +1238,7 @@ func (s *server) pushTxMsg(sp *serverPeer, hash *chainhash.Hash,
 		return err
 	}
 
-	sp.QueueMessageWithEncoding(tx.MsgTx(), doneChan, encoding)
+	sp.QueueMessage(&wire.HnsMsgTx{Tx: *tx.MsgTx()}, doneChan)
 
 	return nil
 }
@@ -1353,7 +1286,7 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	if !sendInv {
 		dc = doneChan
 	}
-	sp.QueueMessageWithEncoding(&msgBlock, dc, encoding)
+	sp.QueueMessage(&wire.HnsMsgBlock{Block: msgBlock}, dc)
 
 	// When the peer requests the final block that was advertised in
 	// response to a getblocks message which requested more blocks than
@@ -1362,7 +1295,7 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	// batch of inventory.
 	if sendInv {
 		best := sp.server.chain.BestSnapshot()
-		invMsg := wire.NewMsgInvSizeHint(1)
+		invMsg := wire.NewHnsMsgInvSizeHint(1)
 		iv := wire.NewInvVect(wire.InvTypeBlock, &best.Hash)
 		invMsg.AddInvVect(iv)
 		sp.QueueMessage(invMsg, doneChan)
@@ -1408,7 +1341,16 @@ func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	if len(matchedTxIndices) == 0 {
 		dc = doneChan
 	}
-	sp.QueueMessage(merkle, dc)
+	var merklePayload bytes.Buffer
+	if err := merkle.BtcEncode(&merklePayload, sp.ProtocolVersion(), encoding); err != nil {
+		peerLog.Tracef("Unable to encode merkleblock for requested block hash "+
+			"%v: %v", hash, err)
+		if doneChan != nil {
+			doneChan <- struct{}{}
+		}
+		return err
+	}
+	sp.QueueMessage(&wire.HnsMsgMerkleBlock{Payload: merklePayload.Bytes()}, dc)
 
 	// Finally, send any matched transactions.
 	blkTransactions := blk.MsgBlock().Transactions
@@ -1419,8 +1361,7 @@ func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 			dc = doneChan
 		}
 		if txIndex < uint32(len(blkTransactions)) {
-			sp.QueueMessageWithEncoding(blkTransactions[txIndex], dc,
-				encoding)
+			sp.QueueMessage(&wire.HnsMsgTx{Tx: *blkTransactions[txIndex]}, dc)
 		}
 	}
 
@@ -1543,13 +1484,13 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 			if addrmgr.IsRoutable(lna) {
 				// Filter addresses the peer already knows about.
 				addresses := []*wire.NetAddressV2{lna}
-				sp.pushAddrMsg(addresses)
+				sp.pushAddrMsg(addresses, &s.brontideStaticKey)
 			}
 		}
 
 		// Request known addresses if the server address manager needs more.
 		if s.addrManager.NeedMoreAddresses() {
-			sp.QueueMessage(wire.NewMsgGetAddr(), nil)
+			sp.QueueMessage(&wire.HnsMsgGetAddr{}, nil)
 		}
 
 		// Mark the address as a known good address.
@@ -1635,11 +1576,8 @@ func (s *server) handleRelayInvMsg(state *peerState, msg relayMsg) {
 					" is not a block header")
 				return
 			}
-			msgHeaders := wire.NewMsgHeaders()
-			if err := msgHeaders.AddBlockHeader(&blockHeader); err != nil {
-				peerLog.Errorf("Failed to add block"+
-					" header: %v", err)
-				return
+			msgHeaders := &wire.HnsMsgHeaders{
+				Headers: []*wire.BlockHeader{&blockHeader},
 			}
 			sp.QueueMessage(msgHeaders, nil)
 			return
@@ -1910,15 +1848,93 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 	}
 }
 
+type brontideKeyAddr interface {
+	net.Addr
+	BrontideKey() []byte
+}
+
+func (s *server) dialPeer(addr net.Addr) (net.Conn, error) {
+	conn, err := hnsDial(addr)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.BrontideTransport || s.brontideIdentity == nil {
+		return conn, nil
+	}
+
+	keyAddr, ok := addr.(brontideKeyAddr)
+	if !ok || len(keyAddr.BrontideKey()) != brontide.PublicKeySize {
+		return conn, nil
+	}
+
+	econn, err := brontide.ClientHandshake(
+		conn, s.brontideIdentity, keyAddr.BrontideKey(),
+	)
+	if err == nil {
+		return econn, nil
+	}
+
+	_ = conn.Close()
+	peerLog.Debugf("Brontide outbound handshake to %s failed, "+
+		"falling back to plaintext: %v", addr, err)
+	return hnsDial(addr)
+}
+
+func (s *server) wrapInboundConn(conn net.Conn) (net.Conn, bool, error) {
+	if !cfg.BrontideTransport || s.brontideIdentity == nil {
+		return conn, false, nil
+	}
+
+	prefix := make([]byte, wire.HnsMessageHeaderSize)
+	if err := conn.SetReadDeadline(time.Now().Add(brontide.HandshakeTimeout)); err != nil {
+		return nil, false, err
+	}
+
+	n, err := io.ReadFull(conn, prefix)
+	if err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+
+	pconn := &prefixedConn{
+		Conn:   conn,
+		reader: io.MultiReader(bytes.NewReader(prefix[:n]), conn),
+	}
+	if looksLikePlaintextHnsVersionHeader(prefix, s.chainParams.Net) {
+		_ = conn.SetReadDeadline(time.Time{})
+		return pconn, false, nil
+	}
+
+	econn, remoteStatic, err := brontide.ServerHandshakeTimeout(
+		pconn, s.brontideIdentity, brontide.HandshakeTimeout,
+	)
+	if err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+
+	peerLog.Debugf("Accepted Brontide connection from %s with static key %x",
+		conn.RemoteAddr(), remoteStatic.SerializeCompressed())
+	return econn, true, nil
+}
+
 // inboundPeerConnected is invoked by the connection manager when a new inbound
 // connection is established.  It initializes a new inbound server peer
 // instance, associates it with the connection, and starts a goroutine to wait
 // for disconnection.
 func (s *server) inboundPeerConnected(conn net.Conn) {
+	wrappedConn, encrypted, err := s.wrapInboundConn(conn)
+	if err != nil {
+		srvrLog.Debugf("Cannot negotiate inbound transport from %s: %v",
+			conn.RemoteAddr(), err)
+		return
+	}
+
 	sp := newServerPeer(s, false)
-	sp.isWhitelisted = isWhitelisted(conn.RemoteAddr())
+	sp.isWhitelisted = isWhitelisted(wrappedConn.RemoteAddr())
 	sp.Peer = peer.NewInboundPeer(newPeerConfig(sp))
-	sp.AssociateConnection(conn)
+	sp.Peer.SetBrontideConnection(encrypted)
+	sp.AssociateConnection(wrappedConn)
 	go s.peerDoneHandler(sp)
 }
 
@@ -1960,6 +1976,8 @@ func (s *server) outboundPeerConnected(c *connmgr.ConnReq, conn net.Conn) {
 	sp.Peer = p
 	sp.connReq = c
 	sp.isWhitelisted = isWhitelisted(conn.RemoteAddr())
+	_, encrypted := conn.(*brontide.Conn)
+	sp.Peer.SetBrontideConnection(encrypted)
 	sp.AssociateConnection(conn)
 	go s.peerDoneHandler(sp)
 }
@@ -2115,7 +2133,7 @@ func (s *server) RelayInventory(invVect *wire.InvVect, data interface{}) {
 
 // BroadcastMessage sends msg to all peers currently connected to the server
 // except those in the passed peers to exclude.
-func (s *server) BroadcastMessage(msg wire.Message, exclPeers ...*serverPeer) {
+func (s *server) BroadcastMessage(msg wire.HandshakeMessage, exclPeers ...*serverPeer) {
 	// XXX: Need to determine if this is an alert that has already been
 	// broadcast and refrain from broadcasting again.
 	bmsg := broadcastMsg{message: msg, excludePeers: exclPeers}
@@ -2506,8 +2524,28 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	if cfg.Prune != 0 {
 		services &^= wire.SFNodeNetwork
 	}
-	if !cfg.V2Transport {
-		services &^= wire.SFNodeP2PV2
+
+	var brontideIdentity *btcec.PrivateKey
+	var brontideStaticKey [brontide.PublicKeySize]byte
+	if cfg.BrontideTransport {
+		keyPath := cfg.BrontideKey
+		if keyPath == "" {
+			keyPath = brontide.IdentityKeyPath(cfg.DataDir)
+		}
+
+		priv, created, err := brontide.LoadOrCreateIdentityKey(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load Brontide identity key: %w", err)
+		}
+		staticKey, err := brontide.IdentityStaticKey(priv)
+		if err != nil {
+			return nil, fmt.Errorf("derive Brontide static key: %w", err)
+		}
+		copy(brontideStaticKey[:], staticKey)
+		brontideIdentity = priv
+		if created {
+			srvrLog.Infof("Created Brontide identity key at %s", keyPath)
+		}
 	}
 
 	amgr := addrmgr.New(cfg.DataDir, hnsLookup)
@@ -2546,6 +2584,8 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		peerHeightsUpdate:    make(chan updatePeerHeightsMsg),
 		nat:                  nat,
 		db:                   db,
+		brontideIdentity:     brontideIdentity,
+		brontideStaticKey:    brontideStaticKey,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
 		sigCache:             txscript.NewSigCache(cfg.SigCacheMaxSize),
@@ -2776,7 +2816,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		OnAccept:       s.inboundPeerConnected,
 		RetryDuration:  connectionRetryInterval,
 		TargetOutbound: uint32(targetOutbound),
-		Dial:           hnsDial,
+		Dial:           s.dialPeer,
 		OnConnection:   s.outboundPeerConnected,
 		GetNewAddress:  newAddressFunc,
 	})

@@ -2935,7 +2935,7 @@ func handlePing(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 		return nil, internalRPCError("Not sending ping - failed to "+
 			"generate nonce: "+err.Error(), "")
 	}
-	s.cfg.ConnMgr.BroadcastMessage(wire.NewMsgPing(nonce))
+	s.cfg.ConnMgr.BroadcastMessage(wire.NewHnsMsgPing(nonce))
 
 	return nil, nil
 }
@@ -4752,7 +4752,7 @@ type rpcserverConnManager interface {
 
 	// BroadcastMessage sends the provided message to all currently
 	// connected peers.
-	BroadcastMessage(msg wire.Message)
+	BroadcastMessage(msg wire.HandshakeMessage)
 
 	// AddRebroadcastInventory adds the provided inventory to the list of
 	// inventories to be rebroadcast at random intervals until they show up

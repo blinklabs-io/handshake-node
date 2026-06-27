@@ -40,6 +40,17 @@ type HnsMsgVersion struct {
 
 func (*HnsMsgVersion) Type() HnsMsgType { return HnsMsgTypeVersion }
 
+// NonceUint64 returns the connection nonce as a little-endian uint64.
+func (m *HnsMsgVersion) NonceUint64() uint64 {
+	return binary.LittleEndian.Uint64(m.Nonce[:])
+}
+
+// SetNonce stores the given nonce in the little-endian byte order used on the
+// wire.
+func (m *HnsMsgVersion) SetNonce(nonce uint64) {
+	binary.LittleEndian.PutUint64(m.Nonce[:], nonce)
+}
+
 // Encode serializes the message. Agent is capped to HnsMaxUserAgentLen because
 // the Handshake packet stores its length in one byte.
 func (m *HnsMsgVersion) Encode() []byte {
