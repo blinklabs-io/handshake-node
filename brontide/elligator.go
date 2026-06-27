@@ -45,6 +45,11 @@ const (
 	// attempts on average; the cap only guards against a broken randomness
 	// source.
 	maxUniformEncodeAttempts = 1000
+
+	// maxRandomFieldElementAttempts bounds field-element rejection sampling so
+	// a pathological reader that only returns zero or overflow values cannot
+	// block Elligator encoding forever.
+	maxRandomFieldElementAttempts = 1000
 )
 
 var (
@@ -461,7 +466,7 @@ func PublicKeyToHash(pub *btcec.PublicKey, rng io.Reader) ([]byte, error) {
 // rejection, matching bcrypto's randomField.
 func randomFieldElement(rng io.Reader) (fieldVal, error) {
 	var buf [fieldElementSize]byte
-	for {
+	for i := 0; i < maxRandomFieldElementAttempts; i++ {
 		if _, err := io.ReadFull(rng, buf[:]); err != nil {
 			return fieldVal{}, err
 		}
@@ -475,6 +480,9 @@ func randomFieldElement(rng io.Reader) (fieldVal, error) {
 		}
 		return u, nil
 	}
+
+	return fieldVal{}, fmt.Errorf("%w: random field element did not converge",
+		ErrInvalidPoint)
 }
 
 // randomHint samples the 32-bit preimage hint used by the inverse map,

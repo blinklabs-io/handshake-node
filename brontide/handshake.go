@@ -376,6 +376,12 @@ func ClientHandshakeTimeout(conn net.Conn, localPriv *btcec.PrivateKey,
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}
+	deadlineSet := true
+	defer func() {
+		if deadlineSet {
+			_ = conn.SetDeadline(time.Time{})
+		}
+	}()
 
 	actOne, err := hs.GenActOne()
 	if err != nil {
@@ -404,6 +410,7 @@ func ClientHandshakeTimeout(conn net.Conn, localPriv *btcec.PrivateKey,
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return nil, err
 	}
+	deadlineSet = false
 	return NewConn(conn, hs.sendCipher, hs.recvCipher)
 }
 
@@ -434,6 +441,12 @@ func ServerHandshakeTimeout(conn net.Conn, localPriv *btcec.PrivateKey,
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, nil, err
 	}
+	deadlineSet := true
+	defer func() {
+		if deadlineSet {
+			_ = conn.SetDeadline(time.Time{})
+		}
+	}()
 
 	var actOne [ActOneSize]byte
 	if _, err := io.ReadFull(conn, actOne[:]); err != nil {
@@ -462,6 +475,7 @@ func ServerHandshakeTimeout(conn net.Conn, localPriv *btcec.PrivateKey,
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return nil, nil, err
 	}
+	deadlineSet = false
 	econn, err := NewConn(conn, hs.sendCipher, hs.recvCipher)
 	if err != nil {
 		return nil, nil, err

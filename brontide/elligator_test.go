@@ -46,6 +46,13 @@ func (h *hashStream) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 // TestSVDWConstants verifies the precomputed Shallue-van de Woestijne
 // constants taken from bcrypto's SECP256K1 curve definition.
 func TestSVDWConstants(t *testing.T) {
@@ -352,5 +359,17 @@ func TestPublicKeyHashRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := PublicKeyToHash(priv.PubKey(), bytes.NewReader(nil)); err == nil {
 		t.Fatal("PublicKeyToHash succeeded with exhausted rng")
+	}
+}
+
+func TestPublicKeyToHashBoundsBadRNG(t *testing.T) {
+	priv, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	if _, err := PublicKeyToHash(priv.PubKey(), zeroReader{}); !errors.Is(err, ErrInvalidPoint) {
+		t.Fatalf("PublicKeyToHash zero RNG error: got %v, want %v",
+			err, ErrInvalidPoint)
 	}
 }

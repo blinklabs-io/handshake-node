@@ -78,13 +78,13 @@ the Listeners field of the Config struct specified when creating a peer to it.
 
 Message dispatch is keyed on the one-byte Handshake message type carried in
 the wire envelope, and each callback receives the concrete HnsMsg* struct for
-its packet.  The block and tx callbacks are the exception: since those packets
-carry the canonical block and transaction data structures, OnBlock and OnTx
-receive the decoded wire.MsgBlock and wire.MsgTx directly.  In addition, a
-hook for OnRead is provided so message types for which this package does not
-directly provide a hook, as long as they implement the wire.HandshakeMessage
-interface, can be used.  Finally, the OnWrite hook is provided, which in
-conjunction with OnRead, can be used to track server-wide byte counts.
+its packet, including OnBlock and OnTx.  Those callbacks receive
+*wire.HnsMsgBlock and *wire.HnsMsgTx wrappers whose Block and Tx fields carry
+the decoded wire.MsgBlock and wire.MsgTx values.  In addition, a hook for
+OnRead is provided so message types for which this package does not directly
+provide a hook, as long as they implement the wire.HandshakeMessage interface,
+can be used.  Finally, the OnWrite hook is provided, which in conjunction with
+OnRead, can be used to track server-wide byte counts.
 
 It is often useful to use closures which encapsulate state when specifying the
 callback handlers.  This provides a clean method for accessing that state when

@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"testing"
@@ -52,6 +53,55 @@ func fixedKeyGen(t *testing.T, s string) func() (*btcec.PrivateKey, error) {
 	priv := mustPrivKey(t, s)
 	return func() (*btcec.PrivateKey, error) {
 		return priv, nil
+	}
+}
+
+type deadlineTrackingConn struct {
+	readErr       error
+	writeErr      error
+	lastDeadline  time.Time
+	deadlineCalls int
+}
+
+func (c *deadlineTrackingConn) Read(_ []byte) (int, error) {
+	if c.readErr != nil {
+		return 0, c.readErr
+	}
+	return 0, io.EOF
+}
+
+func (c *deadlineTrackingConn) Write(_ []byte) (int, error) {
+	if c.writeErr != nil {
+		return 0, c.writeErr
+	}
+	return 0, io.ErrShortWrite
+}
+
+func (*deadlineTrackingConn) Close() error                     { return nil }
+func (*deadlineTrackingConn) LocalAddr() net.Addr              { return testAddr("local") }
+func (*deadlineTrackingConn) RemoteAddr() net.Addr             { return testAddr("remote") }
+func (*deadlineTrackingConn) SetReadDeadline(time.Time) error  { return nil }
+func (*deadlineTrackingConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *deadlineTrackingConn) SetDeadline(deadline time.Time) error {
+	c.lastDeadline = deadline
+	c.deadlineCalls++
+	return nil
+}
+
+type testAddr string
+
+func (a testAddr) Network() string { return "test" }
+func (a testAddr) String() string  { return string(a) }
+
+func assertDeadlineCleared(t *testing.T, conn *deadlineTrackingConn) {
+	t.Helper()
+
+	if conn.deadlineCalls < 2 {
+		t.Fatalf("SetDeadline calls: got %d, want at least 2",
+			conn.deadlineCalls)
+	}
+	if !conn.lastDeadline.IsZero() {
+		t.Fatalf("deadline not cleared: %v", conn.lastDeadline)
 	}
 }
 
@@ -138,6 +188,43 @@ func TestHandshakeActSizes(t *testing.T) {
 	if ActThreeSize != 65 {
 		t.Fatalf("ActThreeSize: got %d, want 65", ActThreeSize)
 	}
+}
+
+func TestHandshakeTimeoutClearsDeadlineOnClientError(t *testing.T) {
+	localPriv, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey local: %v", err)
+	}
+	remotePriv, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey remote: %v", err)
+	}
+
+	conn := &deadlineTrackingConn{writeErr: io.ErrClosedPipe}
+	_, err = ClientHandshakeTimeout(
+		conn, localPriv, remotePriv.PubKey().SerializeCompressed(),
+		time.Second,
+	)
+	if !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("ClientHandshakeTimeout error: got %v, want %v",
+			err, io.ErrClosedPipe)
+	}
+	assertDeadlineCleared(t, conn)
+}
+
+func TestHandshakeTimeoutClearsDeadlineOnServerError(t *testing.T) {
+	localPriv, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	conn := &deadlineTrackingConn{readErr: io.ErrUnexpectedEOF}
+	_, _, err = ServerHandshakeTimeout(conn, localPriv, time.Second)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ServerHandshakeTimeout error: got %v, want %v",
+			err, io.ErrUnexpectedEOF)
+	}
+	assertDeadlineCleared(t, conn)
 }
 
 // TestHandshakeHsdVectors ports the 'should test brontide exchange' case from
