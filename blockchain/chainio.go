@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -26,12 +26,12 @@ const (
 
 	// latestUtxoSetBucketVersion is the current version of the utxo set
 	// bucket that is used to track all unspent outputs.
-	latestUtxoSetBucketVersion = 2
+	latestUtxoSetBucketVersion = 3
 
 	// latestSpendJournalBucketVersion is the current version of the spend
 	// journal bucket that is used to track all spent transactions for use
 	// in reorgs.
-	latestSpendJournalBucketVersion = 1
+	latestSpendJournalBucketVersion = 2
 )
 
 var (
@@ -69,7 +69,7 @@ var (
 
 	// utxoSetBucketName is the name of the db bucket used to house the
 	// unspent transaction output set.
-	utxoSetBucketName = []byte("utxosetv2")
+	utxoSetBucketName = []byte("utxosetv3")
 
 	// byteOrder is the preferred byte order used for serializing numeric
 	// fields for storage in the database.
@@ -247,7 +247,14 @@ type SpentTxOut struct {
 	// Amount is the amount of the output.
 	Amount int64
 
-	// PkScript is the public key script for the output.
+	// Address is the Handshake output address.
+	Address wire.Address
+
+	// Covenant is the Handshake output covenant.
+	Covenant wire.Covenant
+
+	// PkScript is the derived public key script for compatibility with script
+	// validation and indexers.
 	PkScript []byte
 
 	// Height is the height of the block containing the creating tx.
@@ -305,7 +312,9 @@ func spentTxOutSerializeSize(stxo *SpentTxOut) int {
 		// so this is required for backwards compat.
 		size += serializeSizeVLQ(0)
 	}
-	return size + compressedTxOutSize(uint64(stxo.Amount), stxo.PkScript)
+	return size + compressedHnsTxOutSize(
+		uint64(stxo.Amount), stxo.Address, stxo.Covenant,
+	)
 }
 
 // putSpentTxOut serializes the passed stxo according to the format described
@@ -321,8 +330,9 @@ func putSpentTxOut(target []byte, stxo *SpentTxOut) int {
 		// so this is required for backwards compat.
 		offset += putVLQ(target[offset:], 0)
 	}
-	return offset + putCompressedTxOut(target[offset:], uint64(stxo.Amount),
-		stxo.PkScript)
+	return offset + putCompressedHnsTxOut(
+		target[offset:], uint64(stxo.Amount), stxo.Address, stxo.Covenant,
+	)
 }
 
 // decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
@@ -359,8 +369,8 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 		}
 	}
 
-	// Decode the compressed txout.
-	amount, pkScript, bytesRead, err := decodeCompressedTxOut(
+	// Decode the compressed Handshake txout.
+	amount, address, covenant, bytesRead, err := decodeCompressedHnsTxOut(
 		serialized[offset:])
 	offset += bytesRead
 	if err != nil {
@@ -368,7 +378,13 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 			"txout: %v", err))
 	}
 	stxo.Amount = int64(amount)
-	stxo.PkScript = pkScript
+	stxo.Address = address
+	stxo.Covenant = covenant
+	stxo.PkScript = txOutPkScript(&wire.TxOut{
+		Value:    stxo.Amount,
+		Address:  address,
+		Covenant: covenant,
+	})
 	return offset, nil
 }
 
@@ -662,14 +678,18 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 
 	// Calculate the size needed to serialize the entry.
 	size := serializeSizeVLQ(headerCode) +
-		compressedTxOutSize(uint64(entry.Amount()), entry.PkScript())
+		compressedHnsTxOutSize(
+			uint64(entry.Amount()), entry.Address(), entry.Covenant(),
+		)
 
 	// Serialize the header code followed by the compressed unspent
 	// transaction output.
 	serialized := make([]byte, size)
 	offset := putVLQ(serialized, headerCode)
-	offset += putCompressedTxOut(serialized[offset:], uint64(entry.Amount()),
-		entry.PkScript())
+	offset += putCompressedHnsTxOut(
+		serialized[offset:], uint64(entry.Amount()), entry.Address(),
+		entry.Covenant(),
+	)
 
 	return serialized, nil
 }
@@ -691,16 +711,22 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 	isCoinBase := code&0x01 != 0
 	blockHeight := int32(code >> 1)
 
-	// Decode the compressed unspent transaction output.
-	amount, pkScript, _, err := decodeCompressedTxOut(serialized[offset:])
+	// Decode the compressed unspent Handshake transaction output.
+	amount, address, covenant, _, err := decodeCompressedHnsTxOut(serialized[offset:])
 	if err != nil {
 		return nil, errDeserialize(fmt.Sprintf("unable to decode "+
 			"utxo: %v", err))
 	}
 
 	entry := &UtxoEntry{
-		amount:      int64(amount),
-		pkScript:    pkScript,
+		amount:   int64(amount),
+		address:  address,
+		covenant: covenant,
+		pkScript: txOutPkScript(&wire.TxOut{
+			Value:    int64(amount),
+			Address:  address,
+			Covenant: covenant,
+		}),
 		blockHeight: blockHeight,
 		packedFlags: 0,
 	}

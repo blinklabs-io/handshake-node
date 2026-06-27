@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"time"
@@ -41,7 +42,7 @@ const (
 
 	// baseSubsidy is the starting subsidy amount for mined blocks.  This
 	// value is halved every SubsidyHalvingInterval blocks.
-	baseSubsidy = 50 * hnsutil.DooPerHNS
+	baseSubsidy = 2000 * hnsutil.DooPerHNS
 
 	// coinbaseHeightAllocSize is the amount of bytes that the
 	// ScriptBuilder will allocate when validating the coinbase height.
@@ -268,6 +269,17 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 				"outputs is %v which is higher than max "+
 				"allowed value of %v", totalDoo,
 				hnsutil.MaxDoo)
+			return ruleError(ErrBadTxOutValue, str)
+		}
+
+		if err := txOut.Address.Encode(io.Discard); err != nil {
+			str := fmt.Sprintf("transaction output has invalid "+
+				"address: %v", err)
+			return ruleError(ErrBadTxOutValue, str)
+		}
+		if err := txOut.Covenant.Encode(io.Discard); err != nil {
+			str := fmt.Sprintf("transaction output has invalid "+
+				"covenant: %v", err)
 			return ruleError(ErrBadTxOutValue, str)
 		}
 	}
@@ -509,6 +521,13 @@ func checkBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 		return ruleError(ErrBlockTooBig, str)
 	}
 
+	blockWeight := GetBlockWeight(block)
+	if blockWeight > MaxBlockWeight {
+		str := fmt.Sprintf("block's weight metric is too high - "+
+			"got %v, max %v", blockWeight, MaxBlockWeight)
+		return ruleError(ErrBlockWeightTooHigh, str)
+	}
+
 	// The first transaction in a block must be a coinbase.
 	transactions := block.Transactions()
 	if !IsCoinBase(transactions[0]) {
@@ -545,6 +564,14 @@ func checkBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 		str := fmt.Sprintf("block merkle root is invalid - block "+
 			"header indicates %v, but calculated value is %v",
 			header.MerkleRoot, calcMerkleRoot)
+		return ruleError(ErrBadMerkleRoot, str)
+	}
+
+	calcWitnessRoot := CalcMerkleRoot(block.Transactions(), true)
+	if !header.WitnessRoot.IsEqual(&calcWitnessRoot) {
+		str := fmt.Sprintf("block witness root is invalid - block "+
+			"header indicates %v, but calculated value is %v",
+			header.WitnessRoot, calcWitnessRoot)
 		return ruleError(ErrBadMerkleRoot, str)
 	}
 
@@ -752,18 +779,6 @@ func CheckBlockHeaderContext(header *wire.BlockHeader, prevNode HeaderCtx,
 		}
 	}
 
-	// Reject outdated block versions once a majority of the network
-	// has upgraded.  These were originally voted on by BIP0034,
-	// BIP0065, and BIP0066.
-	if header.Version < 2 && blockHeight >= params.BIP0034Height ||
-		header.Version < 3 && blockHeight >= params.BIP0066Height ||
-		header.Version < 4 && blockHeight >= params.BIP0065Height {
-
-		str := "new blocks with version %d are no longer valid"
-		str = fmt.Sprintf(str, header.Version)
-		return ruleError(ErrBlockVersionTooOld, str)
-	}
-
 	if skipCheckpoint {
 		// If the caller wants us to skip the checkpoint checks, we'll
 		// return early.
@@ -886,41 +901,6 @@ func (b *BlockChain) checkBlockContext(block *hnsutil.Block, prevNode *blockNode
 			}
 		}
 
-		// Query for the Version Bits state for the segwit soft-fork
-		// deployment. If segwit is active, we'll switch over to
-		// enforcing all the new rules.
-		segwitState, err := b.deploymentState(prevNode,
-			chaincfg.DeploymentSegwit)
-		if err != nil {
-			return err
-		}
-
-		// If segwit is active, then we'll need to fully validate the
-		// new witness commitment for adherence to the rules.
-		if segwitState == ThresholdActive {
-			// Validate the witness commitment (if any) within the
-			// block.  This involves asserting that if the coinbase
-			// contains the special commitment output, then this
-			// merkle root matches a computed merkle root of all
-			// the wtxid's of the transactions within the block. In
-			// addition, various other checks against the
-			// coinbase's witness stack.
-			if err := ValidateWitnessCommitment(block); err != nil {
-				return err
-			}
-
-			// Once the witness commitment, witness nonce, and sig
-			// op cost have been validated, we can finally assert
-			// that the block's weight doesn't exceed the current
-			// consensus parameter.
-			blockWeight := GetBlockWeight(block)
-			if blockWeight > MaxBlockWeight {
-				str := fmt.Sprintf("block's weight metric is "+
-					"too high - got %v, max %v",
-					blockWeight, MaxBlockWeight)
-				return ruleError(ErrBlockWeightTooHigh, str)
-			}
-		}
 	}
 
 	return nil
@@ -1147,20 +1127,8 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 		return err
 	}
 
-	// BIP0016 describes a pay-to-script-hash type that is considered a
-	// "standard" type.  The rules for this BIP only apply to transactions
-	// after the timestamp defined by txscript.Bip16Activation.  See
-	// https://en.bitcoin.it/wiki/BIP_0016 for more details.
-	enforceBIP0016 := node.timestamp >= txscript.Bip16Activation.Unix()
-
-	// Query for the Version Bits state for the segwit soft-fork
-	// deployment. If segwit is active, we'll switch over to enforcing all
-	// the new rules.
-	segwitState, err := b.deploymentState(node.parent, chaincfg.DeploymentSegwit)
-	if err != nil {
-		return err
-	}
-	enforceSegWit := segwitState == ThresholdActive
+	enforceBIP0016 := true
+	enforceSegWit := true
 
 	// The number of signature operations must be less than the maximum
 	// allowed per block.  Note that the preliminary sanity checks on a
@@ -1320,18 +1288,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 	if enforceSegWit {
 		scriptFlags |= txscript.ScriptVerifyWitness
 		scriptFlags |= txscript.ScriptStrictMultiSig
-	}
-
-	// Before we execute the main scripts, we'll also check to see if
-	// taproot is active or not.
-	taprootState, err := b.deploymentState(
-		node.parent, chaincfg.DeploymentTaproot,
-	)
-	if err != nil {
-		return err
-	}
-	if taprootState == ThresholdActive {
-		scriptFlags |= txscript.ScriptVerifyTaproot
 	}
 
 	// Now that the inexpensive checks are done and have passed, verify the

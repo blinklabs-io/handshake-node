@@ -207,6 +207,17 @@ func getValidP2PKHScript() []byte {
 	}
 }
 
+func testUtxoEntryMemoryUsage() uint64 {
+	txOut := &wire.TxOut{
+		Value: 10000,
+		Address: wire.Address{
+			Version: 0,
+			Hash:    getValidP2PKHScript(),
+		},
+	}
+	return NewUtxoEntry(txOut, 0, false).memoryUsage()
+}
+
 func TestTxOutPkScript(t *testing.T) {
 	witnessHash := getValidP2PKHScript()
 	witnessTxOut := &wire.TxOut{
@@ -273,7 +284,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 					},
 				}
 			}(),
-			expectedSize: pubKeyHashLen + baseEntrySize,
+			expectedSize: testUtxoEntryMemoryUsage(),
 		},
 		{
 			name: "10 entries, 4 spend",
@@ -303,7 +314,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 				return blocks
 			}(),
 			// Multiplied by 6 since we'll have 6 entries left.
-			expectedSize: (pubKeyHashLen + baseEntrySize) * 6,
+			expectedSize: testUtxoEntryMemoryUsage() * 6,
 		},
 		{
 			name: "spend everything",

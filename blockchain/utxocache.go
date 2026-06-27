@@ -348,6 +348,8 @@ func (s *utxoCache) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, isCoinBa
 
 	entry := new(UtxoEntry)
 	entry.amount = txOut.Value
+	entry.address = cloneAddress(txOut.Address)
+	entry.covenant = cloneCovenant(txOut.Covenant)
 
 	// Store the original script bytes when they are available as a test shim,
 	// otherwise store the witness program derived from the address. We deep
@@ -414,6 +416,8 @@ func (s *utxoCache) addTxIn(txIn *wire.TxIn, stxos *[]SpentTxOut) error {
 		// Populate the stxo details using the utxo entry.
 		stxo := SpentTxOut{
 			Amount:     entry.Amount(),
+			Address:    entry.Address(),
+			Covenant:   entry.Covenant(),
 			PkScript:   entry.PkScript(),
 			Height:     entry.BlockHeight(),
 			IsCoinBase: entry.IsCoinBase(),

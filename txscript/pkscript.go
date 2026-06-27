@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
-	"github.com/blinklabs-io/handshake-node/wire"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -103,7 +103,7 @@ func ParsePkScript(pkScript []byte) (PkScript, error) {
 func isSupportedScriptType(class ScriptClass) bool {
 	switch class {
 	case PubKeyHashTy, WitnessV0PubKeyHashTy, ScriptHashTy,
-		WitnessV0ScriptHashTy, WitnessV1TaprootTy:
+		WitnessV0ScriptHashTy:
 		return true
 	default:
 		return false

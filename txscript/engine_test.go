@@ -255,17 +255,35 @@ func TestCheckPubKeyEncoding(t *testing.T) {
 func TestCheckSignatureEncoding(t *testing.T) {
 	t.Parallel()
 
+	validSig := hexToBytes("4e45e16932b8af514961a1d3a1a25fdf3" +
+		"f4f7732e9d624c6c61548ab5fb8cd41181522ec8e" +
+		"ca07de4860a4acdd12909d831cc56cbbac4622082" +
+		"221a8768d1d09")
+	groupOrder := hexToBytes("fffffffffffffffffffffffffffffffebaae" +
+		"dce6af48a03bbfd25e8cd0364141")
+	highS := hexToBytes("fffffffffffffffffffffffffffffffebaae" +
+		"dce6af48a03bbfd25e8cd0364140")
+	zeroScalar := make([]byte, 32)
+
+	withR := func(r []byte) []byte {
+		sig := append([]byte(nil), validSig...)
+		copy(sig[:32], r)
+		return sig
+	}
+	withS := func(s []byte) []byte {
+		sig := append([]byte(nil), validSig...)
+		copy(sig[32:], s)
+		return sig
+	}
+
 	tests := []struct {
 		name    string
 		sig     []byte
 		isValid bool
 	}{
 		{
-			name: "valid signature",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "valid signature",
+			sig:     validSig,
 			isValid: true,
 		},
 		{
@@ -274,135 +292,38 @@ func TestCheckSignatureEncoding(t *testing.T) {
 			isValid: false,
 		},
 		{
-			name: "bad magic",
-			sig: hexToBytes("314402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "short signature",
+			sig:     validSig[:len(validSig)-1],
 			isValid: false,
 		},
 		{
-			name: "bad 1st int marker magic",
-			sig: hexToBytes("304403204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "long signature",
+			sig:     append(append([]byte(nil), validSig...), 0x00),
 			isValid: false,
 		},
 		{
-			name: "bad 2nd int marker",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41032018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "R is zero",
+			sig:     withR(zeroScalar),
 			isValid: false,
 		},
 		{
-			name: "short len",
-			sig: hexToBytes("304302204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "S is zero",
+			sig:     withS(zeroScalar),
 			isValid: false,
 		},
 		{
-			name: "long len",
-			sig: hexToBytes("304502204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "R equals group order",
+			sig:     withR(groupOrder),
 			isValid: false,
 		},
 		{
-			name: "long X",
-			sig: hexToBytes("304402424e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
+			name:    "S equals group order",
+			sig:     withS(groupOrder),
 			isValid: false,
 		},
 		{
-			name: "long Y",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022118152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "short Y",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41021918152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "trailing crap",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d0901"),
-			isValid: false,
-		},
-		{
-			name: "X == N ",
-			sig: hexToBytes("30440220fffffffffffffffffffffffffffff" +
-				"ffebaaedce6af48a03bbfd25e8cd0364141022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "X == N ",
-			sig: hexToBytes("30440220fffffffffffffffffffffffffffff" +
-				"ffebaaedce6af48a03bbfd25e8cd0364142022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "Y == N",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd410220fffff" +
-				"ffffffffffffffffffffffffffebaaedce6af48a03bb" +
-				"fd25e8cd0364141"),
-			isValid: false,
-		},
-		{
-			name: "Y > N",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd410220fffff" +
-				"ffffffffffffffffffffffffffebaaedce6af48a03bb" +
-				"fd25e8cd0364142"),
-			isValid: false,
-		},
-		{
-			name: "0 len X",
-			sig: hexToBytes("302402000220181522ec8eca07de4860a4acd" +
-				"d12909d831cc56cbbac4622082221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "0 len Y",
-			sig: hexToBytes("302402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd410200"),
-			isValid: false,
-		},
-		{
-			name: "extra R padding",
-			sig: hexToBytes("30450221004e45e16932b8af514961a1d3a1a" +
-				"25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181" +
-				"522ec8eca07de4860a4acdd12909d831cc56cbbac462" +
-				"2082221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "extra S padding",
-			sig: hexToBytes("304502204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022100181" +
-				"522ec8eca07de4860a4acdd12909d831cc56cbbac462" +
-				"2082221a8768d1d09"),
+			name:    "S is high",
+			sig:     withS(highS),
 			isValid: false,
 		},
 	}

@@ -1,6 +1,8 @@
 package blockchain
 
 import (
+	"math/big"
+
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
@@ -45,6 +47,9 @@ type HeaderCtx interface {
 
 	// Timestamp returns the header's timestamp.
 	Timestamp() int64
+
+	// WorkSum returns the cumulative proof of work through this header.
+	WorkSum() *big.Int
 
 	// Parent returns the header's parent.
 	Parent() HeaderCtx

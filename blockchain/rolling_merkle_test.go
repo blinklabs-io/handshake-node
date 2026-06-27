@@ -35,10 +35,10 @@ func TestRollingMerkleAdd(t *testing.T) {
 			expectedRoots: []chainhash.Hash{
 				func() chainhash.Hash {
 					hash, err := chainhash.NewHashFromStr(
-						"c2bf026e62af95cd" +
-							"7b785e2cd5a5f1ec" +
-							"01fafda85886a8eb" +
-							"d34482c0b05dc2c2")
+						"f7503264ea3c4727" +
+							"e0e67fec5e6f67f7" +
+							"af361f5659d7db05" +
+							"f1061293096fbfcd")
 					require.NoError(t, err)
 					return *hash
 				}(),
@@ -58,10 +58,10 @@ func TestRollingMerkleAdd(t *testing.T) {
 			expectedRoots: []chainhash.Hash{
 				func() chainhash.Hash {
 					hash, err := chainhash.NewHashFromStr(
-						"c2bf026e62af95cd" +
-							"7b785e2cd5a5f1ec" +
-							"01fafda85886a8eb" +
-							"d34482c0b05dc2c2")
+						"f7503264ea3c4727" +
+							"e0e67fec5e6f67f7" +
+							"af361f5659d7db05" +
+							"f1061293096fbfcd")
 					require.NoError(t, err)
 					return *hash
 				}(),
@@ -85,10 +85,10 @@ func TestRollingMerkleAdd(t *testing.T) {
 			expectedRoots: []chainhash.Hash{
 				func() chainhash.Hash {
 					hash, err := chainhash.NewHashFromStr(
-						"270714425ea73eb8" +
-							"5942f0f705788f25" +
-							"1fefa3f533410a3f" +
-							"338de46e641082c4")
+						"64984cf29e322ded" +
+							"31951dc614fe3a20" +
+							"a0fc19fb893cced6" +
+							"adad9d6153eaceaa")
 					require.NoError(t, err)
 					return *hash
 				}(),
@@ -112,10 +112,10 @@ func TestRollingMerkleAdd(t *testing.T) {
 			expectedRoots: []chainhash.Hash{
 				func() chainhash.Hash {
 					hash, err := chainhash.NewHashFromStr(
-						"270714425ea73eb8" +
-							"5942f0f705788f25" +
-							"1fefa3f533410a3f" +
-							"338de46e641082c4")
+						"64984cf29e322ded" +
+							"31951dc614fe3a20" +
+							"a0fc19fb893cced6" +
+							"adad9d6153eaceaa")
 					require.NoError(t, err)
 					return *hash
 				}(),
@@ -141,19 +141,19 @@ func TestRollingMerkleAdd(t *testing.T) {
 			expectedRoots: []chainhash.Hash{
 				func() chainhash.Hash {
 					hash, err := chainhash.NewHashFromStr(
-						"270714425ea73eb8" +
-							"5942f0f705788f25" +
-							"1fefa3f533410a3f" +
-							"338de46e641082c4")
+						"64984cf29e322ded" +
+							"31951dc614fe3a20" +
+							"a0fc19fb893cced6" +
+							"adad9d6153eaceaa")
 					require.NoError(t, err)
 					return *hash
 				}(),
 				func() chainhash.Hash {
 					hash, err := chainhash.NewHashFromStr(
-						"e5c2407ba454ffeb" +
-							"28cf0c50c5c293a8" +
-							"4c9a75788f8a8f35" +
-							"ccb974e606280377")
+						"9b1b078538375501" +
+							"da88684001a6f171" +
+							"598407aa420c94ff" +
+							"84dc155d68c650cd")
 					require.NoError(t, err)
 					return *hash
 				}(),

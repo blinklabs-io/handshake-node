@@ -127,6 +127,35 @@ func findPrevTestNetDifficulty(startNode HeaderCtx, c ChainCtx) uint32 {
 	return lastBits
 }
 
+// suitableBlock returns the median timestamp block among node and its two
+// parents, matching Handshake's difficulty retarget endpoint selection.
+func suitableBlock(node HeaderCtx) HeaderCtx {
+	z := node
+	if z == nil {
+		return nil
+	}
+	y := z.Parent()
+	if y == nil {
+		return nil
+	}
+	x := y.Parent()
+	if x == nil {
+		return nil
+	}
+
+	if x.Timestamp() > z.Timestamp() {
+		x, z = z, x
+	}
+	if x.Timestamp() > y.Timestamp() {
+		x, y = y, x
+	}
+	if y.Timestamp() > z.Timestamp() {
+		y, z = z, y
+	}
+
+	return y
+}
+
 // calcNextRequiredDifficulty calculates the required difficulty for the block
 // after the passed previous HeaderCtx based on the difficulty retarget rules.
 // This function differs from the exported CalcNextRequiredDifficulty in that
@@ -147,43 +176,39 @@ func calcNextRequiredDifficulty(lastNode HeaderCtx, newBlockTime time.Time,
 		return c.ChainParams().PowLimitBits, nil
 	}
 
-	// Return the previous block's difficulty requirements if this block
-	// is not at a difficulty retarget interval.
-	if (lastNode.Height()+1)%c.BlocksPerRetarget() != 0 {
-		// For networks that support it, allow special reduction of the
-		// required difficulty once too much time has elapsed without
-		// mining a block.
-		if c.ChainParams().ReduceMinDifficulty {
-			// Return minimum difficulty when more than the desired
-			// amount of time has elapsed without mining a block.
-			reductionTime := int64(c.ChainParams().MinDiffReductionTime /
-				time.Second)
-			allowMinTime := lastNode.Timestamp() + reductionTime
-			if newBlockTime.Unix() > allowMinTime {
-				return c.ChainParams().PowLimitBits, nil
-			}
-
-			// The block was mined within the desired timeframe, so
-			// return the difficulty for the last block which did
-			// not have the special minimum difficulty rule applied.
-			return findPrevTestNetDifficulty(lastNode, c), nil
+	// For networks that support it, allow special reduction of the required
+	// difficulty once too much time has elapsed without mining a block.
+	if c.ChainParams().ReduceMinDifficulty {
+		reductionTime := int64(c.ChainParams().MinDiffReductionTime /
+			time.Second)
+		allowMinTime := lastNode.Timestamp() + reductionTime
+		if newBlockTime.Unix() > allowMinTime {
+			return c.ChainParams().PowLimitBits, nil
 		}
-
-		// For the main network (or any unrecognized networks), simply
-		// return the previous block's difficulty requirements.
-		return lastNode.Bits(), nil
 	}
 
-	// Get the block node at the previous retarget (targetTimespan days
-	// worth of blocks).
-	firstNode := lastNode.RelativeAncestorCtx(c.BlocksPerRetarget() - 1)
+	window := c.BlocksPerRetarget()
+	if lastNode.Height() < window+2 {
+		return c.ChainParams().PowLimitBits, nil
+	}
+
+	last := suitableBlock(lastNode)
+	if last == nil {
+		return 0, AssertError("unable to obtain suitable retarget tip")
+	}
+
+	firstNode := lastNode.RelativeAncestorCtx(window)
 	if firstNode == nil {
-		return 0, AssertError("unable to obtain previous retarget block")
+		return 0, AssertError("unable to obtain difficulty retarget window")
+	}
+	first := suitableBlock(firstNode)
+	if first == nil {
+		return 0, AssertError("unable to obtain suitable retarget ancestor")
 	}
 
 	// Limit the amount of adjustment that can occur to the previous
 	// difficulty.
-	actualTimespan := lastNode.Timestamp() - firstNode.Timestamp()
+	actualTimespan := last.Timestamp() - first.Timestamp()
 	adjustedTimespan := actualTimespan
 	if actualTimespan < c.MinRetargetTimespan() {
 		adjustedTimespan = c.MinRetargetTimespan()
@@ -191,23 +216,24 @@ func calcNextRequiredDifficulty(lastNode HeaderCtx, newBlockTime time.Time,
 		adjustedTimespan = c.MaxRetargetTimespan()
 	}
 
-	// Special difficulty rule for Testnet4
-	oldTarget := CompactToBig(lastNode.Bits())
-	if c.ChainParams().EnforceBIP94 {
-		// Here we use the first block of the difficulty period. This way
-		// the real difficulty is always preserved in the first block as
-		// it is not allowed to use the min-difficulty exception.
-		oldTarget = CompactToBig(firstNode.Bits())
+	// Handshake retargets every block after the first window using the total
+	// work accumulated over the rolling window, not the previous block's
+	// compact target.
+	windowWork := new(big.Int).Sub(last.WorkSum(), first.WorkSum())
+	if windowWork.Sign() <= 0 {
+		return c.ChainParams().PowLimitBits, nil
 	}
 
-	// Calculate new target difficulty as:
-	//  currentDifficulty * (adjustedTimespan / targetTimespan)
-	// The result uses integer division which means it will be slightly
-	// rounded down.  Bitcoind also uses integer division to calculate this
-	// result.
-	newTarget := new(big.Int).Mul(oldTarget, big.NewInt(adjustedTimespan))
-	targetTimeSpan := int64(c.ChainParams().TargetTimespan / time.Second)
-	newTarget.Div(newTarget, big.NewInt(targetTimeSpan))
+	targetTimePerBlock := int64(c.ChainParams().TargetTimePerBlock / time.Second)
+	adjustedWork := new(big.Int).Mul(windowWork, big.NewInt(targetTimePerBlock))
+	adjustedWork.Div(adjustedWork, big.NewInt(adjustedTimespan))
+	if adjustedWork.Sign() <= 0 {
+		return c.ChainParams().PowLimitBits, nil
+	}
+
+	oneLsh256 := new(big.Int).Lsh(big.NewInt(1), 256)
+	newTarget := new(big.Int).Div(oneLsh256, adjustedWork)
+	newTarget.Sub(newTarget, big.NewInt(1))
 
 	// Limit new value to the proof of work limit.
 	if newTarget.Cmp(c.ChainParams().PowLimit) > 0 {
@@ -220,12 +246,12 @@ func calcNextRequiredDifficulty(lastNode HeaderCtx, newBlockTime time.Time,
 	// precision.
 	newTargetBits := BigToCompact(newTarget)
 	log.Debugf("Difficulty retarget at block height %d", lastNode.Height()+1)
-	log.Debugf("Old target %08x (%064x)", lastNode.Bits(), oldTarget)
+	log.Debugf("Window work %064x", windowWork)
 	log.Debugf("New target %08x (%064x)", newTargetBits, CompactToBig(newTargetBits))
-	log.Debugf("Actual timespan %v, adjusted timespan %v, target timespan %v",
+	log.Debugf("Actual timespan %v, adjusted timespan %v, target spacing %v",
 		time.Duration(actualTimespan)*time.Second,
 		time.Duration(adjustedTimespan)*time.Second,
-		c.ChainParams().TargetTimespan)
+		c.ChainParams().TargetTimePerBlock)
 
 	return newTargetBits, nil
 }

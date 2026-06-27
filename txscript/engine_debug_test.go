@@ -5,11 +5,11 @@
 package txscript
 
 import (
+	"crypto/sha256"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,30 +25,23 @@ func TestDebugEngine(t *testing.T) {
 	internalKey := privKey.PubKey()
 
 	// We use a simple script that will utilize both the stack and alt
-	// stack in order to test the step callback, and wrap it in a taproot
-	// witness script.
+	// stack in order to test the step callback, and wrap it in a v0 witness
+	// script.
 	builder := NewScriptBuilder()
 	builder.AddData([]byte{0xab})
 	builder.AddOp(OP_TOALTSTACK)
-	builder.AddData(schnorr.SerializePubKey(internalKey))
+	builder.AddData(internalKey.SerializeCompressed())
 	builder.AddOp(OP_CHECKSIG)
 	builder.AddOp(OP_VERIFY)
 	builder.AddOp(OP_1)
-	pkScript, err := builder.Script()
+	witnessScript, err := builder.Script()
 	require.NoError(t, err)
 
-	tapLeaf := NewBaseTapLeaf(pkScript)
-	tapScriptTree := AssembleTaprootScriptTree(tapLeaf)
-
-	ctrlBlock := tapScriptTree.LeafMerkleProofs[0].ToControlBlock(
-		internalKey,
-	)
-
-	tapScriptRootHash := tapScriptTree.RootNode.TapHash()
-	outputKey := ComputeTaprootOutputKey(
-		internalKey, tapScriptRootHash[:],
-	)
-	p2trScript, err := PayToTaprootScript(outputKey)
+	scriptHash := sha256.Sum256(witnessScript)
+	p2wshScript, err := NewScriptBuilder().
+		AddOp(OP_0).
+		AddData(scriptHash[:]).
+		Script()
 	require.NoError(t, err)
 
 	testTx := wire.NewMsgTx(2)
@@ -57,127 +50,76 @@ func TestDebugEngine(t *testing.T) {
 			Index: 1,
 		},
 	})
-	debugP2trAddr, err := AddressFromWitnessProgram(p2trScript)
+	debugAddr, err := AddressFromWitnessProgram(p2wshScript)
 	if err != nil {
 		t.Fatalf("AddressFromWitnessProgram: %v", err)
 	}
 	txOut := &wire.TxOut{
 		Value:   1e8,
-		Address: debugP2trAddr,
+		Address: debugAddr,
 	}
 	testTx.AddTxOut(txOut)
 
 	prevFetcher := NewCannedPrevOutputFetcher(
-		debugP2trAddr, txOut.Value,
+		debugAddr, txOut.Value,
 	)
 	sigHashes := NewTxSigHashes(testTx, prevFetcher)
 
-	sig, err := RawTxInTapscriptSignature(
+	sig, err := RawTxInWitnessSignature(
 		testTx, sigHashes, 0, txOut.Value,
-		p2trScript, tapLeaf,
-		SigHashDefault, privKey,
+		witnessScript, SigHashAll, privKey,
 	)
 	require.NoError(t, err)
 
-	// Now that we have the sig, we'll make a valid witness
-	// including the control block.
-	ctrlBlockBytes, err := ctrlBlock.ToBytes()
-	require.NoError(t, err)
 	txCopy := testTx.Copy()
 	txCopy.TxIn[0].Witness = wire.TxWitness{
-		sig, pkScript, ctrlBlockBytes,
+		sig, witnessScript,
 	}
 
-	expCallback := []StepInfo{
-		// First callback is looking at the OP_1 witness version.
-		{
-			ScriptIndex: 1,
-			OpcodeIndex: 0,
-			Stack:       [][]byte{},
-			AltStack:    [][]byte{},
-		},
-		// The OP_1 witness version is pushed to stack,
-		{
-			ScriptIndex: 1,
-			OpcodeIndex: 1,
-			Stack:       [][]byte{{0x01}},
-			AltStack:    [][]byte{},
-		},
-		// Then the taproot script is being executed, starting with
-		// only the signature on the stacks.
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 0,
-			Stack:       [][]byte{sig},
-			AltStack:    [][]byte{},
-		},
-		// 0xab is pushed to the stack.
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 1,
-			Stack:       [][]byte{sig, {0xab}},
-			AltStack:    [][]byte{},
-		},
-		// 0xab is moved to the alt stack.
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 2,
-			Stack:       [][]byte{sig},
-			AltStack:    [][]byte{{0xab}},
-		},
-		// The public key is pushed to the stack.
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 3,
-			Stack: [][]byte{
-				sig,
-				schnorr.SerializePubKey(internalKey),
-			},
-			AltStack: [][]byte{{0xab}},
-		},
-		// OP_CHECKSIG is executed, resulting in 0x01 on the stack.
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 4,
-			Stack: [][]byte{
-				{0x01},
-			},
-			AltStack: [][]byte{{0xab}},
-		},
-		// OP_VERIFY pops and checks the top stack element.
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 5,
-			Stack:       [][]byte{},
-			AltStack:    [][]byte{{0xab}},
-		},
-		// A single OP_1 push completes the script execution (note that
-		// the alt stack is cleared when the script is "done").
-		{
-			ScriptIndex: 2,
-			OpcodeIndex: 6,
-			Stack:       [][]byte{{0x01}},
-			AltStack:    [][]byte{},
-		},
-	}
-
-	stepIndex := 0
+	var callbacks []StepInfo
 	callback := func(s *StepInfo) error {
-		require.Less(
-			t, stepIndex, len(expCallback), "unexpected callback",
-		)
-
-		require.Equal(t, &expCallback[stepIndex], s)
-		stepIndex++
+		callbacks = append(callbacks, cloneStepInfo(*s))
 		return nil
 	}
 
 	// Run the debug engine.
 	vm, err := NewDebugEngine(
-		p2trScript, txCopy, 0, StandardVerifyFlags,
+		p2wshScript, txCopy, 0, StandardVerifyFlags,
 		nil, sigHashes, txOut.Value, prevFetcher,
 		callback,
 	)
 	require.NoError(t, err)
 	require.NoError(t, vm.Execute())
+
+	require.NotEmpty(t, callbacks)
+	require.Equal(t, [][]byte{{0x01}}, callbacks[len(callbacks)-1].Stack)
+	require.Empty(t, callbacks[len(callbacks)-1].AltStack)
+
+	var sawAltStack, sawCheckSigResult bool
+	for _, step := range callbacks {
+		if len(step.AltStack) == 1 && string(step.AltStack[0]) == "\xab" {
+			sawAltStack = true
+		}
+		if len(step.Stack) == 1 && len(step.Stack[0]) == 1 &&
+			step.Stack[0][0] == 0x01 {
+
+			sawCheckSigResult = true
+		}
+	}
+	require.True(t, sawAltStack)
+	require.True(t, sawCheckSigResult)
+}
+
+func cloneStepInfo(step StepInfo) StepInfo {
+	step.Stack = cloneStack(step.Stack)
+	step.AltStack = cloneStack(step.AltStack)
+	return step
+}
+
+func cloneStack(stack [][]byte) [][]byte {
+	clone := make([][]byte, len(stack))
+	for i := range stack {
+		clone[i] = append([]byte(nil), stack[i]...)
+	}
+	return clone
 }

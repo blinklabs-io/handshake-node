@@ -5,8 +5,11 @@
 package blockchain
 
 import (
-	"github.com/btcsuite/btcd/btcec/v2"
+	"bytes"
+
 	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // -----------------------------------------------------------------------------
@@ -583,4 +586,64 @@ func decodeCompressedTxOut(serialized []byte) (uint64, []byte, int, error) {
 	amount := decompressTxOutAmount(compressedAmount)
 	script := decompressScript(serialized[bytesRead : bytesRead+scriptSize])
 	return amount, script, bytesRead + scriptSize, nil
+}
+
+// compressedHnsTxOutSize returns the number of bytes the passed Handshake
+// transaction output fields take when encoded for the UTXO set or spend
+// journal.  It preserves the full Address and Covenant instead of reducing the
+// output to a Bitcoin-style public key script.
+func compressedHnsTxOutSize(amount uint64, address wire.Address,
+	covenant wire.Covenant) int {
+
+	return serializeSizeVLQ(compressTxOutAmount(amount)) +
+		address.SerializeSize() + covenant.SerializeSize()
+}
+
+// putCompressedHnsTxOut encodes the passed Handshake transaction output fields
+// directly into the target slice and returns the number of bytes written.
+func putCompressedHnsTxOut(target []byte, amount uint64, address wire.Address,
+	covenant wire.Covenant) int {
+
+	offset := putVLQ(target, compressTxOutAmount(amount))
+
+	var b bytes.Buffer
+	if err := address.Encode(&b); err != nil {
+		panic("putCompressedHnsTxOut: invalid address: " + err.Error())
+	}
+	if err := covenant.Encode(&b); err != nil {
+		panic("putCompressedHnsTxOut: invalid covenant: " + err.Error())
+	}
+
+	copy(target[offset:], b.Bytes())
+	return offset + b.Len()
+}
+
+// decodeCompressedHnsTxOut decodes an amount, address, and covenant from the
+// Handshake-native compressed txout encoding.
+func decodeCompressedHnsTxOut(serialized []byte) (uint64, wire.Address,
+	wire.Covenant, int, error) {
+
+	compressedAmount, bytesRead := deserializeVLQ(serialized)
+	if bytesRead >= len(serialized) {
+		return 0, wire.Address{}, wire.Covenant{}, bytesRead,
+			errDeserialize("unexpected end of data after compressed amount")
+	}
+
+	r := bytes.NewReader(serialized[bytesRead:])
+	var address wire.Address
+	if err := address.Decode(r); err != nil {
+		return 0, wire.Address{}, wire.Covenant{}, bytesRead,
+			errDeserialize("unable to decode address: " + err.Error())
+	}
+
+	var covenant wire.Covenant
+	if err := covenant.Decode(r); err != nil {
+		read := len(serialized[bytesRead:]) - r.Len()
+		return 0, wire.Address{}, wire.Covenant{}, bytesRead + read,
+			errDeserialize("unable to decode covenant: " + err.Error())
+	}
+
+	read := len(serialized[bytesRead:]) - r.Len()
+	amount := decompressTxOutAmount(compressedAmount)
+	return amount, address, covenant, bytesRead + read, nil
 }

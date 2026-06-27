@@ -20,18 +20,10 @@ var (
 	oneLsh256 = new(big.Int).Lsh(bigOne, 256)
 )
 
-// HashToBig converts a chainhash.Hash into a big.Int that can be used to
-// perform math comparisons.
+// HashToBig converts a Handshake PoW hash into a big.Int that can be used to
+// perform target comparisons.  Handshake treats PoW hash bytes as big-endian.
 func HashToBig(hash *chainhash.Hash) *big.Int {
-	// A Hash is in little-endian, but the big package wants the bytes in
-	// big-endian, so reverse them.
-	buf := *hash
-	blen := len(buf)
-	for i := 0; i < blen/2; i++ {
-		buf[i], buf[blen-1-i] = buf[blen-1-i], buf[i]
-	}
-
-	return new(big.Int).SetBytes(buf[:])
+	return new(big.Int).SetBytes(hash[:])
 }
 
 // CompactToBig converts a compact representation of a whole number N to an

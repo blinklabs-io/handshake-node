@@ -86,24 +86,42 @@ type Covenant struct {
 	Items [][]byte
 }
 
+func validateCovenantFields(covenantType uint8, itemCount int, items [][]byte,
+	op string) error {
+
+	if covenantType > maxCovenantType {
+		return messageError(op, fmt.Sprintf(
+			"covenant type %d exceeds max %d",
+			covenantType, maxCovenantType,
+		))
+	}
+
+	if itemCount > maxCovenantItems {
+		str := fmt.Sprintf("covenant item count is too large "+
+			"[count %d, max %d]", itemCount, maxCovenantItems)
+		return messageError(op, str)
+	}
+
+	for i, item := range items {
+		if len(item) > maxCovenantItemSize {
+			str := fmt.Sprintf("covenant item %d is too large "+
+				"[size %d, max %d]", i, len(item),
+				maxCovenantItemSize)
+			return messageError(op, str)
+		}
+	}
+
+	return nil
+}
+
 // Encode serializes the covenant to w.
 //
 // Wire format: type(1) + varint(itemCount) + for each item: varint(len) + bytes
 func (c *Covenant) Encode(w io.Writer) error {
 	itemCount := len(c.Items)
-	if itemCount > maxCovenantItems {
-		str := fmt.Sprintf("covenant item count is too large "+
-			"[count %d, max %d]", itemCount, maxCovenantItems)
-		return messageError("Covenant.Encode", str)
-	}
-
-	for i, item := range c.Items {
-		if len(item) > maxCovenantItemSize {
-			str := fmt.Sprintf("covenant item %d is too large "+
-				"[size %d, max %d]", i, len(item),
-				maxCovenantItemSize)
-			return messageError("Covenant.Encode", str)
-		}
+	if err := validateCovenantFields(c.Type, itemCount, c.Items,
+		"Covenant.Encode"); err != nil {
+		return err
 	}
 
 	err := binarySerializer.PutUint8(w, c.Type)
@@ -133,6 +151,12 @@ func (c *Covenant) Decode(r io.Reader) error {
 		return err
 	}
 	c.Type = typ
+	if typ > maxCovenantType {
+		return messageError("Covenant.Decode", fmt.Sprintf(
+			"covenant type %d exceeds max %d",
+			typ, maxCovenantType,
+		))
+	}
 
 	itemCount, err := ReadVarInt(r, 0)
 	if err != nil {

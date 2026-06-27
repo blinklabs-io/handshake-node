@@ -7,8 +7,8 @@ package txscript
 import (
 	"fmt"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -43,8 +43,6 @@ const (
 		ScriptVerifyDiscourageUpgradeableWitnessProgram |
 		ScriptVerifyMinimalIf |
 		ScriptVerifyWitnessPubKeyType |
-		ScriptVerifyTaproot |
-		ScriptVerifyDiscourageUpgradeableTaprootVersion |
 		ScriptVerifyDiscourageOpSuccess |
 		ScriptVerifyDiscourageUpgradeablePubkeyType |
 		ScriptVerifyConstScriptCode
@@ -547,11 +545,6 @@ func typeOfScript(scriptVersion uint16, script []byte) ScriptClass {
 		case isNullDataScript(scriptVersion, script):
 			return NullDataTy
 		}
-	case TaprootWitnessVersion:
-		switch {
-		case isWitnessTaprootScript(script):
-			return WitnessV1TaprootTy
-		}
 	}
 
 	return NonStandardTy
@@ -566,11 +559,6 @@ func GetScriptClass(script []byte) ScriptClass {
 
 	if classSegWit != NonStandardTy {
 		return classSegWit
-	}
-
-	const scriptVersionTaproot = 1
-	if class := typeOfScript(scriptVersionTaproot, script); class != NonStandardTy {
-		return class
 	}
 
 	// Fallback: any valid witness program with version in [1, 16] and a
@@ -626,10 +614,6 @@ func expectedInputs(script []byte, class ScriptClass) int {
 		return 1
 
 	case WitnessV0ScriptHashTy:
-		// Not including script.  That is handled by the caller.
-		return 1
-
-	case WitnessV1TaprootTy:
 		// Not including script.  That is handled by the caller.
 		return 1
 
@@ -1005,10 +989,7 @@ func ExtractPkScriptAddrs(pkScript []byte,
 	}
 
 	if extractWitnessV1KeyBytes(pkScript) != nil {
-		// Handshake predates BIP-341 and does not support taproot
-		// outputs; recognise the script shape only as a legacy
-		// witness-v1 bucket without trying to decode an address.
-		return WitnessV1TaprootTy, nil, 1, nil
+		return NonStandardTy, nil, 0, nil
 	}
 
 	// Generic witness program fallback.  PayToAddrScript emits

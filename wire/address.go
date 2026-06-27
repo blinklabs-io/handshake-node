@@ -104,10 +104,11 @@ func (a *Address) Decode(r io.Reader) error {
 		return err
 	}
 
-	a.Hash = make([]byte, hashLen)
 	if hashLen == 0 {
+		a.Hash = nil
 		return nil
 	}
+	a.Hash = make([]byte, hashLen)
 	_, err = io.ReadFull(r, a.Hash)
 	return err
 }

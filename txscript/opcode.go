@@ -2367,15 +2367,9 @@ func opcodeCheckMultiSig(op *opcode, data []byte, vm *Engine) error {
 				return err
 			}
 
-			// Parse the signature.
+			// Parse the fixed-width Handshake signature.
 			var err error
-			if vm.hasFlag(ScriptVerifyStrictEncoding) ||
-				vm.hasFlag(ScriptVerifyDERSignatures) {
-
-				parsedSig, err = ecdsa.ParseDERSignature(signature)
-			} else {
-				parsedSig, err = ecdsa.ParseSignature(signature)
-			}
+			parsedSig, err = parseHnsEcdsaSignature(signature)
 			sigInfo.parsed = true
 			if err != nil {
 				continue
