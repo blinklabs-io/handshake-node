@@ -6,6 +6,7 @@
 package txscript
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
@@ -339,5 +340,33 @@ func TestCheckSignatureEncoding(t *testing.T) {
 			t.Errorf("checkSignatureEncooding test '%s' succeeded "+
 				"when it should have failed", test.name)
 		}
+	}
+}
+
+func TestParseBaseSigAndPubkeyInvalidSignatureStrictness(t *testing.T) {
+	t.Parallel()
+
+	pubKey := hexToBytes("02ce0b14fb842b1ba549fdd675c98075f12e9" +
+		"c510f8ef52bd021a9a1f4809d3b4d")
+	fullSig := append([]byte{0x01, 0x02}, byte(SigHashAll))
+
+	_, _, _, err := parseBaseSigAndPubkey(pubKey, fullSig, &Engine{})
+	if err == nil {
+		t.Fatalf("expected malformed signature error")
+	}
+	var scriptErr Error
+	if errors.As(err, &scriptErr) {
+		t.Fatalf("non-strict malformed signature returned script error: %v",
+			err)
+	}
+
+	strictVM := &Engine{flags: ScriptVerifyStrictEncoding}
+	_, _, _, err = parseBaseSigAndPubkey(pubKey, fullSig, strictVM)
+	if err == nil {
+		t.Fatalf("expected strict malformed signature error")
+	}
+	if !errors.As(err, &scriptErr) {
+		t.Fatalf("strict malformed signature returned non-script error: %v",
+			err)
 	}
 }

@@ -6,6 +6,7 @@ package blockchain
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -606,16 +607,21 @@ func putCompressedHnsTxOut(target []byte, amount uint64, address wire.Address,
 
 	offset := putVLQ(target, compressTxOutAmount(amount))
 
-	var b bytes.Buffer
-	if err := address.Encode(&b); err != nil {
+	b := bytes.NewBuffer(target[offset:offset])
+	if err := address.Encode(b); err != nil {
 		panic("putCompressedHnsTxOut: invalid address: " + err.Error())
 	}
-	if err := covenant.Encode(&b); err != nil {
+	if err := covenant.Encode(b); err != nil {
 		panic("putCompressedHnsTxOut: invalid covenant: " + err.Error())
 	}
 
-	copy(target[offset:], b.Bytes())
-	return offset + b.Len()
+	written := b.Len()
+	expected := address.SerializeSize() + covenant.SerializeSize()
+	if written != expected {
+		panic(fmt.Sprintf("putCompressedHnsTxOut: wrote %d bytes, want %d",
+			written, expected))
+	}
+	return offset + written
 }
 
 // decodeCompressedHnsTxOut decodes an amount, address, and covenant from the
@@ -632,7 +638,8 @@ func decodeCompressedHnsTxOut(serialized []byte) (uint64, wire.Address,
 	r := bytes.NewReader(serialized[bytesRead:])
 	var address wire.Address
 	if err := address.Decode(r); err != nil {
-		return 0, wire.Address{}, wire.Covenant{}, bytesRead,
+		read := len(serialized[bytesRead:]) - r.Len()
+		return 0, wire.Address{}, wire.Covenant{}, bytesRead + read,
 			errDeserialize("unable to decode address: " + err.Error())
 	}
 

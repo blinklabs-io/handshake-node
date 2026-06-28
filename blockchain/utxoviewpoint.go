@@ -82,6 +82,7 @@ func (entry *UtxoEntry) memoryUsage() uint64 {
 
 	usage := baseEntrySize + uint64(cap(entry.pkScript)) +
 		uint64(cap(entry.address.Hash))
+	usage += uint64(cap(entry.covenant.Items)) * uint64(sliceHeaderSize)
 	for _, item := range entry.covenant.Items {
 		usage += uint64(cap(item))
 	}
@@ -231,14 +232,13 @@ func (view *UtxoViewpoint) FetchPrevOutput(op wire.OutPoint) *wire.TxOut {
 }
 
 // addressFromPkScript reconstructs a wire.Address from a witness program
-// (pkScript) by delegating to txscript.AddressFromWitnessProgram.  If the
-// script is not a valid witness program a zero Address is returned.
-func addressFromPkScript(pkScript []byte) wire.Address {
+// (pkScript) by delegating to txscript.AddressFromWitnessProgram.
+func addressFromPkScript(pkScript []byte) (wire.Address, error) {
 	addr, err := txscript.AddressFromWitnessProgram(pkScript)
 	if err != nil {
-		return wire.Address{}
+		return wire.Address{}, err
 	}
-	return addr
+	return addr, nil
 }
 
 func txOutPkScript(txOut *wire.TxOut) []byte {

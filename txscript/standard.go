@@ -17,6 +17,11 @@ const (
 	// data to be considered a nulldata transaction
 	MaxDataCarrierSize = 80
 
+	// witnessV1TaprootScriptLen is the length of a taproot-shaped script.
+	// Handshake does not support Taproot, but standardness still recognizes
+	// this shape in order to reject it explicitly.
+	witnessV1TaprootScriptLen = 34
+
 	// StandardVerifyFlags are the script flags which are used when
 	// executing transaction scripts to enforce additional checks which
 	// are required for the script to be considered standard.  These checks
@@ -391,7 +396,7 @@ func extractWitnessV0ScriptHash(script []byte) []byte {
 func extractWitnessV1KeyBytes(script []byte) []byte {
 	// A pay-to-witness-script-hash script is of the form:
 	//   OP_1 OP_DATA_32 <32-byte-hash>
-	if len(script) == witnessV1TaprootLen &&
+	if len(script) == witnessV1TaprootScriptLen &&
 		script[0] == OP_1 &&
 		script[1] == OP_DATA_32 {
 

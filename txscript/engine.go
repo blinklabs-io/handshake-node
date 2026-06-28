@@ -1206,13 +1206,16 @@ func (vm *Engine) checkPubKeyEncoding(pubKey []byte) error {
 	return scriptError(ErrPubKeyType, "unsupported public key type")
 }
 
+func (vm *Engine) hasSignatureEncodingFlags() bool {
+	return vm.hasFlag(ScriptVerifyDERSignatures) ||
+		vm.hasFlag(ScriptVerifyLowS) ||
+		vm.hasFlag(ScriptVerifyStrictEncoding)
+}
+
 // checkSignatureEncoding returns whether or not the passed signature adheres to
 // the strict encoding requirements if enabled.
 func (vm *Engine) checkSignatureEncoding(sig []byte) error {
-	if !vm.hasFlag(ScriptVerifyDERSignatures) &&
-		!vm.hasFlag(ScriptVerifyLowS) &&
-		!vm.hasFlag(ScriptVerifyStrictEncoding) {
-
+	if !vm.hasSignatureEncodingFlags() {
 		return nil
 	}
 

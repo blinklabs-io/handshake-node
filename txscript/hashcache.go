@@ -31,7 +31,9 @@ func hnsHashRaw(serialize func(w io.Writer) error) chainhash.Hash {
 	if err != nil {
 		panic("blake2b.New256 failed")
 	}
-	_ = serialize(h)
+	if err := serialize(h); err != nil {
+		panic("hnsHashRaw: " + err.Error())
+	}
 
 	var ret chainhash.Hash
 	copy(ret[:], h.Sum(nil))
@@ -86,7 +88,9 @@ func calcHashSequence(tx *wire.MsgTx) chainhash.Hash {
 func calcHashOutputs(tx *wire.MsgTx) chainhash.Hash {
 	var b bytes.Buffer
 	for _, out := range tx.TxOut {
-		wire.WriteTxOut(&b, 0, 0, out)
+		if err := wire.WriteTxOut(&b, 0, 0, out); err != nil {
+			panic("calcHashOutputs: " + err.Error())
+		}
 	}
 
 	return hnsHashH(b.Bytes())
@@ -181,7 +185,9 @@ func calcHashInputAmounts(tx *wire.MsgTx, inputFetcher PrevOutputFetcher) chainh
 	for _, txIn := range tx.TxIn {
 		prevOut := inputFetcher.FetchPrevOutput(txIn.PreviousOutPoint)
 
-		_ = binary.Write(&b, binary.LittleEndian, prevOut.Value)
+		if err := binary.Write(&b, binary.LittleEndian, prevOut.Value); err != nil {
+			panic("calcHashInputAmounts: " + err.Error())
+		}
 	}
 
 	return hnsHashH(b.Bytes())
@@ -195,7 +201,9 @@ func calcHashInputScripts(tx *wire.MsgTx, inputFetcher PrevOutputFetcher) chainh
 	for _, txIn := range tx.TxIn {
 		prevOut := inputFetcher.FetchPrevOutput(txIn.PreviousOutPoint)
 
-		_ = wire.WriteVarBytes(&b, 0, prevOut.Address.WitnessProgram())
+		if err := wire.WriteVarBytes(&b, 0, prevOut.Address.WitnessProgram()); err != nil {
+			panic("calcHashInputScripts: " + err.Error())
+		}
 	}
 
 	return hnsHashH(b.Bytes())

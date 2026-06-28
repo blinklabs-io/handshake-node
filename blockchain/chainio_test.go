@@ -591,6 +591,100 @@ func TestHandshakeUtxoSerializationPreservesAddressCovenant(t *testing.T) {
 	}
 }
 
+func TestLegacyUtxoV2SerializationConvertsToAddress(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"00112233445566778899aabbccddeeff00112233",
+		),
+	}
+	entry := &UtxoEntry{
+		amount:      123456789,
+		pkScript:    addr.WitnessProgram(),
+		blockHeight: 42,
+		packedFlags: tfCoinBase,
+	}
+
+	serializedV2, err := serializeUtxoEntryV2(entry)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntryV2: %v", err)
+	}
+	decodedV2, err := deserializeUtxoEntryV2(serializedV2)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntryV2: %v", err)
+	}
+	if !reflect.DeepEqual(decodedV2.Address(), addr) {
+		t.Fatalf("address mismatch: got %#v, want %#v",
+			decodedV2.Address(), addr)
+	}
+	if !bytes.Equal(decodedV2.PkScript(), addr.WitnessProgram()) {
+		t.Fatalf("pkScript mismatch: got %x, want %x",
+			decodedV2.PkScript(), addr.WitnessProgram())
+	}
+
+	serializedV3, err := serializeUtxoEntry(decodedV2)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntry: %v", err)
+	}
+	decodedV3, err := deserializeUtxoEntry(serializedV3)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntry: %v", err)
+	}
+	if !reflect.DeepEqual(decodedV3.Address(), addr) {
+		t.Fatalf("v3 address mismatch: got %#v, want %#v",
+			decodedV3.Address(), addr)
+	}
+	covenant := decodedV3.Covenant()
+	if covenant.Type != wire.CovenantNone || len(covenant.Items) != 0 {
+		t.Fatalf("v3 covenant mismatch: got %#v, want empty", covenant)
+	}
+}
+
+func TestLegacySpendJournalDecodeFallback(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"ffeeddccbbaa99887766554433221100ffeeddcc",
+		),
+	}
+	want := SpentTxOut{
+		Amount:     987654321,
+		Address:    addr,
+		Covenant:   wire.Covenant{},
+		PkScript:   addr.WitnessProgram(),
+		Height:     7,
+		IsCoinBase: true,
+	}
+
+	size := serializeSizeVLQ(spentTxOutHeaderCode(&want)) +
+		serializeSizeVLQ(0) +
+		compressedTxOutSize(uint64(want.Amount), want.PkScript)
+	serialized := make([]byte, size)
+	offset := putVLQ(serialized, spentTxOutHeaderCode(&want))
+	offset += putVLQ(serialized[offset:], 0)
+	offset += putCompressedTxOut(
+		serialized[offset:], uint64(want.Amount), want.PkScript,
+	)
+	serialized = serialized[:offset]
+
+	var got SpentTxOut
+	bytesRead, err := decodeSpentTxOut(serialized, &got)
+	if err != nil {
+		t.Fatalf("decodeSpentTxOut: %v", err)
+	}
+	if bytesRead != len(serialized) {
+		t.Fatalf("bytes read mismatch: got %d, want %d",
+			bytesRead, len(serialized))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stxo mismatch: got %#v, want %#v", got, want)
+	}
+}
+
 // TestUtxoEntryHeaderCodeErrors performs negative tests against unspent
 // transaction output header codes to ensure error paths work as expected.
 func TestUtxoEntryHeaderCodeErrors(t *testing.T) {

@@ -106,27 +106,6 @@ func (b *BlockChain) calcEasiestDifficulty(bits uint32, duration time.Duration) 
 	return BigToCompact(newTarget)
 }
 
-// findPrevTestNetDifficulty returns the difficulty of the previous block which
-// did not have the special testnet minimum difficulty rule applied.
-func findPrevTestNetDifficulty(startNode HeaderCtx, c ChainCtx) uint32 {
-	// Search backwards through the chain for the last block without
-	// the special rule applied.
-	iterNode := startNode
-	for iterNode != nil && iterNode.Height()%c.BlocksPerRetarget() != 0 &&
-		iterNode.Bits() == c.ChainParams().PowLimitBits {
-
-		iterNode = iterNode.Parent()
-	}
-
-	// Return the found difficulty or the minimum difficulty if no
-	// appropriate block was found.
-	lastBits := c.ChainParams().PowLimitBits
-	if iterNode != nil {
-		lastBits = iterNode.Bits()
-	}
-	return lastBits
-}
-
 // suitableBlock returns the median timestamp block among node and its two
 // parents, matching Handshake's difficulty retarget endpoint selection.
 func suitableBlock(node HeaderCtx) HeaderCtx {

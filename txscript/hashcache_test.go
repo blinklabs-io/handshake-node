@@ -5,6 +5,8 @@
 package txscript
 
 import (
+	"errors"
+	"io"
 	"math/rand"
 	"testing"
 	"time"
@@ -15,6 +17,20 @@ import (
 
 func init() {
 	rand.Seed(time.Now().Unix())
+}
+
+func TestHnsHashRawPanicsOnSerializationError(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("expected hnsHashRaw to panic")
+		}
+	}()
+
+	hnsHashRaw(func(io.Writer) error {
+		return errors.New("serialize failed")
+	})
 }
 
 // genTestTx creates a random transaction for uses within test cases.

@@ -5,6 +5,7 @@
 package txscript
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
@@ -68,9 +69,30 @@ func parseHnsEcdsaSignature(sigBytes []byte) (*ecdsa.Signature, error) {
 	return ecdsa.NewSignature(&r, &s), nil
 }
 
+func nonScriptSignatureError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(err.Error())
+}
+
 func signHnsEcdsa(key *btcec.PrivateKey, hash []byte) []byte {
 	compactSig := ecdsa.SignCompact(key, hash, true)
 	return append([]byte(nil), compactSig[1:]...)
+}
+
+// parseSignature parses a Handshake ECDSA signature for execution.  Strict
+// signature flags make malformed signatures script errors; otherwise they are
+// ordinary verification failures that push false.
+func (vm *Engine) parseSignature(sig []byte) (*ecdsa.Signature, error) {
+	signature, err := parseHnsEcdsaSignature(sig)
+	if err == nil {
+		return signature, nil
+	}
+	if vm.hasSignatureEncodingFlags() {
+		return nil, err
+	}
+	return nil, nonScriptSignatureError(err)
 }
 
 // baseSigVerifier is used to verify signatures for the _base_ system, meaning
@@ -115,22 +137,21 @@ func parseBaseSigAndPubkey(pkBytes, fullSigBytes []byte,
 	if err := vm.checkHashTypeEncoding(hashType); err != nil {
 		return nil, nil, 0, err
 	}
-	if err := vm.checkSignatureEncoding(sigBytes); err != nil {
+
+	// Parse the fixed-width Handshake signature.  When strict signature
+	// encoding flags are disabled, parse failures are ordinary verification
+	// failures instead of script errors.
+	signature, err := vm.parseSignature(sigBytes)
+	if err != nil {
 		return nil, nil, 0, err
 	}
 	if err := vm.checkPubKeyEncoding(pkBytes); err != nil {
 		return nil, nil, 0, err
 	}
 
-	// First, parse the public key, which we expect to be in the proper
-	// encoding.
+	// Finally, parse the public key, which we expect to be in the proper
+	// encoding when strict public key rules are enabled.
 	pubKey, err := btcec.ParsePubKey(pkBytes)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-
-	// Next, parse the fixed-width Handshake signature.
-	signature, err := parseHnsEcdsaSignature(sigBytes)
 	if err != nil {
 		return nil, nil, 0, err
 	}

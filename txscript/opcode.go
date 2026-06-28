@@ -2363,15 +2363,16 @@ func opcodeCheckMultiSig(op *opcode, data []byte, vm *Engine) error {
 			if err := vm.checkHashTypeEncoding(hashType); err != nil {
 				return err
 			}
-			if err := vm.checkSignatureEncoding(signature); err != nil {
-				return err
-			}
 
 			// Parse the fixed-width Handshake signature.
 			var err error
-			parsedSig, err = parseHnsEcdsaSignature(signature)
+			parsedSig, err = vm.parseSignature(signature)
 			sigInfo.parsed = true
 			if err != nil {
+				var scriptErr Error
+				if errors.As(err, &scriptErr) {
+					return err
+				}
 				continue
 			}
 			sigInfo.parsedSignature = parsedSig

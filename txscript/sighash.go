@@ -289,7 +289,9 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 			// code is the original script, with all code
 			// separators removed, serialized with a var int length
 			// prefix.
-			wire.WriteVarBytes(w, 0, subScript)
+			if err := wire.WriteVarBytes(w, 0, subScript); err != nil {
+				return err
+			}
 		}
 
 		// Next, add the input amount, and sequence number of the input
@@ -312,8 +314,7 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 			idx < len(tx.TxOut) {
 
 			h := hnsHashRaw(func(tw io.Writer) error {
-				wire.WriteTxOut(tw, 0, 0, tx.TxOut[idx])
-				return nil
+				return wire.WriteTxOut(tw, 0, 0, tx.TxOut[idx])
 			})
 			w.Write(h[:])
 		} else if hashType&sigHashMask == SigHashSingleReverse &&
@@ -321,8 +322,7 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 
 			outputIdx := len(tx.TxOut) - 1 - idx
 			h := hnsHashRaw(func(tw io.Writer) error {
-				wire.WriteTxOut(tw, 0, 0, tx.TxOut[outputIdx])
-				return nil
+				return wire.WriteTxOut(tw, 0, 0, tx.TxOut[outputIdx])
 			})
 			w.Write(h[:])
 		} else {
@@ -443,7 +443,9 @@ func WithAnnex(annex []byte) TaprootSigHashOption {
 		// It's just a bytes.Buffer which never returns an error on
 		// write.
 		var b bytes.Buffer
-		_ = wire.WriteVarBytes(&b, 0, annex)
+		if err := wire.WriteVarBytes(&b, 0, annex); err != nil {
+			panic("WithAnnex: " + err.Error())
+		}
 
 		o.annexHash = chainhash.HashB(b.Bytes())
 	}

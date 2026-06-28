@@ -48,9 +48,6 @@ const (
 	// witnessV0ScriptHashLen is the length of a P2WSH script.
 	witnessV0ScriptHashLen = 34
 
-	// witnessV1TaprootLen is the length of a P2TR script.
-	witnessV1TaprootLen = 34
-
 	// maxLen is the maximum script length supported by ParsePkScript.
 	maxLen = witnessV0ScriptHashLen
 )
@@ -135,10 +132,6 @@ func (s PkScript) Script() []byte {
 	case WitnessV0ScriptHashTy:
 		script = make([]byte, witnessV0ScriptHashLen)
 		copy(script, s.script[:witnessV0ScriptHashLen])
-
-	case WitnessV1TaprootTy:
-		script = make([]byte, witnessV1TaprootLen)
-		copy(script, s.script[:witnessV1TaprootLen])
 
 	default:
 		// Unsupported script type.

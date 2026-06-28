@@ -490,7 +490,7 @@ func upgradeUtxoSetToV2(db database.DB, interrupt <-chan struct{}) error {
 			// Add an entry for each utxo into the new bucket using
 			// the new format.
 			for txOutIdx, utxo := range utxos {
-				reserialized, err := serializeUtxoEntry(utxo)
+				reserialized, err := serializeUtxoEntryV2(utxo)
 				if err != nil {
 					return 0, err
 				}
@@ -574,6 +574,116 @@ func upgradeUtxoSetToV2(db database.DB, interrupt <-chan struct{}) error {
 	return nil
 }
 
+// upgradeUtxoSetToV3 migrates the utxo set entries from version 2 to 3 in
+// batches.  Version 2 entries store compressed pkScripts while version 3 stores
+// Handshake-native Address+Covenant outputs.
+func upgradeUtxoSetToV3(db database.DB, interrupt <-chan struct{}) error {
+	// Hardcoded bucket names so updates to the global values do not affect
+	// old upgrades.
+	var (
+		v2BucketName = []byte("utxosetv2")
+		v3BucketName = []byte("utxosetv3")
+	)
+
+	log.Infof("Upgrading utxo set to v3.  This will take a while...")
+	start := time.Now()
+
+	// Create the new utxo set bucket as needed.
+	err := db.Update(func(dbTx database.Tx) error {
+		_, err := dbTx.Metadata().CreateBucketIfNotExists(v3BucketName)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	const maxUtxos = 200000
+	doBatch := func(dbTx database.Tx) (uint32, error) {
+		v2Bucket := dbTx.Metadata().Bucket(v2BucketName)
+		if v2Bucket == nil {
+			return 0, fmt.Errorf("bucket %s does not exist", v2BucketName)
+		}
+		v3Bucket := dbTx.Metadata().Bucket(v3BucketName)
+		v2Cursor := v2Bucket.Cursor()
+
+		var numUtxos uint32
+		for ok := v2Cursor.First(); ok && numUtxos < maxUtxos; ok =
+			v2Cursor.Next() {
+
+			key := append([]byte(nil), v2Cursor.Key()...)
+			utxo, err := deserializeUtxoEntryV2(v2Cursor.Value())
+			if err != nil {
+				return 0, err
+			}
+
+			reserialized, err := serializeUtxoEntry(utxo)
+			if err != nil {
+				return 0, err
+			}
+			if err := v3Bucket.Put(key, reserialized); err != nil {
+				return 0, err
+			}
+			if err := v2Bucket.Delete(key); err != nil {
+				return 0, err
+			}
+
+			numUtxos++
+
+			if interruptRequested(interrupt) {
+				// No error here so the database transaction is not
+				// cancelled and outstanding work is written to disk.
+				break
+			}
+		}
+
+		return numUtxos, nil
+	}
+
+	// Migrate all entries in batches for the reasons mentioned above.
+	var totalUtxos uint64
+	for {
+		var numUtxos uint32
+		err := db.Update(func(dbTx database.Tx) error {
+			var err error
+			numUtxos, err = doBatch(dbTx)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+
+		if interruptRequested(interrupt) {
+			return errInterruptRequested
+		}
+
+		if numUtxos == 0 {
+			break
+		}
+
+		totalUtxos += uint64(numUtxos)
+		log.Infof("Migrated %d utxos (%d total)", numUtxos, totalUtxos)
+	}
+
+	// Remove the old bucket and update the utxo set version once it has
+	// been fully migrated.
+	err = db.Update(func(dbTx database.Tx) error {
+		err := dbTx.Metadata().DeleteBucket(v2BucketName)
+		if err != nil {
+			return err
+		}
+
+		return dbPutVersion(dbTx, utxoSetVersionKeyName, 3)
+	})
+	if err != nil {
+		return err
+	}
+
+	seconds := int64(time.Since(start) / time.Second)
+	log.Infof("Done upgrading utxo set.  Total utxos: %d in %d seconds",
+		totalUtxos, seconds)
+	return nil
+}
+
 // maybeUpgradeDbBuckets checks the database version of the buckets used by this
 // package and performs any needed upgrades to bring them to the latest version.
 //
@@ -581,13 +691,21 @@ func upgradeUtxoSetToV2(db database.DB, interrupt <-chan struct{}) error {
 // this function returns without error.
 func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 	// Load or create bucket versions as needed.
-	var utxoSetVersion uint32
+	var utxoSetVersion, spendJournalVersion uint32
 	err := b.db.Update(func(dbTx database.Tx) error {
 		// Load the utxo set version from the database or create it and
 		// initialize it to version 1 if it doesn't exist.
 		var err error
 		utxoSetVersion, err = dbFetchOrCreateVersion(dbTx,
 			utxoSetVersionKeyName, 1)
+		if err != nil {
+			return err
+		}
+
+		// Load the spend journal version from the database or create it
+		// and initialize it to version 1 if it doesn't exist.
+		spendJournalVersion, err = dbFetchOrCreateVersion(dbTx,
+			spendJournalVersionKeyName, 1)
 		return err
 	})
 	if err != nil {
@@ -597,6 +715,27 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 	// Update the utxo set to v2 if needed.
 	if utxoSetVersion < 2 {
 		if err := upgradeUtxoSetToV2(b.db, interrupt); err != nil {
+			return err
+		}
+		utxoSetVersion = 2
+	}
+
+	// Update the utxo set to v3 if needed.
+	if utxoSetVersion < 3 {
+		if err := upgradeUtxoSetToV3(b.db, interrupt); err != nil {
+			return err
+		}
+		utxoSetVersion = 3
+	}
+
+	// Spend journal v2 changed the spent txout payload to the Handshake
+	// Address+Covenant format.  Historical v1 entries remain readable via the
+	// compatibility decoder in decodeSpentTxOut, so no data rewrite is needed.
+	if spendJournalVersion < 2 {
+		err := b.db.Update(func(dbTx database.Tx) error {
+			return dbPutVersion(dbTx, spendJournalVersionKeyName, 2)
+		})
+		if err != nil {
 			return err
 		}
 	}

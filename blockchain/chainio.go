@@ -374,8 +374,18 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 		serialized[offset:])
 	offset += bytesRead
 	if err != nil {
+		var legacyStxo SpentTxOut
+		legacyBytesRead, legacyErr := decodeSpentTxOutV1(
+			serialized, &legacyStxo,
+		)
+		if legacyErr == nil {
+			*stxo = legacyStxo
+			return legacyBytesRead, nil
+		}
+
 		return offset, errDeserialize(fmt.Sprintf("unable to decode "+
-			"txout: %v", err))
+			"txout: %v (legacy decode failed: %v)", err,
+			legacyErr))
 	}
 	stxo.Amount = int64(amount)
 	stxo.Address = address
@@ -385,6 +395,55 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 		Address:  address,
 		Covenant: covenant,
 	})
+	return offset, nil
+}
+
+// decodeSpentTxOutV1 decodes a legacy spend journal entry that stores a
+// Bitcoin-style compressed pkScript.  It is only used while upgrading old
+// databases to the Handshake-native Address+Covenant journal format.
+func decodeSpentTxOutV1(serialized []byte, stxo *SpentTxOut) (int, error) {
+	// Ensure there are bytes to decode.
+	if len(serialized) == 0 {
+		return 0, errDeserialize("no serialized bytes")
+	}
+
+	// Deserialize the header code.
+	code, offset := deserializeVLQ(serialized)
+	if offset >= len(serialized) {
+		return offset, errDeserialize("unexpected end of data after " +
+			"header code")
+	}
+
+	// Decode the header code.
+	stxo.IsCoinBase = code&0x01 != 0
+	stxo.Height = int32(code >> 1)
+	if stxo.Height > 0 {
+		_, bytesRead := deserializeVLQ(serialized[offset:])
+		offset += bytesRead
+		if offset >= len(serialized) {
+			return offset, errDeserialize("unexpected end of data " +
+				"after reserved")
+		}
+	}
+
+	amount, pkScript, bytesRead, err := decodeCompressedTxOut(
+		serialized[offset:])
+	offset += bytesRead
+	if err != nil {
+		return offset, errDeserialize(fmt.Sprintf("unable to decode "+
+			"legacy txout: %v", err))
+	}
+
+	address, err := addressFromPkScript(pkScript)
+	if err != nil {
+		return offset, errDeserialize(fmt.Sprintf("unable to convert "+
+			"legacy pkScript %x to address: %v", pkScript, err))
+	}
+
+	stxo.Amount = int64(amount)
+	stxo.Address = address
+	stxo.Covenant = wire.Covenant{}
+	stxo.PkScript = pkScript
 	return offset, nil
 }
 
@@ -692,6 +751,76 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	)
 
 	return serialized, nil
+}
+
+// serializeUtxoEntryV2 returns the legacy v2 utxo entry serialization with a
+// compressed pkScript.  It is only used by the v1->v2 database migration so
+// that interrupted old upgrades continue to produce a real v2 bucket before the
+// explicit v2->v3 migration converts it to Address+Covenant storage.
+func serializeUtxoEntryV2(entry *UtxoEntry) ([]byte, error) {
+	// Spent outputs have no serialization.
+	if entry.IsSpent() {
+		return nil, nil
+	}
+
+	// Encode the header code.
+	headerCode, err := utxoEntryHeaderCode(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	pkScript := entry.PkScript()
+	size := serializeSizeVLQ(headerCode) +
+		compressedTxOutSize(uint64(entry.Amount()), pkScript)
+
+	serialized := make([]byte, size)
+	offset := putVLQ(serialized, headerCode)
+	offset += putCompressedTxOut(
+		serialized[offset:], uint64(entry.Amount()), pkScript,
+	)
+
+	return serialized[:offset], nil
+}
+
+// deserializeUtxoEntryV2 decodes a legacy v2 utxo entry that stores a
+// Bitcoin-style compressed pkScript.  It is only used while upgrading old
+// databases to the Handshake-native Address+Covenant utxo format.
+func deserializeUtxoEntryV2(serialized []byte) (*UtxoEntry, error) {
+	// Deserialize the header code.
+	code, offset := deserializeVLQ(serialized)
+	if offset >= len(serialized) {
+		return nil, errDeserialize("unexpected end of data after header")
+	}
+
+	// Decode the header code.
+	isCoinBase := code&0x01 != 0
+	blockHeight := int32(code >> 1)
+
+	amount, pkScript, _, err := decodeCompressedTxOut(serialized[offset:])
+	if err != nil {
+		return nil, errDeserialize(fmt.Sprintf("unable to decode "+
+			"legacy utxo: %v", err))
+	}
+
+	address, err := addressFromPkScript(pkScript)
+	if err != nil {
+		return nil, errDeserialize(fmt.Sprintf("unable to convert "+
+			"legacy pkScript %x to address: %v", pkScript, err))
+	}
+
+	entry := &UtxoEntry{
+		amount:      int64(amount),
+		address:     address,
+		covenant:    wire.Covenant{},
+		pkScript:    pkScript,
+		blockHeight: blockHeight,
+		packedFlags: 0,
+	}
+	if isCoinBase {
+		entry.packedFlags |= tfCoinBase
+	}
+
+	return entry, nil
 }
 
 // deserializeUtxoEntry decodes a utxo entry from the passed serialized byte
