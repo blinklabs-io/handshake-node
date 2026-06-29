@@ -2013,6 +2013,9 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 			if errors.As(err, &scriptErr) {
 				return err
 			}
+			if vm.hasFlag(ScriptVerifyNullFail) && len(fullSigBytes) > 0 {
+				return nullFailSignatureError()
+			}
 
 			vm.dstack.PushBool(false)
 			return nil
@@ -2028,6 +2031,9 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 			var scriptErr Error
 			if errors.As(err, &scriptErr) {
 				return err
+			}
+			if vm.hasFlag(ScriptVerifyNullFail) && len(fullSigBytes) > 0 {
+				return nullFailSignatureError()
 			}
 
 			vm.dstack.PushBool(false)

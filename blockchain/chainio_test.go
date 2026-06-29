@@ -642,6 +642,37 @@ func TestLegacyUtxoV2SerializationConvertsToAddress(t *testing.T) {
 	}
 }
 
+func TestLegacyUtxoV2NonWitnessScriptUsesZeroAddress(t *testing.T) {
+	t.Parallel()
+
+	pkScript := hexToBytes("76a9141018853670f9f3b0582c5b9ee8ce93764ac32b9388ac")
+	entry := &UtxoEntry{
+		amount:      546,
+		pkScript:    pkScript,
+		blockHeight: 42,
+	}
+
+	serializedV2, err := serializeUtxoEntryV2(entry)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntryV2: %v", err)
+	}
+	decodedV2, err := deserializeUtxoEntryV2(serializedV2)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntryV2: %v", err)
+	}
+	if !reflect.DeepEqual(decodedV2.Address(), wire.Address{}) {
+		t.Fatalf("address mismatch: got %#v, want zero address",
+			decodedV2.Address())
+	}
+	if !bytes.Equal(decodedV2.PkScript(), pkScript) {
+		t.Fatalf("pkScript mismatch: got %x, want %x",
+			decodedV2.PkScript(), pkScript)
+	}
+	if _, err := serializeUtxoEntry(decodedV2); err != nil {
+		t.Fatalf("serializeUtxoEntry: %v", err)
+	}
+}
+
 func TestLegacySpendJournalDecodeFallback(t *testing.T) {
 	t.Parallel()
 
@@ -683,6 +714,71 @@ func TestLegacySpendJournalDecodeFallback(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stxo mismatch: got %#v, want %#v", got, want)
 	}
+}
+
+func TestLegacySpendJournalEntryPrefersLegacyDecoder(t *testing.T) {
+	t.Parallel()
+
+	p2pkhScript := func(hash []byte) []byte {
+		script := []byte{0x76, 0xa9, 0x14}
+		script = append(script, hash...)
+		return append(script, 0x88, 0xac)
+	}
+
+	ambiguousHash := append([]byte{0x14}, bytes.Repeat([]byte{0x11}, 19)...)
+	nextHash := bytes.Repeat([]byte{0x22}, 20)
+	want := []SpentTxOut{
+		{
+			PkScript: p2pkhScript(nextHash),
+		},
+		{
+			PkScript: p2pkhScript(ambiguousHash),
+		},
+	}
+	serialized := serializeLegacySpendJournalEntry(want)
+	blockTxns := []*wire.MsgTx{{
+		TxIn: []*wire.TxIn{{}, {}},
+	}}
+
+	got, err := deserializeSpendJournalEntry(serialized, blockTxns)
+	if err != nil {
+		t.Fatalf("deserializeSpendJournalEntry: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stxos mismatch: got %#v, want %#v", got, want)
+	}
+}
+
+func legacySpentTxOutSerializeSize(stxo *SpentTxOut) int {
+	size := serializeSizeVLQ(spentTxOutHeaderCode(stxo))
+	if stxo.Height > 0 {
+		size += serializeSizeVLQ(0)
+	}
+	return size + compressedTxOutSize(uint64(stxo.Amount), stxo.PkScript)
+}
+
+func putLegacySpentTxOut(target []byte, stxo *SpentTxOut) int {
+	offset := putVLQ(target, spentTxOutHeaderCode(stxo))
+	if stxo.Height > 0 {
+		offset += putVLQ(target[offset:], 0)
+	}
+	return offset + putCompressedTxOut(
+		target[offset:], uint64(stxo.Amount), stxo.PkScript,
+	)
+}
+
+func serializeLegacySpendJournalEntry(stxos []SpentTxOut) []byte {
+	var size int
+	for i := range stxos {
+		size += legacySpentTxOutSerializeSize(&stxos[i])
+	}
+
+	serialized := make([]byte, size)
+	var offset int
+	for i := len(stxos) - 1; i > -1; i-- {
+		offset += putLegacySpentTxOut(serialized[offset:], &stxos[i])
+	}
+	return serialized
 }
 
 // TestUtxoEntryHeaderCodeErrors performs negative tests against unspent

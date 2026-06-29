@@ -610,7 +610,7 @@ func upgradeUtxoSetToV3(db database.DB, interrupt <-chan struct{}) error {
 		for ok := v2Cursor.First(); ok && numUtxos < maxUtxos; ok =
 			v2Cursor.Next() {
 
-			key := append([]byte(nil), v2Cursor.Key()...)
+			key := v2Cursor.Key()
 			utxo, err := deserializeUtxoEntryV2(v2Cursor.Value())
 			if err != nil {
 				return 0, err
@@ -623,7 +623,7 @@ func upgradeUtxoSetToV3(db database.DB, interrupt <-chan struct{}) error {
 			if err := v3Bucket.Put(key, reserialized); err != nil {
 				return 0, err
 			}
-			if err := v2Bucket.Delete(key); err != nil {
+			if err := v2Cursor.Delete(); err != nil {
 				return 0, err
 			}
 

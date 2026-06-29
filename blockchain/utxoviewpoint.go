@@ -232,11 +232,15 @@ func (view *UtxoViewpoint) FetchPrevOutput(op wire.OutPoint) *wire.TxOut {
 }
 
 // addressFromPkScript reconstructs a wire.Address from a witness program
-// (pkScript) by delegating to txscript.AddressFromWitnessProgram.
+// (pkScript).  Legacy compressed outputs may still contain Bitcoin-style
+// scripts, so non-witness scripts fall back to the zero address.
 func addressFromPkScript(pkScript []byte) (wire.Address, error) {
 	addr, err := txscript.AddressFromWitnessProgram(pkScript)
 	if err != nil {
-		return wire.Address{}, err
+		if txscript.IsWitnessProgram(pkScript) {
+			return wire.Address{}, err
+		}
+		return wire.Address{}, nil
 	}
 	return addr, nil
 }

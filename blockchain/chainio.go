@@ -335,10 +335,12 @@ func putSpentTxOut(target []byte, stxo *SpentTxOut) int {
 	)
 }
 
-// decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
-// by other data, into the passed stxo struct.  It returns the number of bytes
-// read.
-func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
+type spentTxOutDecoder func([]byte, *SpentTxOut) (int, error)
+
+// decodeSpentTxOutHns decodes the passed serialized stxo entry from the
+// Handshake-native Address+Covenant format, possibly followed by other data,
+// into the passed stxo struct.  It returns the number of bytes read.
+func decodeSpentTxOutHns(serialized []byte, stxo *SpentTxOut) (int, error) {
 	// Ensure there are bytes to decode.
 	if len(serialized) == 0 {
 		return 0, errDeserialize("no serialized bytes")
@@ -374,18 +376,8 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 		serialized[offset:])
 	offset += bytesRead
 	if err != nil {
-		var legacyStxo SpentTxOut
-		legacyBytesRead, legacyErr := decodeSpentTxOutV1(
-			serialized, &legacyStxo,
-		)
-		if legacyErr == nil {
-			*stxo = legacyStxo
-			return legacyBytesRead, nil
-		}
-
 		return offset, errDeserialize(fmt.Sprintf("unable to decode "+
-			"txout: %v (legacy decode failed: %v)", err,
-			legacyErr))
+			"txout: %v", err))
 	}
 	stxo.Amount = int64(amount)
 	stxo.Address = address
@@ -396,6 +388,28 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 		Covenant: covenant,
 	})
 	return offset, nil
+}
+
+// decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
+// by other data, into the passed stxo struct.  It returns the number of bytes
+// read.
+func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
+	offset, err := decodeSpentTxOutHns(serialized, stxo)
+	if err == nil {
+		return offset, nil
+	}
+
+	var legacyStxo SpentTxOut
+	legacyBytesRead, legacyErr := decodeSpentTxOutV1(
+		serialized, &legacyStxo,
+	)
+	if legacyErr == nil {
+		*stxo = legacyStxo
+		return legacyBytesRead, nil
+	}
+
+	return offset, errDeserialize(fmt.Sprintf("unable to decode "+
+		"txout: %v (legacy decode failed: %v)", err, legacyErr))
 }
 
 // decodeSpentTxOutV1 decodes a legacy spend journal entry that stores a
@@ -474,6 +488,31 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]Spen
 		return nil, nil
 	}
 
+	// Prefer the legacy whole-entry decoder when it consumes the entire
+	// payload.  Some legacy compressed scripts can be mistaken for valid
+	// Address+Covenant bytes at an individual STXO boundary.
+	stxos, legacyErr := deserializeSpendJournalEntryWithDecoder(
+		serialized, txns, numStxos, decodeSpentTxOutV1,
+	)
+	if legacyErr == nil {
+		return stxos, nil
+	}
+
+	stxos, hnsErr := deserializeSpendJournalEntryWithDecoder(
+		serialized, txns, numStxos, decodeSpentTxOutHns,
+	)
+	if hnsErr == nil {
+		return stxos, nil
+	}
+
+	return nil, errDeserialize(fmt.Sprintf("unable to decode spend "+
+		"journal: %v (legacy decode failed: %v)", hnsErr, legacyErr))
+}
+
+func deserializeSpendJournalEntryWithDecoder(serialized []byte,
+	txns []*wire.MsgTx, numStxos int, decoder spentTxOutDecoder) (
+	[]SpentTxOut, error) {
+
 	// Loop backwards through all transactions so everything is read in
 	// reverse order to match the serialization order.
 	stxoIdx := numStxos - 1
@@ -489,7 +528,7 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]Spen
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
 
-			n, err := decodeSpentTxOut(serialized[offset:], stxo)
+			n, err := decoder(serialized[offset:], stxo)
 			offset += n
 			if err != nil {
 				return nil, errDeserialize(fmt.Sprintf("unable "+
@@ -497,6 +536,11 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]Spen
 					txIn.PreviousOutPoint, err))
 			}
 		}
+	}
+	if offset != len(serialized) {
+		return nil, errDeserialize(fmt.Sprintf("mismatched spend "+
+			"journal serialization - decoded %d bytes, but "+
+			"serialized entry is %d bytes", offset, len(serialized)))
 	}
 
 	return stxos, nil

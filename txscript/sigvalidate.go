@@ -76,6 +76,10 @@ func nonScriptSignatureError(err error) error {
 	return errors.New(err.Error())
 }
 
+func nullFailSignatureError() error {
+	return scriptError(ErrNullFail, "signature not empty on failed checksig")
+}
+
 func signHnsEcdsa(key *btcec.PrivateKey, hash []byte) []byte {
 	compactSig := ecdsa.SignCompact(key, hash, true)
 	return append([]byte(nil), compactSig[1:]...)
@@ -91,6 +95,9 @@ func (vm *Engine) parseSignature(sig []byte) (*ecdsa.Signature, error) {
 	}
 	if vm.hasSignatureEncodingFlags() {
 		return nil, err
+	}
+	if vm.hasFlag(ScriptVerifyNullFail) && len(sig) > 0 {
+		return nil, nullFailSignatureError()
 	}
 	return nil, nonScriptSignatureError(err)
 }

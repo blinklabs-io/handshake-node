@@ -370,3 +370,17 @@ func TestParseBaseSigAndPubkeyInvalidSignatureStrictness(t *testing.T) {
 			err)
 	}
 }
+
+func TestParseBaseSigAndPubkeyInvalidSignatureNullFail(t *testing.T) {
+	t.Parallel()
+
+	pubKey := hexToBytes("02ce0b14fb842b1ba549fdd675c98075f12e9" +
+		"c510f8ef52bd021a9a1f4809d3b4d")
+	fullSig := append([]byte{0x01, 0x02}, byte(SigHashAll))
+	vm := &Engine{flags: ScriptVerifyNullFail}
+
+	_, _, _, err := parseBaseSigAndPubkey(pubKey, fullSig, vm)
+	if !IsErrorCode(err, ErrNullFail) {
+		t.Fatalf("expected ErrNullFail, got %v", err)
+	}
+}
