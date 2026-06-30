@@ -2013,6 +2013,9 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 			if errors.As(err, &scriptErr) {
 				return err
 			}
+			if vm.hasFlag(ScriptVerifyNullFail) && len(fullSigBytes) > 0 {
+				return nullFailSignatureError()
+			}
 
 			vm.dstack.PushBool(false)
 			return nil
@@ -2028,6 +2031,9 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 			var scriptErr Error
 			if errors.As(err, &scriptErr) {
 				return err
+			}
+			if vm.hasFlag(ScriptVerifyNullFail) && len(fullSigBytes) > 0 {
+				return nullFailSignatureError()
 			}
 
 			vm.dstack.PushBool(false)
@@ -2363,21 +2369,16 @@ func opcodeCheckMultiSig(op *opcode, data []byte, vm *Engine) error {
 			if err := vm.checkHashTypeEncoding(hashType); err != nil {
 				return err
 			}
-			if err := vm.checkSignatureEncoding(signature); err != nil {
-				return err
-			}
 
-			// Parse the signature.
+			// Parse the fixed-width Handshake signature.
 			var err error
-			if vm.hasFlag(ScriptVerifyStrictEncoding) ||
-				vm.hasFlag(ScriptVerifyDERSignatures) {
-
-				parsedSig, err = ecdsa.ParseDERSignature(signature)
-			} else {
-				parsedSig, err = ecdsa.ParseSignature(signature)
-			}
+			parsedSig, err = vm.parseSignature(signature)
 			sigInfo.parsed = true
 			if err != nil {
+				var scriptErr Error
+				if errors.As(err, &scriptErr) {
+					return err
+				}
 				continue
 			}
 			sigInfo.parsedSignature = parsedSig

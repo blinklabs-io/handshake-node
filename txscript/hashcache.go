@@ -7,13 +7,38 @@ package txscript
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"maps"
 	"math"
 	"sync"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"golang.org/x/crypto/blake2b"
 )
+
+func hnsHashH(b []byte) chainhash.Hash {
+	return chainhash.Hash(blake2b.Sum256(b))
+}
+
+func hnsHashB(b []byte) []byte {
+	hash := blake2b.Sum256(b)
+	return hash[:]
+}
+
+func hnsHashRaw(serialize func(w io.Writer) error) chainhash.Hash {
+	h, err := blake2b.New256(nil)
+	if err != nil {
+		panic("blake2b.New256 failed")
+	}
+	if err := serialize(h); err != nil {
+		panic("hnsHashRaw: " + err.Error())
+	}
+
+	var ret chainhash.Hash
+	copy(ret[:], h.Sum(nil))
+	return ret
+}
 
 // calcHashPrevOuts calculates a single hash of all the previous outputs
 // (txid:index) referenced within the passed transaction. This calculated hash
@@ -35,7 +60,7 @@ func calcHashPrevOuts(tx *wire.MsgTx) chainhash.Hash {
 		b.Write(buf[:])
 	}
 
-	return chainhash.HashH(b.Bytes())
+	return hnsHashH(b.Bytes())
 }
 
 // calcHashSequence computes an aggregated hash of each of the sequence numbers
@@ -52,7 +77,7 @@ func calcHashSequence(tx *wire.MsgTx) chainhash.Hash {
 		b.Write(buf[:])
 	}
 
-	return chainhash.HashH(b.Bytes())
+	return hnsHashH(b.Bytes())
 }
 
 // calcHashOutputs computes a hash digest of all outputs created by the
@@ -63,10 +88,12 @@ func calcHashSequence(tx *wire.MsgTx) chainhash.Hash {
 func calcHashOutputs(tx *wire.MsgTx) chainhash.Hash {
 	var b bytes.Buffer
 	for _, out := range tx.TxOut {
-		wire.WriteTxOut(&b, 0, 0, out)
+		if err := wire.WriteTxOut(&b, 0, 0, out); err != nil {
+			panic("calcHashOutputs: " + err.Error())
+		}
 	}
 
-	return chainhash.HashH(b.Bytes())
+	return hnsHashH(b.Bytes())
 }
 
 // PrevOutputFetcher is an interface used to supply the sighash cache with the
@@ -158,10 +185,12 @@ func calcHashInputAmounts(tx *wire.MsgTx, inputFetcher PrevOutputFetcher) chainh
 	for _, txIn := range tx.TxIn {
 		prevOut := inputFetcher.FetchPrevOutput(txIn.PreviousOutPoint)
 
-		_ = binary.Write(&b, binary.LittleEndian, prevOut.Value)
+		if err := binary.Write(&b, binary.LittleEndian, prevOut.Value); err != nil {
+			panic("calcHashInputAmounts: " + err.Error())
+		}
 	}
 
-	return chainhash.HashH(b.Bytes())
+	return hnsHashH(b.Bytes())
 }
 
 // calcHashInputAmts computes the hash digest of all the previous input scripts
@@ -172,10 +201,12 @@ func calcHashInputScripts(tx *wire.MsgTx, inputFetcher PrevOutputFetcher) chainh
 	for _, txIn := range tx.TxIn {
 		prevOut := inputFetcher.FetchPrevOutput(txIn.PreviousOutPoint)
 
-		_ = wire.WriteVarBytes(&b, 0, prevOut.Address.WitnessProgram())
+		if err := wire.WriteVarBytes(&b, 0, prevOut.Address.WitnessProgram()); err != nil {
+			panic("calcHashInputScripts: " + err.Error())
+		}
 	}
 
-	return chainhash.HashH(b.Bytes())
+	return hnsHashH(b.Bytes())
 }
 
 // SegwitSigHashMidstate is the sighash midstate used in the base segwit
@@ -266,18 +297,11 @@ func NewTxSigHashes(tx *wire.MsgTx,
 	sigHashes.HashSequenceV1 = calcHashSequence(tx)
 	sigHashes.HashOutputsV1 = calcHashOutputs(tx)
 
-	// The v0 data is the same as the v1 (newer data) but it uses a double
-	// hash instead.
+	// Handshake uses Blake2b-256 for the v0 sighash midstates.
 	if hasV0Inputs {
-		sigHashes.HashPrevOutsV0 = chainhash.HashH(
-			sigHashes.HashPrevOutsV1[:],
-		)
-		sigHashes.HashSequenceV0 = chainhash.HashH(
-			sigHashes.HashSequenceV1[:],
-		)
-		sigHashes.HashOutputsV0 = chainhash.HashH(
-			sigHashes.HashOutputsV1[:],
-		)
+		sigHashes.HashPrevOutsV0 = sigHashes.HashPrevOutsV1
+		sigHashes.HashSequenceV0 = sigHashes.HashSequenceV1
+		sigHashes.HashOutputsV0 = sigHashes.HashOutputsV1
 	}
 
 	// Finally, we'll compute the taproot specific data if needed.

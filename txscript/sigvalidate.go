@@ -5,13 +5,14 @@
 package txscript
 
 import (
+	"errors"
 	"fmt"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
-	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // signatureVerifier is an abstract interface that allows the op code execution
@@ -30,8 +31,79 @@ type verifyResult struct {
 	sigMatch bool
 }
 
+const rawEcdsaSignatureLen = 64
+
+func parseHnsEcdsaSignature(sigBytes []byte) (*ecdsa.Signature, error) {
+	if len(sigBytes) != rawEcdsaSignatureLen {
+		str := fmt.Sprintf("malformed signature: got %d bytes, want %d",
+			len(sigBytes), rawEcdsaSignatureLen)
+		if len(sigBytes) < rawEcdsaSignatureLen {
+			return nil, scriptError(ErrSigTooShort, str)
+		}
+		return nil, scriptError(ErrSigTooLong, str)
+	}
+
+	var rBytes, sBytes [32]byte
+	copy(rBytes[:], sigBytes[:32])
+	copy(sBytes[:], sigBytes[32:])
+
+	var r, s btcec.ModNScalar
+	if r.SetBytes(&rBytes) != 0 {
+		return nil, scriptError(ErrSigInvalidRIntID,
+			"invalid signature: R >= group order")
+	}
+	if r.IsZero() {
+		return nil, scriptError(ErrSigZeroRLen, "invalid signature: R is 0")
+	}
+	if s.SetBytes(&sBytes) != 0 {
+		return nil, scriptError(ErrSigInvalidSIntID,
+			"invalid signature: S >= group order")
+	}
+	if s.IsZero() {
+		return nil, scriptError(ErrSigZeroSLen, "invalid signature: S is 0")
+	}
+	if s.IsOverHalfOrder() {
+		return nil, scriptError(ErrSigHighS, "signature is not low-S")
+	}
+
+	return ecdsa.NewSignature(&r, &s), nil
+}
+
+func nonScriptSignatureError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(err.Error())
+}
+
+func nullFailSignatureError() error {
+	return scriptError(ErrNullFail, "signature not empty on failed checksig")
+}
+
+func signHnsEcdsa(key *btcec.PrivateKey, hash []byte) []byte {
+	compactSig := ecdsa.SignCompact(key, hash, true)
+	return append([]byte(nil), compactSig[1:]...)
+}
+
+// parseSignature parses a Handshake ECDSA signature for execution.  Strict
+// signature flags make malformed signatures script errors; otherwise they are
+// ordinary verification failures that push false.
+func (vm *Engine) parseSignature(sig []byte) (*ecdsa.Signature, error) {
+	signature, err := parseHnsEcdsaSignature(sig)
+	if err == nil {
+		return signature, nil
+	}
+	if vm.hasSignatureEncodingFlags() {
+		return nil, err
+	}
+	if vm.hasFlag(ScriptVerifyNullFail) && len(sig) > 0 {
+		return nil, nullFailSignatureError()
+	}
+	return nil, nonScriptSignatureError(err)
+}
+
 // baseSigVerifier is used to verify signatures for the _base_ system, meaning
-// ECDSA signatures encoded in DER or BER encoding.
+// fixed-width Handshake ECDSA signatures.
 type baseSigVerifier struct {
 	vm *Engine
 
@@ -50,13 +122,10 @@ type baseSigVerifier struct {
 }
 
 // parseBaseSigAndPubkey attempts to parse a signature and public key according
-// to the base consensus rules, which expect an 33-byte public key and DER or
-// BER encoded signature.
+// to the base consensus rules, which expect a public key and a 64-byte raw
+// Handshake ECDSA signature followed by a sighash type byte.
 func parseBaseSigAndPubkey(pkBytes, fullSigBytes []byte,
 	vm *Engine) (*btcec.PublicKey, *ecdsa.Signature, SigHashType, error) {
-
-	strictEncoding := vm.hasFlag(ScriptVerifyStrictEncoding) ||
-		vm.hasFlag(ScriptVerifyDERSignatures)
 
 	// Trim off hashtype from the signature string and check if the
 	// signature and pubkey conform to the strict encoding requirements
@@ -75,28 +144,21 @@ func parseBaseSigAndPubkey(pkBytes, fullSigBytes []byte,
 	if err := vm.checkHashTypeEncoding(hashType); err != nil {
 		return nil, nil, 0, err
 	}
-	if err := vm.checkSignatureEncoding(sigBytes); err != nil {
+
+	// Parse the fixed-width Handshake signature.  When strict signature
+	// encoding flags are disabled, parse failures are ordinary verification
+	// failures instead of script errors.
+	signature, err := vm.parseSignature(sigBytes)
+	if err != nil {
 		return nil, nil, 0, err
 	}
 	if err := vm.checkPubKeyEncoding(pkBytes); err != nil {
 		return nil, nil, 0, err
 	}
 
-	// First, parse the public key, which we expect to be in the proper
-	// encoding.
+	// Finally, parse the public key, which we expect to be in the proper
+	// encoding when strict public key rules are enabled.
 	pubKey, err := btcec.ParsePubKey(pkBytes)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-
-	// Next, parse the signature which should be in DER or BER depending on
-	// the active script flags.
-	var signature *ecdsa.Signature
-	if strictEncoding {
-		signature, err = ecdsa.ParseDERSignature(sigBytes)
-	} else {
-		signature, err = ecdsa.ParseSignature(sigBytes)
-	}
 	if err != nil {
 		return nil, nil, 0, err
 	}

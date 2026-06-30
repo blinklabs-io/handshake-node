@@ -52,31 +52,31 @@ func TestStxoSerialization(t *testing.T) {
 			name: "Spends last output of coinbase",
 			stxo: SpentTxOut{
 				Amount:     5000000000,
-				PkScript:   hexToBytes("410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac"),
+				PkScript:   hexToBytes("0000"),
 				IsCoinBase: true,
 				Height:     9,
 			},
-			serialized: hexToBytes("1300320511db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5c"),
+			serialized: hexToBytes("13003200000000"),
 		},
 		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Spends last output of non coinbase",
 			stxo: SpentTxOut{
 				Amount:     13761000000,
-				PkScript:   hexToBytes("76a914b2fb57eadf61e106a100a7445a8c3f67898841ec88ac"),
+				PkScript:   hexToBytes("0000"),
 				IsCoinBase: false,
 				Height:     100024,
 			},
-			serialized: hexToBytes("8b99700086c64700b2fb57eadf61e106a100a7445a8c3f67898841ec"),
+			serialized: hexToBytes("8b99700086c64700000000"),
 		},
 		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Does not spend last output, legacy format",
 			stxo: SpentTxOut{
 				Amount:   34405000000,
-				PkScript: hexToBytes("76a9146edbc6c4d31bae9f1ccc38538a114bf42de65e8688ac"),
+				PkScript: hexToBytes("0000"),
 			},
-			serialized: hexToBytes("0091f20f006edbc6c4d31bae9f1ccc38538a114bf42de65e86"),
+			serialized: hexToBytes("0091f20f00000000"),
 		},
 	}
 
@@ -224,7 +224,7 @@ func TestSpendJournalSerialization(t *testing.T) {
 			name: "One tx with one input spends last output of coinbase",
 			entry: []SpentTxOut{{
 				Amount:     5000000000,
-				PkScript:   hexToBytes("410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac"),
+				PkScript:   hexToBytes("0000"),
 				IsCoinBase: true,
 				Height:     9,
 			}},
@@ -235,8 +235,8 @@ func TestSpendJournalSerialization(t *testing.T) {
 						Hash:  *newHashFromStr("0437cd7f8525ceed2324359c2d0ba26006d92d856a9c20fa0241106ee5a597c9"),
 						Index: 0,
 					},
-					Witness: wire.TxWitness{hexToBytes("47304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901")},
-					Sequence:        0xffffffff,
+					Witness:  wire.TxWitness{hexToBytes("47304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901")},
+					Sequence: 0xffffffff,
 				}},
 				TxOut: []*wire.TxOut{{
 					Value:    1000000000,
@@ -249,19 +249,19 @@ func TestSpendJournalSerialization(t *testing.T) {
 				}},
 				LockTime: 0,
 			}},
-			serialized: hexToBytes("1300320511db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5c"),
+			serialized: hexToBytes("13003200000000"),
 		},
 		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Two txns when one spends last output, one doesn't",
 			entry: []SpentTxOut{{
 				Amount:     34405000000,
-				PkScript:   hexToBytes("76a9146edbc6c4d31bae9f1ccc38538a114bf42de65e8688ac"),
+				PkScript:   hexToBytes("0000"),
 				IsCoinBase: false,
 				Height:     100024,
 			}, {
 				Amount:     13761000000,
-				PkScript:   hexToBytes("76a914b2fb57eadf61e106a100a7445a8c3f67898841ec88ac"),
+				PkScript:   hexToBytes("0000"),
 				IsCoinBase: false,
 				Height:     100024,
 			}},
@@ -272,8 +272,8 @@ func TestSpendJournalSerialization(t *testing.T) {
 						Hash:  *newHashFromStr("c0ed017828e59ad5ed3cf70ee7c6fb0f426433047462477dc7a5d470f987a537"),
 						Index: 1,
 					},
-					Witness: wire.TxWitness{hexToBytes("493046022100c167eead9840da4a033c9a56470d7794a9bb1605b377ebe5688499b39f94be59022100fb6345cab4324f9ea0b9ee9169337534834638d818129778370f7d378ee4a325014104d962cac5390f12ddb7539507065d0def320d68c040f2e73337c3a1aaaab7195cb5c4d02e0959624d534f3c10c3cf3d73ca5065ebd62ae986b04c6d090d32627c")},
-					Sequence:        0xffffffff,
+					Witness:  wire.TxWitness{hexToBytes("493046022100c167eead9840da4a033c9a56470d7794a9bb1605b377ebe5688499b39f94be59022100fb6345cab4324f9ea0b9ee9169337534834638d818129778370f7d378ee4a325014104d962cac5390f12ddb7539507065d0def320d68c040f2e73337c3a1aaaab7195cb5c4d02e0959624d534f3c10c3cf3d73ca5065ebd62ae986b04c6d090d32627c")},
+					Sequence: 0xffffffff,
 				}},
 				TxOut: []*wire.TxOut{{
 					Value:    5000000,
@@ -292,8 +292,8 @@ func TestSpendJournalSerialization(t *testing.T) {
 						Hash:  *newHashFromStr("92fbe1d4be82f765dfabc9559d4620864b05cc897c4db0e29adac92d294e52b7"),
 						Index: 0,
 					},
-					Witness: wire.TxWitness{hexToBytes("483045022100e256743154c097465cf13e89955e1c9ff2e55c46051b627751dee0144183157e02201d8d4f02cde8496aae66768f94d35ce54465bd4ae8836004992d3216a93a13f00141049d23ce8686fe9b802a7a938e8952174d35dd2c2089d4112001ed8089023ab4f93a3c9fcd5bfeaa9727858bf640dc1b1c05ec3b434bb59837f8640e8810e87742")},
-					Sequence:        0xffffffff,
+					Witness:  wire.TxWitness{hexToBytes("483045022100e256743154c097465cf13e89955e1c9ff2e55c46051b627751dee0144183157e02201d8d4f02cde8496aae66768f94d35ce54465bd4ae8836004992d3216a93a13f00141049d23ce8686fe9b802a7a938e8952174d35dd2c2089d4112001ed8089023ab4f93a3c9fcd5bfeaa9727858bf640dc1b1c05ec3b434bb59837f8640e8810e87742")},
+					Sequence: 0xffffffff,
 				}},
 				TxOut: []*wire.TxOut{{
 					Value:    5000000,
@@ -306,7 +306,7 @@ func TestSpendJournalSerialization(t *testing.T) {
 				}},
 				LockTime: 0,
 			}},
-			serialized: hexToBytes("8b99700086c64700b2fb57eadf61e106a100a7445a8c3f67898841ec8b99700091f20f006edbc6c4d31bae9f1ccc38538a114bf42de65e86"),
+			serialized: hexToBytes("8b99700086c647000000008b99700091f20f00000000"),
 		},
 	}
 
@@ -361,8 +361,8 @@ func TestSpendJournalErrors(t *testing.T) {
 						Hash:  *newHashFromStr("0437cd7f8525ceed2324359c2d0ba26006d92d856a9c20fa0241106ee5a597c9"),
 						Index: 0,
 					},
-					Witness: wire.TxWitness{hexToBytes("47304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901")},
-					Sequence:        0xffffffff,
+					Witness:  wire.TxWitness{hexToBytes("47304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901")},
+					Sequence: 0xffffffff,
 				}},
 				LockTime: 0,
 			}},
@@ -378,8 +378,8 @@ func TestSpendJournalErrors(t *testing.T) {
 						Hash:  *newHashFromStr("0437cd7f8525ceed2324359c2d0ba26006d92d856a9c20fa0241106ee5a597c9"),
 						Index: 0,
 					},
-					Witness: wire.TxWitness{hexToBytes("47304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901")},
-					Sequence:        0xffffffff,
+					Witness:  wire.TxWitness{hexToBytes("47304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901")},
+					Sequence: 0xffffffff,
 				}},
 				LockTime: 0,
 			}},
@@ -424,11 +424,11 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 1, coinbase",
 			entry: &UtxoEntry{
 				amount:      5000000000,
-				pkScript:    hexToBytes("410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac"),
+				pkScript:    hexToBytes("0000"),
 				blockHeight: 1,
 				packedFlags: tfCoinBase,
 			},
-			serialized: hexToBytes("03320496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52"),
+			serialized: hexToBytes("033200000000"),
 		},
 		// From tx in main blockchain:
 		// 0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098:0
@@ -436,7 +436,7 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 1, coinbase, spent",
 			entry: &UtxoEntry{
 				amount:      5000000000,
-				pkScript:    hexToBytes("410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac"),
+				pkScript:    hexToBytes("0000"),
 				blockHeight: 1,
 				packedFlags: tfCoinBase | tfSpent,
 			},
@@ -448,11 +448,11 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 100001, not coinbase",
 			entry: &UtxoEntry{
 				amount:      1000000,
-				pkScript:    hexToBytes("76a914ee8bd501094a7d5ca318da2506de35e1cb025ddc88ac"),
+				pkScript:    hexToBytes("0000"),
 				blockHeight: 100001,
 				packedFlags: 0,
 			},
-			serialized: hexToBytes("8b99420700ee8bd501094a7d5ca318da2506de35e1cb025ddc"),
+			serialized: hexToBytes("8b99420700000000"),
 		},
 		// From tx in main blockchain:
 		// 8131ffb0a2c945ecaf9b9063e59558784f9c3a74741ce6ae2a18d0571dac15bb:1
@@ -460,7 +460,7 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 100001, not coinbase, spent",
 			entry: &UtxoEntry{
 				amount:      1000000,
-				pkScript:    hexToBytes("76a914ee8bd501094a7d5ca318da2506de35e1cb025ddc88ac"),
+				pkScript:    hexToBytes("0000"),
 				blockHeight: 100001,
 				packedFlags: tfSpent,
 			},
@@ -533,6 +533,293 @@ func TestUtxoSerialization(t *testing.T) {
 			continue
 		}
 	}
+}
+
+func TestHandshakeUtxoSerializationPreservesAddressCovenant(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"00112233445566778899aabbccddeeff00112233",
+		),
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantOpen,
+		Items: [][]byte{
+			[]byte("example"),
+			hexToBytes("01020304"),
+		},
+	}
+	txOut := wire.NewTxOut(123456789, addr, covenant)
+
+	entry := NewUtxoEntry(txOut, 42, true)
+	serializedEntry, err := serializeUtxoEntry(entry)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntry: %v", err)
+	}
+	deserializedEntry, err := deserializeUtxoEntry(serializedEntry)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntry: %v", err)
+	}
+	if !reflect.DeepEqual(deserializedEntry.Address(), addr) {
+		t.Fatalf("address mismatch: got %#v, want %#v",
+			deserializedEntry.Address(), addr)
+	}
+	if !reflect.DeepEqual(deserializedEntry.Covenant(), covenant) {
+		t.Fatalf("covenant mismatch: got %#v, want %#v",
+			deserializedEntry.Covenant(), covenant)
+	}
+
+	stxo := SpentTxOut{
+		Amount:     txOut.Value,
+		Address:    addr,
+		Covenant:   covenant,
+		PkScript:   addr.WitnessProgram(),
+		Height:     42,
+		IsCoinBase: true,
+	}
+	serializedStxo := make([]byte, spentTxOutSerializeSize(&stxo))
+	putSpentTxOut(serializedStxo, &stxo)
+
+	var decodedStxo SpentTxOut
+	if _, err := decodeSpentTxOut(serializedStxo, &decodedStxo); err != nil {
+		t.Fatalf("decodeSpentTxOut: %v", err)
+	}
+	if !reflect.DeepEqual(decodedStxo, stxo) {
+		t.Fatalf("stxo mismatch: got %#v, want %#v", decodedStxo, stxo)
+	}
+}
+
+func TestLegacyUtxoV2SerializationConvertsToAddress(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"00112233445566778899aabbccddeeff00112233",
+		),
+	}
+	entry := &UtxoEntry{
+		amount:      123456789,
+		pkScript:    addr.WitnessProgram(),
+		blockHeight: 42,
+		packedFlags: tfCoinBase,
+	}
+
+	serializedV2, err := serializeUtxoEntryV2(entry)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntryV2: %v", err)
+	}
+	decodedV2, err := deserializeUtxoEntryV2(serializedV2)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntryV2: %v", err)
+	}
+	if !reflect.DeepEqual(decodedV2.Address(), addr) {
+		t.Fatalf("address mismatch: got %#v, want %#v",
+			decodedV2.Address(), addr)
+	}
+	if !bytes.Equal(decodedV2.PkScript(), addr.WitnessProgram()) {
+		t.Fatalf("pkScript mismatch: got %x, want %x",
+			decodedV2.PkScript(), addr.WitnessProgram())
+	}
+
+	serializedV3, err := serializeUtxoEntry(decodedV2)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntry: %v", err)
+	}
+	decodedV3, err := deserializeUtxoEntry(serializedV3)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntry: %v", err)
+	}
+	if !reflect.DeepEqual(decodedV3.Address(), addr) {
+		t.Fatalf("v3 address mismatch: got %#v, want %#v",
+			decodedV3.Address(), addr)
+	}
+	covenant := decodedV3.Covenant()
+	if covenant.Type != wire.CovenantNone || len(covenant.Items) != 0 {
+		t.Fatalf("v3 covenant mismatch: got %#v, want empty", covenant)
+	}
+}
+
+func TestLegacyUtxoV2NonWitnessScriptUsesZeroAddress(t *testing.T) {
+	t.Parallel()
+
+	pkScript := hexToBytes("76a9141018853670f9f3b0582c5b9ee8ce93764ac32b9388ac")
+	entry := &UtxoEntry{
+		amount:      546,
+		pkScript:    pkScript,
+		blockHeight: 42,
+	}
+
+	serializedV2, err := serializeUtxoEntryV2(entry)
+	if err != nil {
+		t.Fatalf("serializeUtxoEntryV2: %v", err)
+	}
+	decodedV2, err := deserializeUtxoEntryV2(serializedV2)
+	if err != nil {
+		t.Fatalf("deserializeUtxoEntryV2: %v", err)
+	}
+	if !reflect.DeepEqual(decodedV2.Address(), wire.Address{}) {
+		t.Fatalf("address mismatch: got %#v, want zero address",
+			decodedV2.Address())
+	}
+	if !bytes.Equal(decodedV2.PkScript(), pkScript) {
+		t.Fatalf("pkScript mismatch: got %x, want %x",
+			decodedV2.PkScript(), pkScript)
+	}
+	if _, err := serializeUtxoEntry(decodedV2); err != nil {
+		t.Fatalf("serializeUtxoEntry: %v", err)
+	}
+}
+
+func TestLegacySpendJournalDecodeFallback(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"ffeeddccbbaa99887766554433221100ffeeddcc",
+		),
+	}
+	want := SpentTxOut{
+		Amount:     987654321,
+		Address:    addr,
+		Covenant:   wire.Covenant{},
+		PkScript:   addr.WitnessProgram(),
+		Height:     7,
+		IsCoinBase: true,
+	}
+
+	size := serializeSizeVLQ(spentTxOutHeaderCode(&want)) +
+		serializeSizeVLQ(0) +
+		compressedTxOutSize(uint64(want.Amount), want.PkScript)
+	serialized := make([]byte, size)
+	offset := putVLQ(serialized, spentTxOutHeaderCode(&want))
+	offset += putVLQ(serialized[offset:], 0)
+	offset += putCompressedTxOut(
+		serialized[offset:], uint64(want.Amount), want.PkScript,
+	)
+	serialized = serialized[:offset]
+
+	var got SpentTxOut
+	bytesRead, err := decodeSpentTxOut(serialized, &got)
+	if err != nil {
+		t.Fatalf("decodeSpentTxOut: %v", err)
+	}
+	if bytesRead != len(serialized) {
+		t.Fatalf("bytes read mismatch: got %d, want %d",
+			bytesRead, len(serialized))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stxo mismatch: got %#v, want %#v", got, want)
+	}
+}
+
+func TestLegacySpendJournalEntryDecodesWitnessProgram(t *testing.T) {
+	t.Parallel()
+
+	addr1 := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"00112233445566778899aabbccddeeff00112233",
+		),
+	}
+	addr2 := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"ffeeddccbbaa99887766554433221100ffeeddcc",
+		),
+	}
+	want := []SpentTxOut{
+		{
+			Address:  addr1,
+			Covenant: wire.Covenant{},
+			PkScript: addr1.WitnessProgram(),
+		},
+		{
+			Address:  addr2,
+			Covenant: wire.Covenant{},
+			PkScript: addr2.WitnessProgram(),
+		},
+	}
+	serialized := serializeLegacySpendJournalEntry(want)
+	blockTxns := []*wire.MsgTx{{
+		TxIn: []*wire.TxIn{{}, {}},
+	}}
+
+	got, err := deserializeSpendJournalEntryV1(serialized, blockTxns)
+	if err != nil {
+		t.Fatalf("deserializeSpendJournalEntryV1: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stxos mismatch: got %#v, want %#v", got, want)
+	}
+}
+
+func TestSpendJournalEntryUsesHnsDecoder(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"1411111111111111111111111111111111111111",
+		),
+	}
+	covenant := wire.Covenant{
+		Type:  wire.CovenantOpen,
+		Items: [][]byte{[]byte("example")},
+	}
+	want := []SpentTxOut{{
+		Amount:   12345,
+		Address:  addr,
+		Covenant: covenant,
+		PkScript: addr.WitnessProgram(),
+	}}
+	serialized := serializeSpendJournalEntry(want)
+	blockTxns := []*wire.MsgTx{{
+		TxIn: []*wire.TxIn{{}},
+	}}
+
+	got, err := deserializeSpendJournalEntry(serialized, blockTxns)
+	if err != nil {
+		t.Fatalf("deserializeSpendJournalEntry: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stxos mismatch: got %#v, want %#v", got, want)
+	}
+}
+
+func legacySpentTxOutSerializeSize(stxo *SpentTxOut) int {
+	size := serializeSizeVLQ(spentTxOutHeaderCode(stxo))
+	if stxo.Height > 0 {
+		size += serializeSizeVLQ(0)
+	}
+	return size + compressedTxOutSize(uint64(stxo.Amount), stxo.PkScript)
+}
+
+func putLegacySpentTxOut(target []byte, stxo *SpentTxOut) int {
+	offset := putVLQ(target, spentTxOutHeaderCode(stxo))
+	if stxo.Height > 0 {
+		offset += putVLQ(target[offset:], 0)
+	}
+	return offset + putCompressedTxOut(
+		target[offset:], uint64(stxo.Amount), stxo.PkScript,
+	)
+}
+
+func serializeLegacySpendJournalEntry(stxos []SpentTxOut) []byte {
+	var size int
+	for i := range stxos {
+		size += legacySpentTxOutSerializeSize(&stxos[i])
+	}
+
+	serialized := make([]byte, size)
+	var offset int
+	for i := len(stxos) - 1; i > -1; i-- {
+		offset += putLegacySpentTxOut(serialized[offset:], &stxos[i])
+	}
+	return serialized
 }
 
 // TestUtxoEntryHeaderCodeErrors performs negative tests against unspent

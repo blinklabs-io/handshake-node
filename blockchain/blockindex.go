@@ -99,10 +99,10 @@ type blockNode struct {
 	// reconstructing headers from memory.  These must be treated as
 	// immutable and are intentionally ordered to avoid padding on 64-bit
 	// platforms.
-	version    int32
-	bits       uint32
-	nonce      uint32
-	timestamp  int64
+	version      int32
+	bits         uint32
+	nonce        uint32
+	timestamp    int64
 	merkleRoot   chainhash.Hash
 	nameRoot     chainhash.Hash
 	extraNonce   [24]byte
@@ -123,12 +123,12 @@ type blockNode struct {
 // initially creating a node.
 func initBlockNode(node *blockNode, blockHeader *wire.BlockHeader, parent *blockNode) {
 	*node = blockNode{
-		hash:       blockHeader.BlockHash(),
-		workSum:    CalcWork(blockHeader.Bits),
-		version:    blockHeader.Version,
-		bits:       blockHeader.Bits,
-		nonce:      blockHeader.Nonce,
-		timestamp:  blockHeader.Timestamp.Unix(),
+		hash:         blockHeader.BlockHash(),
+		workSum:      CalcWork(blockHeader.Bits),
+		version:      blockHeader.Version,
+		bits:         blockHeader.Bits,
+		nonce:        blockHeader.Nonce,
+		timestamp:    blockHeader.Timestamp.Unix(),
 		merkleRoot:   blockHeader.MerkleRoot,
 		nameRoot:     blockHeader.NameRoot,
 		extraNonce:   blockHeader.ExtraNonce,
@@ -267,6 +267,13 @@ func (node *blockNode) Bits() uint32 {
 // NOTE: Part of the HeaderCtx interface.
 func (node *blockNode) Timestamp() int64 {
 	return node.timestamp
+}
+
+// WorkSum returns the blockNode's cumulative proof of work.
+//
+// NOTE: Part of the HeaderCtx interface.
+func (node *blockNode) WorkSum() *big.Int {
+	return new(big.Int).Set(node.workSum)
 }
 
 // Parent returns the blockNode's parent.

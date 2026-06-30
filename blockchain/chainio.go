@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -26,12 +26,12 @@ const (
 
 	// latestUtxoSetBucketVersion is the current version of the utxo set
 	// bucket that is used to track all unspent outputs.
-	latestUtxoSetBucketVersion = 2
+	latestUtxoSetBucketVersion = 3
 
 	// latestSpendJournalBucketVersion is the current version of the spend
 	// journal bucket that is used to track all spent transactions for use
 	// in reorgs.
-	latestSpendJournalBucketVersion = 1
+	latestSpendJournalBucketVersion = 2
 )
 
 var (
@@ -59,9 +59,15 @@ var (
 	// the version of the spend journal currently in the database.
 	spendJournalVersionKeyName = []byte("spendjournalversion")
 
+	// legacySpendJournalBucketName is the name of the db bucket used to
+	// house transaction outputs that are spent in each block in the legacy
+	// compressed-script format.
+	legacySpendJournalBucketName = []byte("spendjournal")
+
 	// spendJournalBucketName is the name of the db bucket used to house
-	// transactions outputs that are spent in each block.
-	spendJournalBucketName = []byte("spendjournal")
+	// transaction outputs that are spent in each block in the
+	// Handshake-native Address+Covenant format.
+	spendJournalBucketName = []byte("spendjournalv2")
 
 	// utxoSetVersionKeyName is the name of the db key used to store the
 	// version of the utxo set currently in the database.
@@ -69,7 +75,7 @@ var (
 
 	// utxoSetBucketName is the name of the db bucket used to house the
 	// unspent transaction output set.
-	utxoSetBucketName = []byte("utxosetv2")
+	utxoSetBucketName = []byte("utxosetv3")
 
 	// byteOrder is the preferred byte order used for serializing numeric
 	// fields for storage in the database.
@@ -247,7 +253,14 @@ type SpentTxOut struct {
 	// Amount is the amount of the output.
 	Amount int64
 
-	// PkScript is the public key script for the output.
+	// Address is the Handshake output address.
+	Address wire.Address
+
+	// Covenant is the Handshake output covenant.
+	Covenant wire.Covenant
+
+	// PkScript is the derived public key script for compatibility with script
+	// validation and indexers.
 	PkScript []byte
 
 	// Height is the height of the block containing the creating tx.
@@ -305,7 +318,9 @@ func spentTxOutSerializeSize(stxo *SpentTxOut) int {
 		// so this is required for backwards compat.
 		size += serializeSizeVLQ(0)
 	}
-	return size + compressedTxOutSize(uint64(stxo.Amount), stxo.PkScript)
+	return size + compressedHnsTxOutSize(
+		uint64(stxo.Amount), stxo.Address, stxo.Covenant,
+	)
 }
 
 // putSpentTxOut serializes the passed stxo according to the format described
@@ -321,14 +336,17 @@ func putSpentTxOut(target []byte, stxo *SpentTxOut) int {
 		// so this is required for backwards compat.
 		offset += putVLQ(target[offset:], 0)
 	}
-	return offset + putCompressedTxOut(target[offset:], uint64(stxo.Amount),
-		stxo.PkScript)
+	return offset + putCompressedHnsTxOut(
+		target[offset:], uint64(stxo.Amount), stxo.Address, stxo.Covenant,
+	)
 }
 
-// decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
-// by other data, into the passed stxo struct.  It returns the number of bytes
-// read.
-func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
+type spentTxOutDecoder func([]byte, *SpentTxOut) (int, error)
+
+// decodeSpentTxOutHns decodes the passed serialized stxo entry from the
+// Handshake-native Address+Covenant format, possibly followed by other data,
+// into the passed stxo struct.  It returns the number of bytes read.
+func decodeSpentTxOutHns(serialized []byte, stxo *SpentTxOut) (int, error) {
 	// Ensure there are bytes to decode.
 	if len(serialized) == 0 {
 		return 0, errDeserialize("no serialized bytes")
@@ -359,8 +377,8 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 		}
 	}
 
-	// Decode the compressed txout.
-	amount, pkScript, bytesRead, err := decodeCompressedTxOut(
+	// Decode the compressed Handshake txout.
+	amount, address, covenant, bytesRead, err := decodeCompressedHnsTxOut(
 		serialized[offset:])
 	offset += bytesRead
 	if err != nil {
@@ -368,6 +386,83 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 			"txout: %v", err))
 	}
 	stxo.Amount = int64(amount)
+	stxo.Address = address
+	stxo.Covenant = covenant
+	stxo.PkScript = txOutPkScript(&wire.TxOut{
+		Value:    stxo.Amount,
+		Address:  address,
+		Covenant: covenant,
+	})
+	return offset, nil
+}
+
+// decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
+// by other data, into the passed stxo struct.  It returns the number of bytes
+// read.
+func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
+	offset, err := decodeSpentTxOutHns(serialized, stxo)
+	if err == nil {
+		return offset, nil
+	}
+
+	var legacyStxo SpentTxOut
+	legacyBytesRead, legacyErr := decodeSpentTxOutV1(
+		serialized, &legacyStxo,
+	)
+	if legacyErr == nil {
+		*stxo = legacyStxo
+		return legacyBytesRead, nil
+	}
+
+	return offset, errDeserialize(fmt.Sprintf("unable to decode "+
+		"txout: %v (legacy decode failed: %v)", err, legacyErr))
+}
+
+// decodeSpentTxOutV1 decodes a legacy spend journal entry that stores a
+// Bitcoin-style compressed pkScript.  It is only used while upgrading old
+// databases to the Handshake-native Address+Covenant journal format.
+func decodeSpentTxOutV1(serialized []byte, stxo *SpentTxOut) (int, error) {
+	// Ensure there are bytes to decode.
+	if len(serialized) == 0 {
+		return 0, errDeserialize("no serialized bytes")
+	}
+
+	// Deserialize the header code.
+	code, offset := deserializeVLQ(serialized)
+	if offset >= len(serialized) {
+		return offset, errDeserialize("unexpected end of data after " +
+			"header code")
+	}
+
+	// Decode the header code.
+	stxo.IsCoinBase = code&0x01 != 0
+	stxo.Height = int32(code >> 1)
+	if stxo.Height > 0 {
+		_, bytesRead := deserializeVLQ(serialized[offset:])
+		offset += bytesRead
+		if offset >= len(serialized) {
+			return offset, errDeserialize("unexpected end of data " +
+				"after reserved")
+		}
+	}
+
+	amount, pkScript, bytesRead, err := decodeCompressedTxOut(
+		serialized[offset:])
+	offset += bytesRead
+	if err != nil {
+		return offset, errDeserialize(fmt.Sprintf("unable to decode "+
+			"legacy txout: %v", err))
+	}
+
+	address, err := addressFromPkScript(pkScript)
+	if err != nil {
+		return offset, errDeserialize(fmt.Sprintf("unable to convert "+
+			"legacy pkScript %x to address: %v", pkScript, err))
+	}
+
+	stxo.Amount = int64(amount)
+	stxo.Address = address
+	stxo.Covenant = wire.Covenant{}
 	stxo.PkScript = pkScript
 	return offset, nil
 }
@@ -379,6 +474,22 @@ func decodeSpentTxOut(serialized []byte, stxo *SpentTxOut) (int, error) {
 // format comments, this function also requires the transactions that spend the
 // txouts.
 func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]SpentTxOut, error) {
+	return deserializeSpendJournalEntryWithDecoder(
+		serialized, txns, decodeSpentTxOutHns,
+	)
+}
+
+// deserializeSpendJournalEntryV1 decodes the passed serialized byte slice into
+// a slice of spent txouts using the legacy compressed-script format.
+func deserializeSpendJournalEntryV1(serialized []byte, txns []*wire.MsgTx) ([]SpentTxOut, error) {
+	return deserializeSpendJournalEntryWithDecoder(
+		serialized, txns, decodeSpentTxOutV1,
+	)
+}
+
+func deserializeSpendJournalEntryWithDecoder(serialized []byte,
+	txns []*wire.MsgTx, decoder spentTxOutDecoder) ([]SpentTxOut, error) {
+
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
@@ -414,7 +525,7 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]Spen
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
 
-			n, err := decodeSpentTxOut(serialized[offset:], stxo)
+			n, err := decoder(serialized[offset:], stxo)
 			offset += n
 			if err != nil {
 				return nil, errDeserialize(fmt.Sprintf("unable "+
@@ -422,6 +533,11 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]Spen
 					txIn.PreviousOutPoint, err))
 			}
 		}
+	}
+	if offset != len(serialized) {
+		return nil, errDeserialize(fmt.Sprintf("mismatched spend "+
+			"journal serialization - decoded %d bytes, but "+
+			"serialized entry is %d bytes", offset, len(serialized)))
 	}
 
 	return stxos, nil
@@ -459,10 +575,25 @@ func serializeSpendJournalEntry(stxos []SpentTxOut) []byte {
 // caller to handle this properly by looking the information up in the utxo set.
 func dbFetchSpendJournalEntry(dbTx database.Tx, block *hnsutil.Block) ([]SpentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
-	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
-	serialized := spendBucket.Get(block.Hash()[:])
+	meta := dbTx.Metadata()
+	blockHash := block.Hash()
 	blockTxns := block.MsgBlock().Transactions[1:]
-	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns)
+
+	var (
+		stxos []SpentTxOut
+		err   error
+	)
+	spendBucket := meta.Bucket(spendJournalBucketName)
+	serialized := spendBucket.Get(blockHash[:])
+	if serialized != nil {
+		stxos, err = deserializeSpendJournalEntry(serialized, blockTxns)
+	} else {
+		legacySpendBucket := meta.Bucket(legacySpendJournalBucketName)
+		if legacySpendBucket != nil {
+			serialized = legacySpendBucket.Get(blockHash[:])
+		}
+		stxos, err = deserializeSpendJournalEntryV1(serialized, blockTxns)
+	}
 	if err != nil {
 		// Ensure any deserialization errors are returned as database
 		// corruption errors.
@@ -470,7 +601,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *hnsutil.Block) ([]SpentTx
 			return nil, database.Error{
 				ErrorCode: database.ErrCorruption,
 				Description: fmt.Sprintf("corrupt spend "+
-					"information for %v: %v", block.Hash(),
+					"information for %v: %v", blockHash,
 					err),
 			}
 		}
@@ -495,18 +626,33 @@ func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos [
 // spend journal entry for the passed block hash.
 func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
-	return spendBucket.Delete(blockHash[:])
+	if err := spendBucket.Delete(blockHash[:]); err != nil {
+		return err
+	}
+
+	legacySpendBucket := dbTx.Metadata().Bucket(legacySpendJournalBucketName)
+	if legacySpendBucket == nil {
+		return nil
+	}
+	return legacySpendBucket.Delete(blockHash[:])
 }
 
 // dbPruneSpendJournalEntry uses an existing database transaction to remove all
 // the spend journal entries for the pruned blocks.
 func dbPruneSpendJournalEntry(dbTx database.Tx, blockHashes []chainhash.Hash) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
+	legacySpendBucket := dbTx.Metadata().Bucket(legacySpendJournalBucketName)
 
 	for _, blockHash := range blockHashes {
 		err := spendBucket.Delete(blockHash[:])
 		if err != nil {
 			return err
+		}
+		if legacySpendBucket != nil {
+			err := legacySpendBucket.Delete(blockHash[:])
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -662,16 +808,90 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 
 	// Calculate the size needed to serialize the entry.
 	size := serializeSizeVLQ(headerCode) +
-		compressedTxOutSize(uint64(entry.Amount()), entry.PkScript())
+		compressedHnsTxOutSize(
+			uint64(entry.Amount()), entry.Address(), entry.Covenant(),
+		)
 
 	// Serialize the header code followed by the compressed unspent
 	// transaction output.
 	serialized := make([]byte, size)
 	offset := putVLQ(serialized, headerCode)
-	offset += putCompressedTxOut(serialized[offset:], uint64(entry.Amount()),
-		entry.PkScript())
+	offset += putCompressedHnsTxOut(
+		serialized[offset:], uint64(entry.Amount()), entry.Address(),
+		entry.Covenant(),
+	)
 
 	return serialized, nil
+}
+
+// serializeUtxoEntryV2 returns the legacy v2 utxo entry serialization with a
+// compressed pkScript.  It is only used by the v1->v2 database migration so
+// that interrupted old upgrades continue to produce a real v2 bucket before the
+// explicit v2->v3 migration converts it to Address+Covenant storage.
+func serializeUtxoEntryV2(entry *UtxoEntry) ([]byte, error) {
+	// Spent outputs have no serialization.
+	if entry.IsSpent() {
+		return nil, nil
+	}
+
+	// Encode the header code.
+	headerCode, err := utxoEntryHeaderCode(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	pkScript := entry.PkScript()
+	size := serializeSizeVLQ(headerCode) +
+		compressedTxOutSize(uint64(entry.Amount()), pkScript)
+
+	serialized := make([]byte, size)
+	offset := putVLQ(serialized, headerCode)
+	offset += putCompressedTxOut(
+		serialized[offset:], uint64(entry.Amount()), pkScript,
+	)
+
+	return serialized[:offset], nil
+}
+
+// deserializeUtxoEntryV2 decodes a legacy v2 utxo entry that stores a
+// Bitcoin-style compressed pkScript.  It is only used while upgrading old
+// databases to the Handshake-native Address+Covenant utxo format.
+func deserializeUtxoEntryV2(serialized []byte) (*UtxoEntry, error) {
+	// Deserialize the header code.
+	code, offset := deserializeVLQ(serialized)
+	if offset >= len(serialized) {
+		return nil, errDeserialize("unexpected end of data after header")
+	}
+
+	// Decode the header code.
+	isCoinBase := code&0x01 != 0
+	blockHeight := int32(code >> 1)
+
+	amount, pkScript, _, err := decodeCompressedTxOut(serialized[offset:])
+	if err != nil {
+		return nil, errDeserialize(fmt.Sprintf("unable to decode "+
+			"legacy utxo: %v", err))
+	}
+
+	address, err := addressFromPkScript(pkScript)
+	if err != nil {
+		return nil, errDeserialize(fmt.Sprintf("unable to convert "+
+			"legacy pkScript %x to address: %v", pkScript, err))
+	}
+
+	entry := &UtxoEntry{
+		amount:      int64(amount),
+		address:     address,
+		covenant:    wire.Covenant{},
+		pkScript:    pkScript,
+		blockHeight: blockHeight,
+		packedFlags: 0,
+	}
+	if isCoinBase {
+		entry.packedFlags |= tfCoinBase
+	}
+
+	return entry, nil
 }
 
 // deserializeUtxoEntry decodes a utxo entry from the passed serialized byte
@@ -691,16 +911,22 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 	isCoinBase := code&0x01 != 0
 	blockHeight := int32(code >> 1)
 
-	// Decode the compressed unspent transaction output.
-	amount, pkScript, _, err := decodeCompressedTxOut(serialized[offset:])
+	// Decode the compressed unspent Handshake transaction output.
+	amount, address, covenant, _, err := decodeCompressedHnsTxOut(serialized[offset:])
 	if err != nil {
 		return nil, errDeserialize(fmt.Sprintf("unable to decode "+
 			"utxo: %v", err))
 	}
 
 	entry := &UtxoEntry{
-		amount:      int64(amount),
-		pkScript:    pkScript,
+		amount:   int64(amount),
+		address:  address,
+		covenant: covenant,
+		pkScript: txOutPkScript(&wire.TxOut{
+			Value:    int64(amount),
+			Address:  address,
+			Covenant: covenant,
+		}),
 		blockHeight: blockHeight,
 		packedFlags: 0,
 	}

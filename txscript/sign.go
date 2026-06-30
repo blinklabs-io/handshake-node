@@ -8,11 +8,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -31,9 +30,7 @@ func RawTxInWitnessSignature(tx *wire.MsgTx, sigHashes *TxSigHashes, idx int,
 		return nil, err
 	}
 
-	signature := ecdsa.Sign(key, hash)
-
-	return append(signature.Serialize(), byte(hashType)), nil
+	return append(signHnsEcdsa(key, hash), byte(hashType)), nil
 }
 
 // WitnessSignature creates an input witness stack for tx to spend BTC sent
@@ -242,9 +239,7 @@ func RawTxInSignature(tx *wire.MsgTx, idx int, subScript []byte,
 	if err != nil {
 		return nil, err
 	}
-	signature := ecdsa.Sign(key, hash)
-
-	return append(signature.Serialize(), byte(hashType)), nil
+	return append(signHnsEcdsa(key, hash), byte(hashType)), nil
 }
 
 // SignatureScript creates an input signature script for tx to spend BTC sent
@@ -409,7 +404,7 @@ sigLoop:
 			continue
 		}
 		tSig := sig[:len(sig)-1]
-		if _, err := ecdsa.ParseDERSignature(tSig); err != nil {
+		if _, err := parseHnsEcdsaSignature(tSig); err != nil {
 			continue
 		}
 		for _, addr := range addresses {

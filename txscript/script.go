@@ -86,10 +86,9 @@ func IsPayToWitnessPubKeyHash(script []byte) bool {
 	return isWitnessPubKeyHashScript(script)
 }
 
-// IsPayToTaproot returns true if the passed script is a standard
-// pay-to-taproot (PTTR) scripts, and false otherwise.
+// IsPayToTaproot returns false because Handshake does not support P2TR.
 func IsPayToTaproot(script []byte) bool {
-	return isWitnessTaprootScript(script)
+	return false
 }
 
 // IsWitnessProgram returns true if the passed script is a valid witness

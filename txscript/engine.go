@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"math/big"
 	"strings"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
@@ -151,9 +150,6 @@ const (
 	// taproot verification logic.
 	TaprootWitnessVersion = 1
 )
-
-// halforder is used to tame ECDSA malleability (see BIP0062).
-var halfOrder = new(big.Int).Rsh(btcec.S256().N, 1)
 
 // taprootExecutionCtx houses the special context-specific information we need
 // to validate a taproot script spend. This includes the annex, the running sig
@@ -609,19 +605,15 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 			return scriptError(ErrWitnessProgramWrongLength, errStr)
 		}
 
-	// We're attempting to verify a taproot input, and the witness
-	// program data push is of the expected size, so we'll be looking for a
-	// normal key-path spend, or a merkle proof for a tapscript with
-	// execution afterwards.
+		// We're attempting to verify a taproot input, and the witness
+		// program data push is of the expected size, so we'll be looking for a
+		// normal key-path spend, or a merkle proof for a tapscript with
+		// execution afterwards.
 	case vm.isWitnessVersionActive(TaprootWitnessVersion) &&
 		len(vm.witnessProgram) == payToTaprootDataSize && !vm.bip16:
 
-		// If taproot isn't currently active, then we'll return a
-		// success here in place as we don't apply the new rules unless
-		// the flag flips, as governed by the version bits deployment.
-		if !vm.hasFlag(ScriptVerifyTaproot) {
-			return nil
-		}
+		errStr := "taproot witness programs are not valid in Handshake"
+		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
 
 		// If there're no stack elements at all, then this is an
 		// invalid spend.
@@ -766,11 +758,9 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 
 		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
 	default:
-		// If we encounter an unknown witness program version and we
-		// aren't discouraging future unknown witness based soft-forks,
-		// then we de-activate the segwit behavior within the VM for
-		// the remainder of execution.
-		vm.witnessProgram = nil
+		errStr := fmt.Sprintf("witness version %d is not valid in "+
+			"Handshake", vm.witnessVersion)
+		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
 	}
 
 	// TODO(roasbeef): other sanity checks here
@@ -1160,8 +1150,8 @@ func (vm *Engine) checkHashTypeEncoding(hashType SigHashType) error {
 		return nil
 	}
 
-	sigHashType := hashType & ^SigHashAnyOneCanPay
-	if sigHashType < SigHashAll || sigHashType > SigHashSingle {
+	sigHashType := hashType & ^(SigHashNoInput | SigHashAnyOneCanPay)
+	if sigHashType < SigHashAll || sigHashType > SigHashSingleReverse {
 		str := fmt.Sprintf("invalid hash type 0x%x", hashType)
 		return scriptError(ErrInvalidSigHashType, str)
 	}
@@ -1216,202 +1206,21 @@ func (vm *Engine) checkPubKeyEncoding(pubKey []byte) error {
 	return scriptError(ErrPubKeyType, "unsupported public key type")
 }
 
+func (vm *Engine) hasSignatureEncodingFlags() bool {
+	return vm.hasFlag(ScriptVerifyDERSignatures) ||
+		vm.hasFlag(ScriptVerifyLowS) ||
+		vm.hasFlag(ScriptVerifyStrictEncoding)
+}
+
 // checkSignatureEncoding returns whether or not the passed signature adheres to
 // the strict encoding requirements if enabled.
 func (vm *Engine) checkSignatureEncoding(sig []byte) error {
-	if !vm.hasFlag(ScriptVerifyDERSignatures) &&
-		!vm.hasFlag(ScriptVerifyLowS) &&
-		!vm.hasFlag(ScriptVerifyStrictEncoding) {
-
+	if !vm.hasSignatureEncodingFlags() {
 		return nil
 	}
 
-	// The format of a DER encoded signature is as follows:
-	//
-	// 0x30 <total length> 0x02 <length of R> <R> 0x02 <length of S> <S>
-	//   - 0x30 is the ASN.1 identifier for a sequence
-	//   - Total length is 1 byte and specifies length of all remaining data
-	//   - 0x02 is the ASN.1 identifier that specifies an integer follows
-	//   - Length of R is 1 byte and specifies how many bytes R occupies
-	//   - R is the arbitrary length big-endian encoded number which
-	//     represents the R value of the signature.  DER encoding dictates
-	//     that the value must be encoded using the minimum possible number
-	//     of bytes.  This implies the first byte can only be null if the
-	//     highest bit of the next byte is set in order to prevent it from
-	//     being interpreted as a negative number.
-	//   - 0x02 is once again the ASN.1 integer identifier
-	//   - Length of S is 1 byte and specifies how many bytes S occupies
-	//   - S is the arbitrary length big-endian encoded number which
-	//     represents the S value of the signature.  The encoding rules are
-	//     identical as those for R.
-	const (
-		asn1SequenceID = 0x30
-		asn1IntegerID  = 0x02
-
-		// minSigLen is the minimum length of a DER encoded signature and is
-		// when both R and S are 1 byte each.
-		//
-		// 0x30 + <1-byte> + 0x02 + 0x01 + <byte> + 0x2 + 0x01 + <byte>
-		minSigLen = 8
-
-		// maxSigLen is the maximum length of a DER encoded signature and is
-		// when both R and S are 33 bytes each.  It is 33 bytes because a
-		// 256-bit integer requires 32 bytes and an additional leading null byte
-		// might required if the high bit is set in the value.
-		//
-		// 0x30 + <1-byte> + 0x02 + 0x21 + <33 bytes> + 0x2 + 0x21 + <33 bytes>
-		maxSigLen = 72
-
-		// sequenceOffset is the byte offset within the signature of the
-		// expected ASN.1 sequence identifier.
-		sequenceOffset = 0
-
-		// dataLenOffset is the byte offset within the signature of the expected
-		// total length of all remaining data in the signature.
-		dataLenOffset = 1
-
-		// rTypeOffset is the byte offset within the signature of the ASN.1
-		// identifier for R and is expected to indicate an ASN.1 integer.
-		rTypeOffset = 2
-
-		// rLenOffset is the byte offset within the signature of the length of
-		// R.
-		rLenOffset = 3
-
-		// rOffset is the byte offset within the signature of R.
-		rOffset = 4
-	)
-
-	// The signature must adhere to the minimum and maximum allowed length.
-	sigLen := len(sig)
-	if sigLen < minSigLen {
-		str := fmt.Sprintf("malformed signature: too short: %d < %d", sigLen,
-			minSigLen)
-		return scriptError(ErrSigTooShort, str)
-	}
-	if sigLen > maxSigLen {
-		str := fmt.Sprintf("malformed signature: too long: %d > %d", sigLen,
-			maxSigLen)
-		return scriptError(ErrSigTooLong, str)
-	}
-
-	// The signature must start with the ASN.1 sequence identifier.
-	if sig[sequenceOffset] != asn1SequenceID {
-		str := fmt.Sprintf("malformed signature: format has wrong type: %#x",
-			sig[sequenceOffset])
-		return scriptError(ErrSigInvalidSeqID, str)
-	}
-
-	// The signature must indicate the correct amount of data for all elements
-	// related to R and S.
-	if int(sig[dataLenOffset]) != sigLen-2 {
-		str := fmt.Sprintf("malformed signature: bad length: %d != %d",
-			sig[dataLenOffset], sigLen-2)
-		return scriptError(ErrSigInvalidDataLen, str)
-	}
-
-	// Calculate the offsets of the elements related to S and ensure S is inside
-	// the signature.
-	//
-	// rLen specifies the length of the big-endian encoded number which
-	// represents the R value of the signature.
-	//
-	// sTypeOffset is the offset of the ASN.1 identifier for S and, like its R
-	// counterpart, is expected to indicate an ASN.1 integer.
-	//
-	// sLenOffset and sOffset are the byte offsets within the signature of the
-	// length of S and S itself, respectively.
-	rLen := int(sig[rLenOffset])
-	sTypeOffset := rOffset + rLen
-	sLenOffset := sTypeOffset + 1
-	if sTypeOffset >= sigLen {
-		str := "malformed signature: S type indicator missing"
-		return scriptError(ErrSigMissingSTypeID, str)
-	}
-	if sLenOffset >= sigLen {
-		str := "malformed signature: S length missing"
-		return scriptError(ErrSigMissingSLen, str)
-	}
-
-	// The lengths of R and S must match the overall length of the signature.
-	//
-	// sLen specifies the length of the big-endian encoded number which
-	// represents the S value of the signature.
-	sOffset := sLenOffset + 1
-	sLen := int(sig[sLenOffset])
-	if sOffset+sLen != sigLen {
-		str := "malformed signature: invalid S length"
-		return scriptError(ErrSigInvalidSLen, str)
-	}
-
-	// R elements must be ASN.1 integers.
-	if sig[rTypeOffset] != asn1IntegerID {
-		str := fmt.Sprintf("malformed signature: R integer marker: %#x != %#x",
-			sig[rTypeOffset], asn1IntegerID)
-		return scriptError(ErrSigInvalidRIntID, str)
-	}
-
-	// Zero-length integers are not allowed for R.
-	if rLen == 0 {
-		str := "malformed signature: R length is zero"
-		return scriptError(ErrSigZeroRLen, str)
-	}
-
-	// R must not be negative.
-	if sig[rOffset]&0x80 != 0 {
-		str := "malformed signature: R is negative"
-		return scriptError(ErrSigNegativeR, str)
-	}
-
-	// Null bytes at the start of R are not allowed, unless R would otherwise be
-	// interpreted as a negative number.
-	if rLen > 1 && sig[rOffset] == 0x00 && sig[rOffset+1]&0x80 == 0 {
-		str := "malformed signature: R value has too much padding"
-		return scriptError(ErrSigTooMuchRPadding, str)
-	}
-
-	// S elements must be ASN.1 integers.
-	if sig[sTypeOffset] != asn1IntegerID {
-		str := fmt.Sprintf("malformed signature: S integer marker: %#x != %#x",
-			sig[sTypeOffset], asn1IntegerID)
-		return scriptError(ErrSigInvalidSIntID, str)
-	}
-
-	// Zero-length integers are not allowed for S.
-	if sLen == 0 {
-		str := "malformed signature: S length is zero"
-		return scriptError(ErrSigZeroSLen, str)
-	}
-
-	// S must not be negative.
-	if sig[sOffset]&0x80 != 0 {
-		str := "malformed signature: S is negative"
-		return scriptError(ErrSigNegativeS, str)
-	}
-
-	// Null bytes at the start of S are not allowed, unless S would otherwise be
-	// interpreted as a negative number.
-	if sLen > 1 && sig[sOffset] == 0x00 && sig[sOffset+1]&0x80 == 0 {
-		str := "malformed signature: S value has too much padding"
-		return scriptError(ErrSigTooMuchSPadding, str)
-	}
-
-	// Verify the S value is <= half the order of the curve.  This check is done
-	// because when it is higher, the complement modulo the order can be used
-	// instead which is a shorter encoding by 1 byte.  Further, without
-	// enforcing this, it is possible to replace a signature in a valid
-	// transaction with the complement while still being a valid signature that
-	// verifies.  This would result in changing the transaction hash and thus is
-	// a source of malleability.
-	if vm.hasFlag(ScriptVerifyLowS) {
-		sValue := new(big.Int).SetBytes(sig[sOffset : sOffset+sLen])
-		if sValue.Cmp(halfOrder) > 0 {
-			return scriptError(ErrSigHighS, "signature is not canonical due "+
-				"to unnecessarily high S value")
-		}
-	}
-
-	return nil
+	_, err := parseHnsEcdsaSignature(sig)
+	return err
 }
 
 // getStack returns the contents of stack as a byte array bottom up

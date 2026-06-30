@@ -445,3 +445,21 @@ func TestTxOutCompressionErrors(t *testing.T) {
 			"errDeserialize", err)
 	}
 }
+
+func TestDecodeCompressedHnsTxOutAddressErrorBytesRead(t *testing.T) {
+	t.Parallel()
+
+	// compressed amount 0x00 followed by an invalid address version and
+	// hash length.  The address decoder consumes both address bytes before
+	// rejecting the version, so the returned offset must include them.
+	serialized := hexToBytes("001100")
+	_, _, _, bytesRead, err := decodeCompressedHnsTxOut(serialized)
+	if !isDeserializeErr(err) {
+		t.Fatalf("decodeCompressedHnsTxOut did not return expected "+
+			"error type - got %T, want errDeserialize", err)
+	}
+	if bytesRead != len(serialized) {
+		t.Fatalf("unexpected bytes read: got %d, want %d",
+			bytesRead, len(serialized))
+	}
+}

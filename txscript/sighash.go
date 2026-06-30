@@ -22,12 +22,14 @@ type SigHashType uint32
 
 // Hash type bits from the end of a signature.
 const (
-	SigHashDefault      SigHashType = 0x00
-	SigHashOld          SigHashType = 0x0
-	SigHashAll          SigHashType = 0x1
-	SigHashNone         SigHashType = 0x2
-	SigHashSingle       SigHashType = 0x3
-	SigHashAnyOneCanPay SigHashType = 0x80
+	SigHashDefault       SigHashType = 0x00
+	SigHashOld           SigHashType = 0x0
+	SigHashAll           SigHashType = 0x1
+	SigHashNone          SigHashType = 0x2
+	SigHashSingle        SigHashType = 0x3
+	SigHashSingleReverse SigHashType = 0x4
+	SigHashNoInput       SigHashType = 0x40
+	SigHashAnyOneCanPay  SigHashType = 0x80
 
 	// sigHashMask defines the number of bits of the hash type which is used
 	// to identify which outputs are signed.
@@ -151,6 +153,23 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 			}
 		}
 
+	case SigHashSingleReverse:
+		txCopy.TxOut = txCopy.TxOut[:idx+1]
+		outputIdx := len(tx.TxOut) - 1 - idx
+		for i := 0; i < idx; i++ {
+			txCopy.TxOut[i].Value = -1
+			txCopy.TxOut[i].Address = wire.Address{}
+			txCopy.TxOut[i].Covenant = wire.Covenant{}
+		}
+		if outputIdx >= 0 && outputIdx < len(tx.TxOut) {
+			txCopy.TxOut[idx] = tx.TxOut[outputIdx]
+		}
+		for i := range txCopy.TxIn {
+			if i != idx {
+				txCopy.TxIn[i].Sequence = 0
+			}
+		}
+
 	default:
 		// Consensus treats undefined hashtypes like normal SigHashAll
 		// for purposes of hash generation.
@@ -160,6 +179,9 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 	case SigHashAll:
 		// Nothing special here.
 	}
+	if hashType&SigHashNoInput != 0 {
+		txCopy.TxIn[idx] = &wire.TxIn{}
+	}
 	if hashType&SigHashAnyOneCanPay != 0 {
 		txCopy.TxIn = txCopy.TxIn[idx : idx+1]
 	}
@@ -167,7 +189,7 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 	// The final hash is the double sha256 of both the serialized modified
 	// transaction and the hash type (encoded as a 4-byte little-endian
 	// value) appended.
-	sigHashBytes := chainhash.DoubleHashRaw(func(w io.Writer) error {
+	sigHashBytes := hnsHashRaw(func(w io.Writer) error {
 		if err := txCopy.SerializeNoWitness(w); err != nil {
 			return err
 		}
@@ -203,7 +225,7 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 		return nil, fmt.Errorf("idx %d but %d txins", idx, len(tx.TxIn))
 	}
 
-	sigHashBytes := chainhash.DoubleHashRaw(func(w io.Writer) error {
+	sigHashBytes := hnsHashRaw(func(w io.Writer) error {
 		var scratch [8]byte
 
 		// First write out, then encode the transaction's version
@@ -230,6 +252,7 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 		// for the hashSequence.
 		if hashType&SigHashAnyOneCanPay == 0 &&
 			hashType&sigHashMask != SigHashSingle &&
+			hashType&sigHashMask != SigHashSingleReverse &&
 			hashType&sigHashMask != SigHashNone {
 
 			w.Write(sigHashes.HashSequenceV0[:])
@@ -238,6 +261,9 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 		}
 
 		txIn := tx.TxIn[idx]
+		if hashType&SigHashNoInput != 0 {
+			txIn = &wire.TxIn{}
+		}
 
 		// Next, write the outpoint being spent.
 		w.Write(txIn.PreviousOutPoint.Hash[:])
@@ -263,7 +289,9 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 			// code is the original script, with all code
 			// separators removed, serialized with a var int length
 			// prefix.
-			wire.WriteVarBytes(w, 0, subScript)
+			if err := wire.WriteVarBytes(w, 0, subScript); err != nil {
+				return err
+			}
 		}
 
 		// Next, add the input amount, and sequence number of the input
@@ -278,15 +306,23 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 		// Otherwise, we'll serialize and add only the target output
 		// index to the signature pre-image.
 		if hashType&sigHashMask != SigHashSingle &&
+			hashType&sigHashMask != SigHashSingleReverse &&
 			hashType&sigHashMask != SigHashNone {
 
 			w.Write(sigHashes.HashOutputsV0[:])
 		} else if hashType&sigHashMask == SigHashSingle &&
 			idx < len(tx.TxOut) {
 
-			h := chainhash.DoubleHashRaw(func(tw io.Writer) error {
-				wire.WriteTxOut(tw, 0, 0, tx.TxOut[idx])
-				return nil
+			h := hnsHashRaw(func(tw io.Writer) error {
+				return wire.WriteTxOut(tw, 0, 0, tx.TxOut[idx])
+			})
+			w.Write(h[:])
+		} else if hashType&sigHashMask == SigHashSingleReverse &&
+			idx < len(tx.TxOut) {
+
+			outputIdx := len(tx.TxOut) - 1 - idx
+			h := hnsHashRaw(func(tw io.Writer) error {
+				return wire.WriteTxOut(tw, 0, 0, tx.TxOut[outputIdx])
 			})
 			w.Write(h[:])
 		} else {
@@ -407,7 +443,9 @@ func WithAnnex(annex []byte) TaprootSigHashOption {
 		// It's just a bytes.Buffer which never returns an error on
 		// write.
 		var b bytes.Buffer
-		_ = wire.WriteVarBytes(&b, 0, annex)
+		if err := wire.WriteVarBytes(&b, 0, annex); err != nil {
+			panic("WithAnnex: " + err.Error())
+		}
 
 		o.annexHash = chainhash.HashB(b.Bytes())
 	}

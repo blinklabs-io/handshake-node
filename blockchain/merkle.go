@@ -7,12 +7,12 @@ package blockchain
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"math"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
+	"golang.org/x/crypto/blake2b"
 )
 
 const (
@@ -65,10 +65,7 @@ func HashMerkleBranches(left, right *chainhash.Hash) chainhash.Hash {
 	copy(hash[:chainhash.HashSize], left[:])
 	copy(hash[chainhash.HashSize:], right[:])
 
-	return chainhash.DoubleHashRaw(func(w io.Writer) error {
-		_, err := w.Write(hash[:])
-		return err
-	})
+	return chainhash.Hash(blake2b.Sum256(hash[:]))
 }
 
 // BuildMerkleTreeStore creates a merkle tree from a slice of transactions,

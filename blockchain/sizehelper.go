@@ -18,6 +18,10 @@ const (
 	// uint64Size is the size of an uint64 allocated in memory.
 	uint64Size = 8
 
+	// sliceHeaderSize is the size of a slice header on the 64-bit systems
+	// these cache estimates target.
+	sliceHeaderSize = 3 * uint64Size
+
 	// bucketSize is the size of the bucket in the cache map.  Exact
 	// calculation is (16 + keysize*8 + valuesize*8) where for the map of:
 	// map[wire.OutPoint]*UtxoEntry would have a keysize=36 and valuesize=8.
@@ -27,7 +31,11 @@ const (
 
 	// This value is calculated by running the following on a 64-bit system:
 	//   unsafe.Sizeof(UtxoEntry{})
-	baseEntrySize = 40
+	baseEntrySize = 104
+
+	// addressHashLen is the length of a version 0, 20-byte address hash as
+	// stored in UtxoEntry.
+	addressHashLen = 20
 
 	// pubKeyHashLen is the length of a version 0, 20-byte witness program
 	// as stored in UtxoEntry (OP_0 + push_20 + 20-byte hash = 22 bytes).
@@ -37,7 +45,8 @@ const (
 	// txs are p2pkh, we can assume the entry to be more or less the size
 	// of a p2pkh tx.  Round up to the next multiple of 8 for 64-bit
 	// alignment.
-	avgEntrySize = baseEntrySize + ((pubKeyHashLen + 7) &^ 7)
+	avgEntrySize = baseEntrySize + ((addressHashLen + 7) &^ 7) +
+		((pubKeyHashLen + 7) &^ 7)
 )
 
 // The code here is shamelessly taken from the go runtime package.  All the relevant
