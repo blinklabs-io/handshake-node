@@ -728,16 +728,24 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 		utxoSetVersion = 3
 	}
 
-	// Spend journal v2 changed the spent txout payload to the Handshake
-	// Address+Covenant format.  Historical v1 entries remain readable via the
-	// compatibility decoder in decodeSpentTxOut, so no data rewrite is needed.
-	if spendJournalVersion < 2 {
-		err := b.db.Update(func(dbTx database.Tx) error {
-			return dbPutVersion(dbTx, spendJournalVersionKeyName, 2)
-		})
+	// Spend journal v2 writes new entries to a separate bucket using the
+	// Handshake Address+Covenant format.  Historical v1 entries remain in the
+	// legacy bucket and are decoded only when no v2 entry exists for a block.
+	err = b.db.Update(func(dbTx database.Tx) error {
+		_, err := dbTx.Metadata().CreateBucketIfNotExists(
+			spendJournalBucketName,
+		)
 		if err != nil {
 			return err
 		}
+
+		if spendJournalVersion < 2 {
+			return dbPutVersion(dbTx, spendJournalVersionKeyName, 2)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	return nil

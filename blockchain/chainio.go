@@ -59,9 +59,15 @@ var (
 	// the version of the spend journal currently in the database.
 	spendJournalVersionKeyName = []byte("spendjournalversion")
 
+	// legacySpendJournalBucketName is the name of the db bucket used to
+	// house transaction outputs that are spent in each block in the legacy
+	// compressed-script format.
+	legacySpendJournalBucketName = []byte("spendjournal")
+
 	// spendJournalBucketName is the name of the db bucket used to house
-	// transactions outputs that are spent in each block.
-	spendJournalBucketName = []byte("spendjournal")
+	// transaction outputs that are spent in each block in the
+	// Handshake-native Address+Covenant format.
+	spendJournalBucketName = []byte("spendjournalv2")
 
 	// utxoSetVersionKeyName is the name of the db key used to store the
 	// version of the utxo set currently in the database.
@@ -468,6 +474,22 @@ func decodeSpentTxOutV1(serialized []byte, stxo *SpentTxOut) (int, error) {
 // format comments, this function also requires the transactions that spend the
 // txouts.
 func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]SpentTxOut, error) {
+	return deserializeSpendJournalEntryWithDecoder(
+		serialized, txns, decodeSpentTxOutHns,
+	)
+}
+
+// deserializeSpendJournalEntryV1 decodes the passed serialized byte slice into
+// a slice of spent txouts using the legacy compressed-script format.
+func deserializeSpendJournalEntryV1(serialized []byte, txns []*wire.MsgTx) ([]SpentTxOut, error) {
+	return deserializeSpendJournalEntryWithDecoder(
+		serialized, txns, decodeSpentTxOutV1,
+	)
+}
+
+func deserializeSpendJournalEntryWithDecoder(serialized []byte,
+	txns []*wire.MsgTx, decoder spentTxOutDecoder) ([]SpentTxOut, error) {
+
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
@@ -487,31 +509,6 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]Spen
 
 		return nil, nil
 	}
-
-	// Prefer the legacy whole-entry decoder when it consumes the entire
-	// payload.  Some legacy compressed scripts can be mistaken for valid
-	// Address+Covenant bytes at an individual STXO boundary.
-	stxos, legacyErr := deserializeSpendJournalEntryWithDecoder(
-		serialized, txns, numStxos, decodeSpentTxOutV1,
-	)
-	if legacyErr == nil {
-		return stxos, nil
-	}
-
-	stxos, hnsErr := deserializeSpendJournalEntryWithDecoder(
-		serialized, txns, numStxos, decodeSpentTxOutHns,
-	)
-	if hnsErr == nil {
-		return stxos, nil
-	}
-
-	return nil, errDeserialize(fmt.Sprintf("unable to decode spend "+
-		"journal: %v (legacy decode failed: %v)", hnsErr, legacyErr))
-}
-
-func deserializeSpendJournalEntryWithDecoder(serialized []byte,
-	txns []*wire.MsgTx, numStxos int, decoder spentTxOutDecoder) (
-	[]SpentTxOut, error) {
 
 	// Loop backwards through all transactions so everything is read in
 	// reverse order to match the serialization order.
@@ -578,10 +575,25 @@ func serializeSpendJournalEntry(stxos []SpentTxOut) []byte {
 // caller to handle this properly by looking the information up in the utxo set.
 func dbFetchSpendJournalEntry(dbTx database.Tx, block *hnsutil.Block) ([]SpentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
-	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
-	serialized := spendBucket.Get(block.Hash()[:])
+	meta := dbTx.Metadata()
+	blockHash := block.Hash()
 	blockTxns := block.MsgBlock().Transactions[1:]
-	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns)
+
+	var (
+		stxos []SpentTxOut
+		err   error
+	)
+	spendBucket := meta.Bucket(spendJournalBucketName)
+	serialized := spendBucket.Get(blockHash[:])
+	if serialized != nil {
+		stxos, err = deserializeSpendJournalEntry(serialized, blockTxns)
+	} else {
+		legacySpendBucket := meta.Bucket(legacySpendJournalBucketName)
+		if legacySpendBucket != nil {
+			serialized = legacySpendBucket.Get(blockHash[:])
+		}
+		stxos, err = deserializeSpendJournalEntryV1(serialized, blockTxns)
+	}
 	if err != nil {
 		// Ensure any deserialization errors are returned as database
 		// corruption errors.
@@ -589,7 +601,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *hnsutil.Block) ([]SpentTx
 			return nil, database.Error{
 				ErrorCode: database.ErrCorruption,
 				Description: fmt.Sprintf("corrupt spend "+
-					"information for %v: %v", block.Hash(),
+					"information for %v: %v", blockHash,
 					err),
 			}
 		}
@@ -614,18 +626,33 @@ func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos [
 // spend journal entry for the passed block hash.
 func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
-	return spendBucket.Delete(blockHash[:])
+	if err := spendBucket.Delete(blockHash[:]); err != nil {
+		return err
+	}
+
+	legacySpendBucket := dbTx.Metadata().Bucket(legacySpendJournalBucketName)
+	if legacySpendBucket == nil {
+		return nil
+	}
+	return legacySpendBucket.Delete(blockHash[:])
 }
 
 // dbPruneSpendJournalEntry uses an existing database transaction to remove all
 // the spend journal entries for the pruned blocks.
 func dbPruneSpendJournalEntry(dbTx database.Tx, blockHashes []chainhash.Hash) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
+	legacySpendBucket := dbTx.Metadata().Bucket(legacySpendJournalBucketName)
 
 	for _, blockHash := range blockHashes {
 		err := spendBucket.Delete(blockHash[:])
 		if err != nil {
 			return err
+		}
+		if legacySpendBucket != nil {
+			err := legacySpendBucket.Delete(blockHash[:])
+			if err != nil {
+				return err
+			}
 		}
 	}
 

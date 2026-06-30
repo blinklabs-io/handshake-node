@@ -716,28 +716,69 @@ func TestLegacySpendJournalDecodeFallback(t *testing.T) {
 	}
 }
 
-func TestLegacySpendJournalEntryPrefersLegacyDecoder(t *testing.T) {
+func TestLegacySpendJournalEntryDecodesWitnessProgram(t *testing.T) {
 	t.Parallel()
 
-	p2pkhScript := func(hash []byte) []byte {
-		script := []byte{0x76, 0xa9, 0x14}
-		script = append(script, hash...)
-		return append(script, 0x88, 0xac)
+	addr1 := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"00112233445566778899aabbccddeeff00112233",
+		),
 	}
-
-	ambiguousHash := append([]byte{0x14}, bytes.Repeat([]byte{0x11}, 19)...)
-	nextHash := bytes.Repeat([]byte{0x22}, 20)
+	addr2 := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"ffeeddccbbaa99887766554433221100ffeeddcc",
+		),
+	}
 	want := []SpentTxOut{
 		{
-			PkScript: p2pkhScript(nextHash),
+			Address:  addr1,
+			Covenant: wire.Covenant{},
+			PkScript: addr1.WitnessProgram(),
 		},
 		{
-			PkScript: p2pkhScript(ambiguousHash),
+			Address:  addr2,
+			Covenant: wire.Covenant{},
+			PkScript: addr2.WitnessProgram(),
 		},
 	}
 	serialized := serializeLegacySpendJournalEntry(want)
 	blockTxns := []*wire.MsgTx{{
 		TxIn: []*wire.TxIn{{}, {}},
+	}}
+
+	got, err := deserializeSpendJournalEntryV1(serialized, blockTxns)
+	if err != nil {
+		t.Fatalf("deserializeSpendJournalEntryV1: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stxos mismatch: got %#v, want %#v", got, want)
+	}
+}
+
+func TestSpendJournalEntryUsesHnsDecoder(t *testing.T) {
+	t.Parallel()
+
+	addr := wire.Address{
+		Version: 0,
+		Hash: hexToBytes(
+			"1411111111111111111111111111111111111111",
+		),
+	}
+	covenant := wire.Covenant{
+		Type:  wire.CovenantOpen,
+		Items: [][]byte{[]byte("example")},
+	}
+	want := []SpentTxOut{{
+		Amount:   12345,
+		Address:  addr,
+		Covenant: covenant,
+		PkScript: addr.WitnessProgram(),
+	}}
+	serialized := serializeSpendJournalEntry(want)
+	blockTxns := []*wire.MsgTx{{
+		TxIn: []*wire.TxIn{{}},
 	}}
 
 	got, err := deserializeSpendJournalEntry(serialized, blockTxns)
