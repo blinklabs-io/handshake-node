@@ -379,6 +379,48 @@ func TestNameBlockViewUpdateClearsData(t *testing.T) {
 	}
 }
 
+func TestNameBlockViewRegisterClearsData(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	name := "registerclear"
+	nameHash := hashName([]byte(name))
+	owner := *testOutPoint(7)
+	ns := newNameState(nameHash)
+	ns.set([]byte(name), 1)
+	ns.owner = owner
+	ns.value = 1
+	ns.highest = 1
+	ns.data = []byte("old-resource")
+
+	tx := wire.NewMsgTx(1)
+	covenant := wire.Covenant{
+		Type: wire.CovenantRegister,
+		Items: [][]byte{
+			hashItem(name),
+			u32Item(ns.height),
+			nil,
+			hashBytes(chainhash.Hash{}),
+		},
+	}
+	tx.AddTxOut(wire.NewTxOut(ns.value, wire.Address{}, covenant))
+	txOut := tx.TxOut[0]
+	prevOutputs := []namePrevOutput{{
+		outpoint: owner,
+		amount:   ns.value,
+	}}
+
+	view := &nameBlockView{
+		chain: &BlockChain{chainParams: &params},
+	}
+	err := view.applyRegister(nil, ns, covenant, hnsutil.NewTx(tx), 0,
+		txOut, 1, nameStateClosed, prevOutputs)
+	if err != nil {
+		t.Fatalf("applyRegister: %v", err)
+	}
+	if len(ns.data) != 0 {
+		t.Fatalf("REGISTER preserved data %x, want empty", ns.data)
+	}
+}
+
 func testOutPoint(tag uint32) *wire.OutPoint {
 	hash := chainhash.Hash{byte(tag)}
 	return wire.NewOutPoint(&hash, tag)

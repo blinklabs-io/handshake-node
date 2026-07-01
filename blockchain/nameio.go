@@ -379,11 +379,8 @@ func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
 			return nil, err
 		}
 		if committedRoot != root {
-			return nil, database.Error{
-				ErrorCode: database.ErrBlockNotFound,
-				Description: fmt.Sprintf("name root snapshot "+
-					"%v not found", root),
-			}
+			return nil, fmt.Errorf("name root snapshot %v not found",
+				root)
 		}
 
 		currentLeaves, currentRoot, err := dbCalcNameTree(dbTx)
@@ -392,7 +389,7 @@ func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
 		}
 		if currentRoot != root {
 			return nil, database.Error{
-				ErrorCode: database.ErrBlockNotFound,
+				ErrorCode: database.ErrCorruption,
 				Description: fmt.Sprintf("name root snapshot "+
 					"%v not found", root),
 			}

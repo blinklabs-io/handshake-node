@@ -368,7 +368,9 @@ func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 	ns.registered = true
 	ns.owner = txOutpoint(tx, outputIndex)
 	data := covenantItem(covenant, 2)
-	if len(data) > 0 {
+	if len(data) == 0 {
+		ns.data = nil
+	} else {
 		ns.data = append(ns.data[:0], data...)
 	}
 	ns.renewal = height

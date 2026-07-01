@@ -273,6 +273,26 @@ func TestFetchNameProofUsesStoredSnapshot(t *testing.T) {
 	}
 }
 
+func TestFetchNameProofUnknownRootIsNotBlockNotFound(t *testing.T) {
+	chain, teardown, err := chainSetup("nameproofunknown",
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	root := chainhash.Hash{0xff}
+	_, err = chain.FetchNameProof(root, chainhash.Hash{})
+	if err == nil {
+		t.Fatal("FetchNameProof: expected unknown root error")
+	}
+	if dbErr, ok := err.(database.Error); ok &&
+		dbErr.ErrorCode == database.ErrBlockNotFound {
+
+		t.Fatalf("FetchNameProof returned block-not-found error: %v", err)
+	}
+}
+
 func urkelLeafDigest(key chainhash.Hash, value []byte) chainhash.Hash {
 	valueHash := blake2b.Sum256(value)
 	preimage := make([]byte, 1+chainhash.HashSize+chainhash.HashSize)
