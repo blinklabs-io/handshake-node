@@ -1369,6 +1369,27 @@ func (b *BlockChain) createChainState() error {
 			return err
 		}
 
+		_, err = meta.CreateBucket(nameStateBucketName)
+		if err != nil {
+			return err
+		}
+		_, err = meta.CreateBucket(nameUndoBucketName)
+		if err != nil {
+			return err
+		}
+		_, err = meta.CreateBucket(nameSnapshotBucketName)
+		if err != nil {
+			return err
+		}
+		err = dbPutVersion(dbTx, nameStateVersionKeyName,
+			latestNameStateBucketVersion)
+		if err != nil {
+			return err
+		}
+		if _, err := dbStoreCurrentNameSnapshot(dbTx); err != nil {
+			return err
+		}
+
 		// Save the genesis block to the block index database.
 		err = dbStoreBlockNode(dbTx, node)
 		if err != nil {

@@ -257,6 +257,27 @@ type Params struct {
 	// BIP44 coin type used in the hierarchical deterministic path for
 	// address generation.
 	HDCoinType uint32
+
+	// Handshake name-auction consensus parameters.  These values match hsd's
+	// network constants and are expressed in blocks.
+	NameAuctionStart    uint32
+	NameRolloutInterval uint32
+	NameLockupPeriod    uint32
+	NameRenewalWindow   uint32
+	NameRenewalPeriod   uint32
+	NameRenewalMaturity uint32
+	NameClaimPeriod     uint32
+	NameAlexaLockup     uint32
+	NameClaimFrequency  uint32
+	NameBiddingPeriod   uint32
+	NameRevealPeriod    uint32
+	NameTreeInterval    uint32
+	NameTransferLockup  uint32
+	NameAuctionMaturity uint32
+	NameDeflationHeight uint32
+	NameClaimPrefix     string
+	NameNoRollout       bool
+	NameNoReserved      bool
 }
 
 // MainNetParams defines the network parameters for the Handshake mainnet.
@@ -313,6 +334,26 @@ var MainNetParams = Params{
 	// BIP44 coin type used in the hierarchical deterministic path for
 	// address generation.
 	HDCoinType: 5353,
+
+	// Handshake name auction parameters.
+	NameAuctionStart:    2016,
+	NameRolloutInterval: 1008,
+	NameLockupPeriod:    4320,
+	NameRenewalWindow:   105120,
+	NameRenewalPeriod:   26208,
+	NameRenewalMaturity: 4320,
+	NameClaimPeriod:     210240,
+	NameAlexaLockup:     420480,
+	NameClaimFrequency:  288,
+	NameBiddingPeriod:   720,
+	NameRevealPeriod:    1440,
+	NameTreeInterval:    36,
+	NameTransferLockup:  288,
+	NameAuctionMaturity: 4176,
+	NameDeflationHeight: 61043,
+	NameClaimPrefix:     "hns-claim:",
+	NameNoRollout:       false,
+	NameNoReserved:      false,
 }
 
 // RegressionNetParams defines the network parameters for the Handshake
@@ -416,6 +457,26 @@ var RegressionNetParams = Params{
 	// BIP44 coin type used in the hierarchical deterministic path for
 	// address generation.
 	HDCoinType: 5355,
+
+	// Handshake name auction parameters.
+	NameAuctionStart:    0,
+	NameRolloutInterval: 2,
+	NameLockupPeriod:    2,
+	NameRenewalWindow:   5000,
+	NameRenewalPeriod:   2500,
+	NameRenewalMaturity: 50,
+	NameClaimPeriod:     250000,
+	NameAlexaLockup:     500000,
+	NameClaimFrequency:  0,
+	NameBiddingPeriod:   5,
+	NameRevealPeriod:    10,
+	NameTreeInterval:    5,
+	NameTransferLockup:  10,
+	NameAuctionMaturity: 65,
+	NameDeflationHeight: 200,
+	NameClaimPrefix:     "hns-regtest:",
+	NameNoRollout:       false,
+	NameNoReserved:      false,
 }
 
 var (

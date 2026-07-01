@@ -883,6 +883,36 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) 
 	sp.QueueMessage(&wire.HnsMsgHeaders{Headers: blockHeaders}, nil)
 }
 
+// OnGetProof is invoked when a peer receives a getproof message. It serves
+// name-tree proofs for roots retained by the chain's name snapshot store.
+func (sp *serverPeer) OnGetProof(_ *peer.Peer, hnsMsg *wire.HnsMsgGetProof) {
+	if !sp.server.syncManager.IsCurrent() {
+		return
+	}
+
+	root := chainhash.Hash(hnsMsg.Root)
+	key := chainhash.Hash(hnsMsg.Key)
+
+	proof, err := sp.server.chain.FetchNameProof(root, key)
+	if err != nil {
+		peerLog.Debugf("Unable to fetch name proof for root %v, "+
+			"key %v requested by %s: %v", root, key, sp, err)
+		return
+	}
+
+	if _, _, err := blockchain.VerifyUrkelProof(root, key, proof); err != nil {
+		peerLog.Warnf("Generated invalid name proof for root %v, "+
+			"key %v: %v", root, key, err)
+		return
+	}
+
+	sp.QueueMessage(&wire.HnsMsgProof{
+		Root:  hnsMsg.Root,
+		Key:   hnsMsg.Key,
+		Proof: proof,
+	}, nil)
+}
+
 // enforceNodeBloomFlag disconnects the peer if the server is not configured to
 // allow bloom filters. Additionally, the peer will be banned since it is
 // intentionally violating the negotiated service support bit.
@@ -1822,6 +1852,7 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 			OnGetData:     sp.OnGetData,
 			OnGetBlocks:   sp.OnGetBlocks,
 			OnGetHeaders:  sp.OnGetHeaders,
+			OnGetProof:    sp.OnGetProof,
 			OnFeeFilter:   sp.OnFeeFilter,
 			OnFilterAdd:   sp.OnFilterAdd,
 			OnFilterClear: sp.OnFilterClear,

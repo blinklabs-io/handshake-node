@@ -89,35 +89,25 @@ func ShouldHaveSerializedBlockHeight(header *wire.BlockHeader) bool {
 	return header.Version >= serializedHeightVersion
 }
 
-// IsCoinBaseTx determines whether or not a transaction is a coinbase.  A coinbase
-// is a special transaction created by miners that has no inputs.  This is
-// represented in the block chain by a transaction with a single input that has
-// a previous output transaction index set to the maximum value along with a
-// zero hash.
+// IsCoinBaseTx determines whether or not a transaction is a coinbase.  A
+// Handshake coinbase is represented by a first input whose previous outpoint is
+// null.  Additional null-prevout inputs may follow to carry reserved-name claim
+// proofs linked to the same-index output.
 //
 // This function only differs from IsCoinBase in that it works with a raw wire
 // transaction as opposed to a higher level util transaction.
 func IsCoinBaseTx(msgTx *wire.MsgTx) bool {
-	// A coin base must only have one transaction input.
-	if len(msgTx.TxIn) != 1 {
+	if len(msgTx.TxIn) == 0 {
 		return false
 	}
 
-	// The previous output of a coin base must have a max value index and
-	// a zero hash.
-	prevOut := &msgTx.TxIn[0].PreviousOutPoint
-	if prevOut.Index != math.MaxUint32 || prevOut.Hash != zeroHash {
-		return false
-	}
-
-	return true
+	return isNullOutpoint(&msgTx.TxIn[0].PreviousOutPoint)
 }
 
-// IsCoinBase determines whether or not a transaction is a coinbase.  A coinbase
-// is a special transaction created by miners that has no inputs.  This is
-// represented in the block chain by a transaction with a single input that has
-// a previous output transaction index set to the maximum value along with a
-// zero hash.
+// IsCoinBase determines whether or not a transaction is a coinbase.  A
+// Handshake coinbase is represented by a first input whose previous outpoint is
+// null.  Additional null-prevout inputs may follow to carry reserved-name claim
+// proofs linked to the same-index output.
 //
 // This function only differs from IsCoinBaseTx in that it works with a higher
 // level util transaction as opposed to a raw wire transaction.
@@ -284,14 +274,21 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 		}
 	}
 
-	// Check for duplicate transaction inputs.
-	existingTxOut := make(map[wire.OutPoint]struct{})
-	for _, txIn := range msgTx.TxIn {
-		if _, exists := existingTxOut[txIn.PreviousOutPoint]; exists {
-			return ruleError(ErrDuplicateTxInputs, "transaction "+
-				"contains duplicate inputs")
+	if err := checkCovenantSanity(tx); err != nil {
+		return err
+	}
+
+	isCoinbase := IsCoinBase(tx)
+	if !isCoinbase {
+		// Check for duplicate transaction inputs.
+		existingTxOut := make(map[wire.OutPoint]struct{})
+		for _, txIn := range msgTx.TxIn {
+			if _, exists := existingTxOut[txIn.PreviousOutPoint]; exists {
+				return ruleError(ErrDuplicateTxInputs, "transaction "+
+					"contains duplicate inputs")
+			}
+			existingTxOut[txIn.PreviousOutPoint] = struct{}{}
 		}
-		existingTxOut[txIn.PreviousOutPoint] = struct{}{}
 	}
 
 	// Coinbase script length must be between min and max length.
@@ -299,7 +296,40 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 	// the miner has already added a witness commitment, the 32-byte
 	// witness nonce will sit at Witness[0] and the coinbase script moves
 	// to Witness[1].
-	if IsCoinBase(tx) {
+	if isCoinbase {
+		for i, txIn := range msgTx.TxIn {
+			if !isNullOutpoint(&txIn.PreviousOutPoint) {
+				return ruleError(ErrBadTxInput, "coinbase "+
+					"input has non-null previous output")
+			}
+
+			if i == 0 {
+				continue
+			}
+
+			if len(txIn.Witness) != 1 {
+				return ruleError(ErrBadTxInput, "coinbase "+
+					"claim input must have one witness item")
+			}
+			if len(txIn.Witness[0]) > 10000 {
+				str := fmt.Sprintf("coinbase claim witness "+
+					"length of %d is out of range (max: %d)",
+					len(txIn.Witness[0]), 10000)
+				return ruleError(ErrBadCoinbaseScriptLen, str)
+			}
+			if i >= len(msgTx.TxOut) {
+				return ruleError(ErrInvalidCovenant, "coinbase "+
+					"claim input is missing linked output")
+			}
+
+			switch msgTx.TxOut[i].Covenant.Type {
+			case wire.CovenantClaim, wire.CovenantNone:
+			default:
+				return ruleError(ErrInvalidCovenant, "coinbase "+
+					"claim input is linked to invalid covenant")
+			}
+		}
+
 		coinbaseScript := coinbaseWitnessScript(msgTx.TxIn[0].Witness)
 		slen := len(coinbaseScript)
 		if slen < MinCoinbaseScriptLen || slen > MaxCoinbaseScriptLen {
@@ -551,6 +581,10 @@ func checkBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 		if err != nil {
 			return err
 		}
+	}
+
+	if err := checkBlockNameLimits(block); err != nil {
+		return err
 	}
 
 	// Build merkle tree and ensure the calculated merkle root matches the
@@ -1127,6 +1161,11 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 		return err
 	}
 
+	nameView, err := b.checkNameBlockForBestChain(block)
+	if err != nil {
+		return err
+	}
+
 	enforceBIP0016 := true
 	enforceSegWit := true
 
@@ -1187,11 +1226,34 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 				"overflows accumulator")
 		}
 
+		if nameView != nil {
+			prevOutputs, err := prevOutputsFromView(tx, view)
+			if err != nil {
+				return err
+			}
+			err = nameView.applyTx(nil, tx, uint32(node.height),
+				node.parent.timestamp, prevOutputs)
+			if err != nil {
+				return err
+			}
+		}
+
 		// Add all of the outputs for this transaction which are not
 		// provably unspendable as available utxos.  Also, the passed
 		// spent txos slice is updated to contain an entry for each
 		// spent txout in the order each transaction spends them.
 		err = view.connectTransaction(tx, node.height, stxos)
+		if err != nil {
+			return err
+		}
+	}
+
+	var coinbaseConjured uint64
+	if node.parent != nil {
+		var err error
+		coinbaseConjured, err = coinbaseConjuredValue(transactions[0],
+			uint32(node.height), node.parent.timestamp,
+			b.chainParams)
 		if err != nil {
 			return err
 		}
@@ -1208,6 +1270,13 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 	}
 	expectedSatoshiOut := CalcBlockSubsidy(node.height, b.chainParams) +
 		totalFees
+	if coinbaseConjured > uint64(hnsutil.MaxDoo) ||
+		expectedSatoshiOut > hnsutil.MaxDoo-int64(coinbaseConjured) {
+
+		return ruleError(ErrBadCoinbaseValue,
+			"coinbase expected value overflows max money")
+	}
+	expectedSatoshiOut += int64(coinbaseConjured)
 	if totalSatoshiOut > expectedSatoshiOut {
 		str := fmt.Sprintf("coinbase transaction for block pays %v "+
 			"which is more than expected value of %v",

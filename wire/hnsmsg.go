@@ -1268,9 +1268,8 @@ func (m *HnsMsgGetProof) Decode(data []byte) error {
 	return nil
 }
 
-// HnsMsgProof is the Handshake "proof" message. The Urkel proof body is kept
-// opaque until the Phase 4 name-system implementation provides a native proof
-// type and verifier.
+// HnsMsgProof is the Handshake "proof" message. The proof body uses the
+// hsd-compatible Urkel proof encoding verified by the blockchain package.
 type HnsMsgProof struct {
 	Root  [32]byte
 	Key   [32]byte

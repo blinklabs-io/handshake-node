@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -676,6 +676,11 @@ func (b *BlockChain) connectBlock(node *blockNode, block *hnsutil.Block,
 			return err
 		}
 
+		err = b.connectNames(dbTx, node, block, stxos)
+		if err != nil {
+			return err
+		}
+
 		// Allow the index manager to call each of the currently active
 		// optional indexes with the block being connected so they can
 		// update themselves accordingly.
@@ -788,6 +793,11 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *hnsutil.Block, view
 		// entails restoring all of the utxos spent and removing the new
 		// ones created by the block.
 		err = dbPutUtxoView(dbTx, view)
+		if err != nil {
+			return err
+		}
+
+		err = b.disconnectNames(dbTx, node, block)
 		if err != nil {
 			return err
 		}

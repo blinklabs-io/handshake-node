@@ -229,6 +229,14 @@ const (
 	// been found to violate a consensus rule, as opposed to having an
 	// invalid ancestor.
 	ErrKnownInvalidBlock
+
+	// ErrBadNameRoot indicates the block name tree commitment does not
+	// match the current committed name state root.
+	ErrBadNameRoot
+
+	// ErrInvalidCovenant indicates a transaction covenant is malformed or
+	// violates Handshake covenant state transition rules.
+	ErrInvalidCovenant
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -277,6 +285,8 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrInvalidAncestorBlock:      "ErrInvalidAncestorBlock",
 	ErrPrevBlockNotBest:          "ErrPrevBlockNotBest",
 	ErrKnownInvalidBlock:         "ErrKnownInvalidBlock",
+	ErrBadNameRoot:               "ErrBadNameRoot",
+	ErrInvalidCovenant:           "ErrInvalidCovenant",
 }
 
 // String returns the ErrorCode as a human-readable name.
