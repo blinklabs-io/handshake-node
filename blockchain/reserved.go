@@ -101,7 +101,10 @@ func (db *reservedNamesDB) get(nameHash chainhash.Hash) (reservedNameEntry, bool
 		return reservedNameEntry{}, false
 	}
 
-	target, flags, index, customValue := readReservedRecord(db.data, pos)
+	target, flags, index, customValue, ok := readReservedRecord(db.data, pos)
+	if !ok {
+		return reservedNameEntry{}, false
+	}
 	if index > len(target) {
 		return reservedNameEntry{}, false
 	}
@@ -140,8 +143,12 @@ func (db *reservedNamesDB) find(nameHash chainhash.Hash) int {
 			nameHash[:])
 		switch {
 		case cmp == 0:
-			return int(binary.LittleEndian.Uint32(
+			recordPos := int(binary.LittleEndian.Uint32(
 				db.data[pos+chainhash.HashSize : pos+36]))
+			if !validReservedRecordOffset(db.data, recordPos) {
+				return -1
+			}
+			return recordPos
 		case cmp < 0:
 			start = index + 1
 		default:
@@ -152,17 +159,16 @@ func (db *reservedNamesDB) find(nameHash chainhash.Hash) int {
 	return -1
 }
 
-func (db *lockedNamesDB) has(nameHash chainhash.Hash) bool {
-	return db.find(nameHash) >= 0
-}
-
 func (db *lockedNamesDB) get(nameHash chainhash.Hash) (lockedNameEntry, bool) {
 	pos := db.find(nameHash)
 	if pos < 0 {
 		return lockedNameEntry{}, false
 	}
 
-	target, flags, index, _ := readReservedRecord(db.data, pos)
+	target, flags, index, _, ok := readReservedRecord(db.data, pos)
+	if !ok {
+		return lockedNameEntry{}, false
+	}
 	if index > len(target) {
 		return lockedNameEntry{}, false
 	}
@@ -185,8 +191,12 @@ func (db *lockedNamesDB) find(nameHash chainhash.Hash) int {
 			nameHash[:])
 		switch {
 		case cmp == 0:
-			return int(binary.LittleEndian.Uint32(
+			recordPos := int(binary.LittleEndian.Uint32(
 				db.data[pos+chainhash.HashSize : pos+36]))
+			if !validReservedRecordOffset(db.data, recordPos) {
+				return -1
+			}
+			return recordPos
 		case cmp < 0:
 			start = index + 1
 		default:
@@ -197,10 +207,34 @@ func (db *lockedNamesDB) find(nameHash chainhash.Hash) int {
 	return -1
 }
 
-func readReservedRecord(data []byte, pos int) (string, byte, int, uint64) {
+func validReservedRecordOffset(data []byte, pos int) bool {
+	_, _, ok := reservedRecordBounds(data, pos)
+	return ok
+}
+
+func reservedRecordBounds(data []byte, pos int) (int, int, bool) {
+	if pos < 0 || pos >= len(data) {
+		return 0, 0, false
+	}
+
 	nameLen := int(data[pos])
 	targetStart := pos + 1
 	targetEnd := targetStart + nameLen
+	if targetEnd < targetStart || targetEnd+2 > len(data) {
+		return 0, 0, false
+	}
+
+	return targetStart, targetEnd, true
+}
+
+func readReservedRecord(data []byte, pos int) (string, byte, int, uint64,
+	bool) {
+
+	targetStart, targetEnd, ok := reservedRecordBounds(data, pos)
+	if !ok {
+		return "", 0, 0, 0, false
+	}
+
 	target := string(data[targetStart:targetEnd])
 	flags := data[targetEnd]
 	index := int(data[targetEnd+1])
@@ -212,7 +246,7 @@ func readReservedRecord(data []byte, pos int) (string, byte, int, uint64) {
 			data[customValueOffset : customValueOffset+8])
 	}
 
-	return target, flags, index, customValue
+	return target, flags, index, customValue, true
 }
 
 func isReservedNameHash(nameHash chainhash.Hash, height uint32,

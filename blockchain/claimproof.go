@@ -104,10 +104,9 @@ func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
 				return 0, err
 			}
 
-			conjured += value
-			if conjured > uint64(hnsutil.MaxDoo) {
-				return 0, ruleError(ErrBadCoinbaseValue,
-					"coinbase proof value exceeds max money")
+			conjured, err = addCoinbaseConjured(conjured, value)
+			if err != nil {
+				return 0, err
 			}
 			continue
 		}
@@ -118,14 +117,23 @@ func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
 			return 0, err
 		}
 
-		conjured += value
-		if conjured > uint64(hnsutil.MaxDoo) {
-			return 0, ruleError(ErrBadCoinbaseValue,
-				"coinbase proof value exceeds max money")
+		conjured, err = addCoinbaseConjured(conjured, value)
+		if err != nil {
+			return 0, err
 		}
 	}
 
 	return conjured, nil
+}
+
+func addCoinbaseConjured(conjured, value uint64) (uint64, error) {
+	maxValue := uint64(hnsutil.MaxDoo)
+	if conjured > maxValue || value > maxValue-conjured {
+		return 0, ruleError(ErrBadCoinbaseValue,
+			"coinbase proof value exceeds max money")
+	}
+
+	return conjured + value, nil
 }
 
 func verifyCoinbaseClaimProof(tx *hnsutil.Tx, outputIndex int, height uint32,

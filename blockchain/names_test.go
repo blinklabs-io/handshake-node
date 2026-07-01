@@ -122,6 +122,27 @@ func TestCheckBlockNameLimitsDuplicateAcrossTransactions(t *testing.T) {
 	}
 }
 
+func TestCheckBlockNameLimitsDuplicateWithinTransaction(t *testing.T) {
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("dup")))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("dup")))
+
+	block := &wire.MsgBlock{}
+	block.AddTransaction(tx)
+
+	err := checkBlockNameLimits(hnsutil.NewBlock(block))
+	if err == nil {
+		t.Fatal("checkBlockNameLimits: expected error")
+	}
+	if ruleErr, ok := err.(RuleError); !ok ||
+		ruleErr.ErrorCode != ErrInvalidCovenant {
+
+		t.Fatalf("checkBlockNameLimits error = %T %v, want ErrInvalidCovenant",
+			err, err)
+	}
+}
+
 func TestCoinbaseAllowsLinkedClaimInputs(t *testing.T) {
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
@@ -161,6 +182,26 @@ func TestCoinbaseClaimInputRequiresLinkedOutput(t *testing.T) {
 		wire.TxWitness{[]byte{0x02, 0x01}}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
 		wire.TxWitness{[]byte{0x01}}))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+
+	err := CheckTransactionSanity(hnsutil.NewTx(tx))
+	if err == nil {
+		t.Fatal("CheckTransactionSanity: expected error")
+	}
+	if ruleErr, ok := err.(RuleError); !ok ||
+		ruleErr.ErrorCode != ErrInvalidCovenant {
+
+		t.Fatalf("CheckTransactionSanity error = %T %v, want ErrInvalidCovenant",
+			err, err)
+	}
+}
+
+func TestCoinbaseProofInputRequiresLinkedOutput(t *testing.T) {
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
+		wire.TxWitness{[]byte{0x02, 0x01}}))
+	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
+		wire.TxWitness{[]byte{0x00}}))
 	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
 
 	err := CheckTransactionSanity(hnsutil.NewTx(tx))
@@ -306,6 +347,35 @@ func TestNameBlockViewRejectsUnlinkedRevealWithoutPanic(t *testing.T) {
 	}
 	if _, ok := err.(RuleError); !ok {
 		t.Fatalf("applyTx REVEAL error type = %T, want RuleError", err)
+	}
+}
+
+func TestNameBlockViewUpdateClearsData(t *testing.T) {
+	name := "clearme"
+	nameHash := hashName([]byte(name))
+	ns := newNameState(nameHash)
+	ns.set([]byte(name), 1)
+	ns.data = []byte("old-resource")
+
+	tx := wire.NewMsgTx(1)
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	covenant := wire.Covenant{
+		Type: wire.CovenantUpdate,
+		Items: [][]byte{
+			hashItem(name),
+			u32Item(ns.height),
+			nil,
+		},
+	}
+
+	view := &nameBlockView{}
+	err := view.applyUpdate(ns, covenant, hnsutil.NewTx(tx), 0, 10,
+		nameStateClosed)
+	if err != nil {
+		t.Fatalf("applyUpdate: %v", err)
+	}
+	if len(ns.data) != 0 {
+		t.Fatalf("UPDATE preserved data %x, want empty", ns.data)
 	}
 }
 

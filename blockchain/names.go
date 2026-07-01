@@ -531,6 +531,13 @@ func checkCovenantSanity(tx *hnsutil.Tx) error {
 	}
 
 	if IsCoinBase(tx) {
+		for i := 1; i < len(msgTx.TxIn); i++ {
+			if i >= len(msgTx.TxOut) {
+				return badCovenant(
+					"coinbase proof input is unlinked")
+			}
+		}
+
 		for i, txOut := range msgTx.TxOut {
 			covenant := txOut.Covenant
 			switch covenant.Type {
@@ -831,6 +838,7 @@ func checkBlockNameLimits(block *hnsutil.Block) error {
 }
 
 func hasSeenMutableName(tx *hnsutil.Tx, seen map[chainhash.Hash]struct{}) bool {
+	txSeen := make(map[chainhash.Hash]struct{})
 	for _, txOut := range tx.MsgTx().TxOut {
 		covenant := txOut.Covenant
 		if !isMutableNameCovenant(covenant.Type) {
@@ -843,6 +851,10 @@ func hasSeenMutableName(tx *hnsutil.Tx, seen map[chainhash.Hash]struct{}) bool {
 		if _, exists := seen[nameHash]; exists {
 			return true
 		}
+		if _, exists := txSeen[nameHash]; exists {
+			return true
+		}
+		txSeen[nameHash] = struct{}{}
 	}
 	return false
 }

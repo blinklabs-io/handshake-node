@@ -56,20 +56,6 @@ func dbPutNameRoot(dbTx database.Tx, root chainhash.Hash) error {
 	return dbTx.Metadata().Put(nameRootKeyName, root[:])
 }
 
-func dbFetchNameState(dbTx database.Tx, nameHash chainhash.Hash) (*nameState, error) {
-	bucket := dbTx.Metadata().Bucket(nameStateBucketName)
-	if bucket == nil {
-		return nil, nil
-	}
-
-	serialized := bucket.Get(nameHash[:])
-	if serialized == nil {
-		return nil, nil
-	}
-
-	return decodeNameState(nameHash, serialized)
-}
-
 func dbFetchAllNameStates(dbTx database.Tx) (map[chainhash.Hash]*nameState, error) {
 	states := make(map[chainhash.Hash]*nameState)
 	bucket := dbTx.Metadata().Bucket(nameStateBucketName)
@@ -358,14 +344,6 @@ func dbRemoveNameUndo(dbTx database.Tx, blockHash *chainhash.Hash) error {
 	return bucket.Delete(blockHash[:])
 }
 
-func dbCalcNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
-	_, root, err := dbCalcNameTree(dbTx)
-	if err != nil {
-		return chainhash.Hash{}, err
-	}
-	return root, nil
-}
-
 func dbCalcNameTree(dbTx database.Tx) ([]urkelLeaf, chainhash.Hash, error) {
 	leaves, err := dbFetchNameLeaves(dbTx)
 	if err != nil {
@@ -396,6 +374,18 @@ func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
 		return nil, err
 	}
 	if !found {
+		committedRoot, err := dbFetchNameRoot(dbTx)
+		if err != nil {
+			return nil, err
+		}
+		if committedRoot != root {
+			return nil, database.Error{
+				ErrorCode: database.ErrBlockNotFound,
+				Description: fmt.Sprintf("name root snapshot "+
+					"%v not found", root),
+			}
+		}
+
 		currentLeaves, currentRoot, err := dbCalcNameTree(dbTx)
 		if err != nil {
 			return nil, err

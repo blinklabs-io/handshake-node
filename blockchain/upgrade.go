@@ -780,6 +780,18 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 			return err
 		}
 		if !rootExists {
+			serializedState := dbTx.Metadata().Get(chainStateKeyName)
+			state, err := deserializeBestChainState(serializedState)
+			if err != nil {
+				return err
+			}
+			if state.height != 0 {
+				return database.Error{
+					ErrorCode: database.ErrCorruption,
+					Description: "missing name root for non-genesis " +
+						"database; rebuild name state before upgrade",
+				}
+			}
 			if _, err := dbStoreCurrentNameSnapshot(dbTx); err != nil {
 				return err
 			}

@@ -389,7 +389,9 @@ func (v *nameBlockView) applyUpdate(ns *nameState, covenant wire.Covenant,
 
 	ns.owner = txOutpoint(tx, outputIndex)
 	data := covenantItem(covenant, 2)
-	if len(data) > 0 {
+	if len(data) == 0 {
+		ns.data = nil
+	} else {
 		ns.data = append(ns.data[:0], data...)
 	}
 	ns.transfer = 0

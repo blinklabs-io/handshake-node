@@ -51,6 +51,28 @@ func TestReservedNameDBRejectsBadNameIndex(t *testing.T) {
 	}
 }
 
+func TestReservedNameDBRejectsBadRecordOffset(t *testing.T) {
+	nameHash := hashName([]byte("badoffset"))
+	db := mustLoadReservedNameDB(testReservedDBWithOffset(nameHash, 4096))
+
+	if db.has(nameHash) {
+		t.Fatal("reserved DB accepted out-of-range record offset")
+	}
+	if _, ok := db.get(nameHash); ok {
+		t.Fatal("reserved DB returned out-of-range record offset")
+	}
+}
+
+func TestReservedNameDBRejectsBadRecordLength(t *testing.T) {
+	nameHash := hashName([]byte("badlength"))
+	db := mustLoadReservedNameDB(testReservedDBWithRecord(nameHash,
+		[]byte{100, 'a'}))
+
+	if _, ok := db.get(nameHash); ok {
+		t.Fatal("reserved DB accepted truncated record")
+	}
+}
+
 func TestReservedNameConsensusWindow(t *testing.T) {
 	params := chaincfg.MainNetParams
 	comHash := hashName([]byte("com"))
@@ -102,6 +124,15 @@ func TestLockedNameDBRejectsBadNameIndex(t *testing.T) {
 	}
 }
 
+func TestLockedNameDBRejectsBadRecordOffset(t *testing.T) {
+	nameHash := hashName([]byte("badoffset"))
+	db := mustLoadLockedNameDB(testLockedDBWithOffset(nameHash, 4096))
+
+	if _, ok := db.get(nameHash); ok {
+		t.Fatal("locked DB returned out-of-range record offset")
+	}
+}
+
 func testReservedDBWithIndex(nameHash chainhash.Hash, index byte) []byte {
 	const (
 		headerSize = 28
@@ -119,6 +150,39 @@ func testReservedDBWithIndex(nameHash chainhash.Hash, index byte) []byte {
 	return data
 }
 
+func testReservedDBWithOffset(nameHash chainhash.Hash, offset uint32) []byte {
+	return testReservedDB(nameHash, offset, nil)
+}
+
+func testReservedDBWithRecord(nameHash chainhash.Hash, record []byte) []byte {
+	const (
+		headerSize = 28
+		tableSize  = 36
+	)
+	return testReservedDB(nameHash, headerSize+tableSize, record)
+}
+
+func testReservedDB(nameHash chainhash.Hash, offset uint32,
+	record []byte) []byte {
+
+	const (
+		headerSize = 28
+		tableSize  = 36
+	)
+	dataLen := headerSize + tableSize
+	if int(offset)+len(record) > dataLen {
+		dataLen = int(offset) + len(record)
+	}
+	data := make([]byte, dataLen)
+	binary.LittleEndian.PutUint32(data[0:4], 1)
+	copy(data[headerSize:headerSize+chainhash.HashSize], nameHash[:])
+	binary.LittleEndian.PutUint32(
+		data[headerSize+chainhash.HashSize:headerSize+tableSize],
+		offset)
+	copy(data[offset:], record)
+	return data
+}
+
 func testLockedDBWithIndex(nameHash chainhash.Hash, index byte) []byte {
 	const (
 		headerSize = 4
@@ -133,6 +197,20 @@ func testLockedDBWithIndex(nameHash chainhash.Hash, index byte) []byte {
 		data[headerSize+chainhash.HashSize:headerSize+tableSize],
 		uint32(recordPos))
 	copy(data[recordPos:], record)
+	return data
+}
+
+func testLockedDBWithOffset(nameHash chainhash.Hash, offset uint32) []byte {
+	const (
+		headerSize = 4
+		tableSize  = 36
+	)
+	data := make([]byte, headerSize+tableSize)
+	binary.LittleEndian.PutUint32(data[0:4], 1)
+	copy(data[headerSize:headerSize+chainhash.HashSize], nameHash[:])
+	binary.LittleEndian.PutUint32(
+		data[headerSize+chainhash.HashSize:headerSize+tableSize],
+		offset)
 	return data
 }
 
