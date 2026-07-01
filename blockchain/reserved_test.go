@@ -5,9 +5,11 @@
 package blockchain
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
 func TestReservedNameDBLookup(t *testing.T) {
@@ -37,6 +39,15 @@ func TestReservedNameDBLookup(t *testing.T) {
 
 	if reservedNameDB.has(hashName([]byte("zzzznotreserved"))) {
 		t.Fatal("reservedNameDB unexpectedly contains zzzznotreserved")
+	}
+}
+
+func TestReservedNameDBRejectsBadNameIndex(t *testing.T) {
+	nameHash := hashName([]byte("badindex"))
+	db := mustLoadReservedNameDB(testReservedDBWithIndex(nameHash, 100))
+
+	if _, ok := db.get(nameHash); ok {
+		t.Fatal("reserved DB accepted out-of-range name index")
 	}
 }
 
@@ -79,5 +90,61 @@ func TestLockedNameDBLookup(t *testing.T) {
 		params.NameClaimPeriod, &params) {
 
 		t.Fatal("unlisted name should not be locked")
+	}
+}
+
+func TestLockedNameDBRejectsBadNameIndex(t *testing.T) {
+	nameHash := hashName([]byte("badindex"))
+	db := mustLoadLockedNameDB(testLockedDBWithIndex(nameHash, 100))
+
+	if _, ok := db.get(nameHash); ok {
+		t.Fatal("locked DB accepted out-of-range name index")
+	}
+}
+
+func testReservedDBWithIndex(nameHash chainhash.Hash, index byte) []byte {
+	const (
+		headerSize = 28
+		tableSize  = 36
+	)
+	recordPos := headerSize + tableSize
+	record := testReservedRecord(index)
+	data := make([]byte, recordPos+len(record))
+	binary.LittleEndian.PutUint32(data[0:4], 1)
+	copy(data[headerSize:headerSize+chainhash.HashSize], nameHash[:])
+	binary.LittleEndian.PutUint32(
+		data[headerSize+chainhash.HashSize:headerSize+tableSize],
+		uint32(recordPos))
+	copy(data[recordPos:], record)
+	return data
+}
+
+func testLockedDBWithIndex(nameHash chainhash.Hash, index byte) []byte {
+	const (
+		headerSize = 4
+		tableSize  = 36
+	)
+	recordPos := headerSize + tableSize
+	record := testReservedRecord(index)
+	data := make([]byte, recordPos+len(record))
+	binary.LittleEndian.PutUint32(data[0:4], 1)
+	copy(data[headerSize:headerSize+chainhash.HashSize], nameHash[:])
+	binary.LittleEndian.PutUint32(
+		data[headerSize+chainhash.HashSize:headerSize+tableSize],
+		uint32(recordPos))
+	copy(data[recordPos:], record)
+	return data
+}
+
+func testReservedRecord(index byte) []byte {
+	target := []byte("bad.")
+	return []byte{
+		byte(len(target)),
+		target[0],
+		target[1],
+		target[2],
+		target[3],
+		0x00,
+		index,
 	}
 }

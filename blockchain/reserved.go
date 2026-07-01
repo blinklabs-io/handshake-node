@@ -102,6 +102,9 @@ func (db *reservedNamesDB) get(nameHash chainhash.Hash) (reservedNameEntry, bool
 	}
 
 	target, flags, index, customValue := readReservedRecord(db.data, pos)
+	if index > len(target) {
+		return reservedNameEntry{}, false
+	}
 	entry := reservedNameEntry{
 		name:   target[:index],
 		target: target,
@@ -160,6 +163,9 @@ func (db *lockedNamesDB) get(nameHash chainhash.Hash) (lockedNameEntry, bool) {
 	}
 
 	target, flags, index, _ := readReservedRecord(db.data, pos)
+	if index > len(target) {
+		return lockedNameEntry{}, false
+	}
 	return lockedNameEntry{
 		name:   target[:index],
 		target: target,

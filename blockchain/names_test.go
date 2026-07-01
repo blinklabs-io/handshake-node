@@ -270,6 +270,45 @@ func TestNameBlockViewOpenLifecycle(t *testing.T) {
 	}
 }
 
+func TestNameBlockViewRejectsUnlinkedRevealWithoutPanic(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	chain := &BlockChain{chainParams: &params}
+	name := "opened"
+	nameHash := hashName([]byte(name))
+	ns := newNameState(nameHash)
+	ns.set([]byte(name), 1)
+
+	view := &nameBlockView{
+		chain: chain,
+		states: map[chainhash.Hash]*nameState{
+			nameHash: ns,
+		},
+		dirty: make(map[chainhash.Hash]struct{}),
+		seen:  make(map[chainhash.Hash]struct{}),
+	}
+
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, revealCovenant(name, 1)))
+
+	prevOutputs := []namePrevOutput{{
+		outpoint: *testOutPoint(1),
+		amount:   1,
+		covenant: wire.Covenant{},
+	}}
+	height := ns.height + params.NameTreeInterval + 1 +
+		params.NameBiddingPeriod
+
+	err := view.applyTx(nil, hnsutil.NewTx(tx), height, 0, prevOutputs)
+	if err == nil {
+		t.Fatal("applyTx REVEAL: expected unlinked covenant error")
+	}
+	if _, ok := err.(RuleError); !ok {
+		t.Fatalf("applyTx REVEAL error type = %T, want RuleError", err)
+	}
+}
+
 func testOutPoint(tag uint32) *wire.OutPoint {
 	hash := chainhash.Hash{byte(tag)}
 	return wire.NewOutPoint(&hash, tag)
@@ -282,6 +321,17 @@ func openCovenant(name string) wire.Covenant {
 			hashItem(name),
 			u32Item(0),
 			[]byte(name),
+		},
+	}
+}
+
+func revealCovenant(name string, height uint32) wire.Covenant {
+	return wire.Covenant{
+		Type: wire.CovenantReveal,
+		Items: [][]byte{
+			hashItem(name),
+			u32Item(height),
+			hashBytes(chainhash.Hash{0x01}),
 		},
 	}
 }

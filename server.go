@@ -886,6 +886,10 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) 
 // OnGetProof is invoked when a peer receives a getproof message. It serves
 // name-tree proofs for roots retained by the chain's name snapshot store.
 func (sp *serverPeer) OnGetProof(_ *peer.Peer, hnsMsg *wire.HnsMsgGetProof) {
+	if !sp.server.syncManager.IsCurrent() {
+		return
+	}
+
 	root := chainhash.Hash(hnsMsg.Root)
 	key := chainhash.Hash(hnsMsg.Key)
 

@@ -287,8 +287,8 @@ func dbDeserializeNameUndo(serialized []byte) ([]nameUndoEntry, error) {
 			entry.existed = false
 		case 1:
 			entry.existed = true
-			stateBytes, err := wire.ReadVarBytes(r, 0, 2048,
-				"name undo state")
+			stateBytes, err := wire.ReadVarBytes(r, 0,
+				maxSerializedNameState, "name undo state")
 			if err != nil {
 				return nil, err
 			}

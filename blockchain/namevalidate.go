@@ -195,7 +195,10 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		if state != nameStateReveal {
 			return badCovenant("REVEAL covenant in invalid name state")
 		}
-		prevout := prevOutputs[outputIndex].outpoint
+		if _, err := linkedPrevOutput(prevOutputs, outputIndex,
+			"REVEAL"); err != nil {
+			return err
+		}
 		if isNullNameOwner(ns.owner) || txOut.Value > ns.highest {
 			ns.value = ns.highest
 			ns.owner = txOutpoint(tx, outputIndex)
@@ -203,7 +206,6 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		} else if txOut.Value > ns.value {
 			ns.value = txOut.Value
 		}
-		_ = prevout
 	case wire.CovenantRedeem:
 		if start != ns.height {
 			return badCovenant("REDEEM covenant has nonlocal height")
@@ -211,7 +213,12 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		if state < nameStateClosed {
 			return badCovenant("REDEEM covenant before close")
 		}
-		if prevOutputs[outputIndex].outpoint == ns.owner {
+		prevOutput, err := linkedPrevOutput(prevOutputs, outputIndex,
+			"REDEEM")
+		if err != nil {
+			return err
+		}
+		if prevOutput.outpoint == ns.owner {
 			return badCovenant("winning REVEAL cannot be redeemed")
 		}
 	case wire.CovenantRegister:
@@ -346,7 +353,12 @@ func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 	if !ok {
 		return badCovenant("REGISTER covenant has invalid renewal hash")
 	}
-	if prevOutputs[outputIndex].outpoint != ns.owner {
+	prevOutput, err := linkedPrevOutput(prevOutputs, outputIndex,
+		"REGISTER")
+	if err != nil {
+		return err
+	}
+	if prevOutput.outpoint != ns.owner {
 		return badCovenant("REGISTER covenant does not spend winner")
 	}
 	if txOut.Value != ns.value {
@@ -456,6 +468,16 @@ func (v *nameBlockView) applyFinalize(dbTx database.Tx, ns *nameState,
 	ns.renewal = height
 	ns.renewals++
 	return nil
+}
+
+func linkedPrevOutput(prevOutputs []namePrevOutput, outputIndex int,
+	covenant string) (namePrevOutput, error) {
+	if outputIndex < 0 || outputIndex >= len(prevOutputs) {
+		return namePrevOutput{}, badCovenant(covenant +
+			" covenant is not linked")
+	}
+
+	return prevOutputs[outputIndex], nil
 }
 
 func verifyCovenantSpends(tx *hnsutil.Tx, prevOutputs []namePrevOutput) error {
