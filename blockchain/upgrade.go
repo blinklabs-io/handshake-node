@@ -691,7 +691,7 @@ func upgradeUtxoSetToV3(db database.DB, interrupt <-chan struct{}) error {
 // this function returns without error.
 func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 	// Load or create bucket versions as needed.
-	var utxoSetVersion, spendJournalVersion uint32
+	var utxoSetVersion, spendJournalVersion, nameStateVersion uint32
 	err := b.db.Update(func(dbTx database.Tx) error {
 		// Load the utxo set version from the database or create it and
 		// initialize it to version 1 if it doesn't exist.
@@ -706,6 +706,12 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 		// and initialize it to version 1 if it doesn't exist.
 		spendJournalVersion, err = dbFetchOrCreateVersion(dbTx,
 			spendJournalVersionKeyName, 1)
+		if err != nil {
+			return err
+		}
+
+		nameStateVersion, err = dbFetchOrCreateVersion(dbTx,
+			nameStateVersionKeyName, latestNameStateBucketVersion)
 		return err
 	})
 	if err != nil {
@@ -741,6 +747,64 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 
 		if spendJournalVersion < 2 {
 			return dbPutVersion(dbTx, spendJournalVersionKeyName, 2)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	err = b.db.Update(func(dbTx database.Tx) error {
+		meta := dbTx.Metadata()
+		if _, err := meta.CreateBucketIfNotExists(
+			nameStateBucketName); err != nil {
+			return err
+		}
+		if _, err := meta.CreateBucketIfNotExists(
+			nameUndoBucketName); err != nil {
+			return err
+		}
+		if _, err := meta.CreateBucketIfNotExists(
+			nameSnapshotBucketName); err != nil {
+			return err
+		}
+		if nameStateVersion < latestNameStateBucketVersion {
+			if err := dbPutVersion(dbTx, nameStateVersionKeyName,
+				latestNameStateBucketVersion); err != nil {
+				return err
+			}
+		}
+		rootExists := dbTx.Metadata().Get(nameRootKeyName) != nil
+		root, err := dbFetchNameRoot(dbTx)
+		if err != nil {
+			return err
+		}
+		if !rootExists {
+			if _, err := dbStoreCurrentNameSnapshot(dbTx); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		emptyRoot := chainhash.Hash{}
+		if root == emptyRoot {
+			if err := dbPutNameSnapshot(dbTx, root, nil); err != nil {
+				return err
+			}
+		}
+
+		leaves, currentRoot, err := dbCalcNameTree(dbTx)
+		if err != nil {
+			return err
+		}
+		if currentRoot == root {
+			if err := dbPutNameSnapshot(dbTx, root, leaves); err != nil {
+				return err
+			}
+		} else if err := dbPutNameSnapshot(dbTx, currentRoot,
+			leaves); err != nil {
+
+			return err
 		}
 		return nil
 	})
