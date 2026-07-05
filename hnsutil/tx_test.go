@@ -12,6 +12,7 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -73,6 +74,28 @@ func TestNewTxFromBytes(t *testing.T) {
 	if msgTx := tx.MsgTx(); !reflect.DeepEqual(msgTx, testTx) {
 		t.Errorf("MsgTx: mismatched MsgTx - got %v, want %v",
 			spew.Sdump(msgTx), spew.Sdump(testTx))
+	}
+
+	assertCachedTxHashes(t, tx, testTx)
+}
+
+func assertCachedTxHashes(t *testing.T, tx *hnsutil.Tx, msgTx *wire.MsgTx) {
+	t.Helper()
+
+	wantHash := msgTx.TxHash()
+	for i := 0; i < 2; i++ {
+		if gotHash := tx.Hash(); !gotHash.IsEqual(&wantHash) {
+			t.Fatalf("Hash #%d: got %v, want %v",
+				i, gotHash, wantHash)
+		}
+	}
+
+	wantWitnessHash := msgTx.WitnessHash()
+	for i := 0; i < 2; i++ {
+		if gotHash := tx.WitnessHash(); !gotHash.IsEqual(&wantWitnessHash) {
+			t.Fatalf("WitnessHash #%d: got %v, want %v",
+				i, gotHash, wantWitnessHash)
+		}
 	}
 }
 

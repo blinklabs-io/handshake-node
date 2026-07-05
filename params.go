@@ -20,21 +20,14 @@ type params struct {
 }
 
 // mainNetParams contains parameters specific to the main network
-// (wire.MainNet).  NOTE: The RPC port is intentionally different from the
-// reference implementation because handshake-node does not handle wallet
-// requests.  The separate wallet process listens on the well-known port and
-// forwards requests it does not handle on to handshake-node.  This approach
-// allows the wallet process
-// to emulate the full reference implementation RPC API.
+// (wire.MainNet).
 var mainNetParams = params{
 	Params:  &chaincfg.MainNetParams,
-	rpcPort: "8334",
+	rpcPort: "12037",
 }
 
 // regressionNetParams contains parameters specific to the regression test
-// network (wire.TestNet).  NOTE: The RPC port is intentionally different
-// than the reference implementation - see the mainNetParams comment for
-// details.
+// network (wire.TestNet).
 var regressionNetParams = params{
 	Params:  &chaincfg.RegressionNetParams,
 	rpcPort: "18334",

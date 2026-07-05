@@ -10,6 +10,7 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"golang.org/x/crypto/blake2b"
 )
 
 // TxIndexUnknown is the value returned for a transaction index that is unknown.
@@ -54,55 +55,11 @@ func (t *Tx) Hash() *chainhash.Hash {
 	}
 
 	// If we have the raw bytes, then don't call msgTx.TxHash as that has
-	// the overhead of serialization. Instead, we can take the existing
-	// serialized bytes and hash them to speed things up.
-	var hash chainhash.Hash
-	if t.HasWitness() {
-		// If the raw bytes contain the witness, we must strip it out
-		// before calculating the hash.
-		baseSize := t.msgTx.SerializeSizeStripped()
-		nonWitnessBytes := make([]byte, 0, baseSize)
-
-		// Append the version bytes.
-		offset := 4
-		nonWitnessBytes = append(
-			nonWitnessBytes, t.rawBytes[:offset]...,
-		)
-
-		// Append the input and output bytes.  -8 to account for the
-		// version bytes and the locktime bytes.
-		//
-		// Skip the 2 bytes for the witness encoding.
-		offset += 2
-		nonWitnessBytes = append(
-			nonWitnessBytes,
-			t.rawBytes[offset:offset+baseSize-8]...,
-		)
-
-		// Append the last 4 bytes which are the locktime bytes.
-		nonWitnessBytes = append(
-			nonWitnessBytes, t.rawBytes[len(t.rawBytes)-4:]...,
-		)
-
-		// We purposely call doublehashh here instead of doublehashraw
-		// as we don't have the serialization overhead and avoiding the
-		// 1 alloc is better in this case.
-		hash = chainhash.DoubleHashRaw(func(w io.Writer) error {
-			_, err := w.Write(nonWitnessBytes)
-			return err
-		})
-	} else {
-		// If the raw bytes don't have the witness, we can use it
-		// directly.
-		//
-		// We purposely call doublehashh here instead of doublehashraw
-		// as we don't have the serialization overhead and avoiding the
-		// 1 alloc is better in this case.
-		hash = chainhash.DoubleHashRaw(func(w io.Writer) error {
-			_, err := w.Write(t.rawBytes)
-			return err
-		})
-	}
+	// the overhead of serialization. Handshake txids are Blake2b-256 over
+	// the non-witness serialization, which is the stripped prefix because
+	// witness data is appended after locktime.
+	baseSize := t.msgTx.SerializeSizeStripped()
+	hash := chainhash.Hash(blake2b.Sum256(t.rawBytes[:baseSize]))
 
 	t.txHash = &hash
 	return &hash
@@ -121,7 +78,14 @@ func (t *Tx) WitnessHash() *chainhash.Hash {
 	// Cache the hash and return it.
 	var hash chainhash.Hash
 	if len(t.rawBytes) > 0 {
-		hash = chainhash.DoubleHashH(t.rawBytes)
+		txHash := t.Hash()
+		baseSize := t.msgTx.SerializeSizeStripped()
+		witHash := blake2b.Sum256(t.rawBytes[baseSize:])
+
+		var preimage [chainhash.HashSize * 2]byte
+		copy(preimage[:chainhash.HashSize], txHash[:])
+		copy(preimage[chainhash.HashSize:], witHash[:])
+		hash = chainhash.Hash(blake2b.Sum256(preimage[:]))
 	} else {
 		hash = t.msgTx.WitnessHash()
 	}
@@ -173,7 +137,12 @@ func (t *Tx) setBytes(bytes []byte) {
 // serialized bytes.  See Tx.
 func NewTxFromBytes(serializedTx []byte) (*Tx, error) {
 	br := bytes.NewReader(serializedTx)
-	return NewTxFromReader(br)
+	tx, err := NewTxFromReader(br)
+	if err != nil {
+		return nil, err
+	}
+	tx.setBytes(serializedTx)
+	return tx, nil
 }
 
 // NewTxFromReader returns a new instance of a bitcoin transaction given a

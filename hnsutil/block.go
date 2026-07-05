@@ -154,33 +154,32 @@ func (b *Block) Transactions() []*Tx {
 		b.transactions = make([]*Tx, len(b.msgBlock.Transactions))
 	}
 
-	// Offset of each tx.  80 accounts for the block header size.
-	offset := 80 + wire.VarIntSerializeSize(
+	// Offset of each tx.  MaxBlockHeaderPayload accounts for the
+	// Handshake block header size.
+	offset := wire.MaxBlockHeaderPayload + wire.VarIntSerializeSize(
 		uint64(len(b.msgBlock.Transactions)),
 	)
+
+	hasSerializedBlock := len(b.serializedBlock) > 0
 
 	// Generate and cache the wrapped transactions for all that haven't
 	// already been done.
 	for i, tx := range b.transactions {
+		size := b.msgBlock.Transactions[i].SerializeSize()
+
 		if tx == nil {
 			newTx := NewTx(b.msgBlock.Transactions[i])
 			newTx.SetIndex(i)
+			tx = newTx
+			b.transactions[i] = tx
+		}
 
-			size := b.msgBlock.Transactions[i].SerializeSize()
-
-			// The block may not always have the serializedBlock.
-			if len(b.serializedBlock) > 0 {
-				// This allows for the reuse of the already
-				// serialized tx.
-				newTx.setBytes(
-					b.serializedBlock[offset : offset+size],
-				)
-
-				// Increment offset for this block.
-				offset += size
-			}
-
-			b.transactions[i] = newTx
+		// The block may not always have the serializedBlock.  When it
+		// does, advance the offset for every transaction, including
+		// previously wrapped ones, so later raw tx slices remain aligned.
+		if hasSerializedBlock {
+			tx.setBytes(b.serializedBlock[offset : offset+size])
+			offset += size
 		}
 	}
 
