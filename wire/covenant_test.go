@@ -498,10 +498,10 @@ func TestAddressWitnessProgram(t *testing.T) {
 			want:    append([]byte{0x51, 0x14}, make([]byte, 20)...), // OP_1=0x51, len=20
 		},
 		{
-			name:    "v15 2-byte hash",
-			version: 15,
+			name:    "v16 2-byte hash",
+			version: 16,
 			hash:    []byte{0xaa, 0xbb},
-			want:    []byte{0x5f, 0x02, 0xaa, 0xbb}, // OP_15=0x5f, len=2
+			want:    []byte{0x60, 0x02, 0xaa, 0xbb}, // OP_16=0x60, len=2
 		},
 	}
 
@@ -518,5 +518,22 @@ func TestAddressWitnessProgram(t *testing.T) {
 					got, test.want)
 			}
 		})
+	}
+}
+
+func TestAddressRejectsVersionsWithoutSmallIntOpcode(t *testing.T) {
+	hash := []byte{0xaa, 0xbb}
+	if _, err := NewAddress(17, hash); err == nil {
+		t.Fatal("NewAddress accepted version 17")
+	}
+
+	var buf bytes.Buffer
+	if err := (&Address{Version: 17, Hash: hash}).Encode(&buf); err == nil {
+		t.Fatal("Encode accepted version 17")
+	}
+
+	var decoded Address
+	if err := decoded.Decode(bytes.NewReader([]byte{17, byte(len(hash)), hash[0], hash[1]})); err == nil {
+		t.Fatal("Decode accepted version 17")
 	}
 }

@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	// maxAddressVersion is the maximum allowed address version (0-16).
-	// WitnessProgram() uses 0x50+version for the opcode, which is only
-	// valid for versions 0 through 16 (OP_0 through OP_16).
+	// maxAddressVersion is the maximum allowed wire address version while
+	// WitnessProgram consumers still require Bitcoin small-int opcodes.
 	maxAddressVersion = 16
 
 	// minAddressHashLen is the minimum hash length for an address.
@@ -24,7 +23,9 @@ const (
 
 // Address represents a Handshake output address consisting of a witness
 // program version and hash.  Version 0 addresses use 20-byte (P2WPKH) or
-// 32-byte (P2WSH) hashes.
+// 32-byte (P2WSH) hashes.  Wire addresses are currently limited to versions
+// 0 through 16 because callers expose them as Bitcoin-style witness program
+// scripts with OP_0 through OP_16.
 //
 // Wire format: version(1 byte) + hashLen(1 byte) + hash(N bytes)
 type Address struct {
@@ -119,9 +120,9 @@ func (a *Address) SerializeSize() int {
 	return 2 + len(a.Hash)
 }
 
-// WitnessProgram returns the Bitcoin-style witness program script for this
+// WitnessProgram returns the legacy Bitcoin-style script view for this
 // address.  For version 0, the result is [OP_0, len(hash), hash...].  For
-// version N (1-16), the result is [OP_N (0x50+N), len(hash), hash...].
+// versions 1 through 16, the result is [OP_N, len(hash), hash...].
 func (a *Address) WitnessProgram() []byte {
 	program := make([]byte, 2+len(a.Hash))
 

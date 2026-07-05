@@ -59,3 +59,15 @@ func TestCreateDefaultConfigFile(t *testing.T) {
 		t.Error("Could not find rpcpass in generated default config file.")
 	}
 }
+
+func TestDefaultRPCPorts(t *testing.T) {
+	if mainNetParams.rpcPort != "12037" {
+		t.Fatalf("mainnet RPC port: got %q, want %q",
+			mainNetParams.rpcPort, "12037")
+	}
+
+	if regressionNetParams.rpcPort != "18334" {
+		t.Fatalf("regtest RPC port: got %q, want %q",
+			regressionNetParams.rpcPort, "18334")
+	}
+}

@@ -13,9 +13,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -128,7 +128,7 @@ func normalizeAddress(addr string, chain *chaincfg.Params, useWallet bool) (stri
 			if useWallet {
 				defaultPort = "8332"
 			} else {
-				defaultPort = "8334"
+				defaultPort = "12037"
 			}
 		}
 

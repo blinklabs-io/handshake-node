@@ -198,6 +198,8 @@ func TestNewBlockFromBytes(t *testing.T) {
 		t.Errorf("MsgBlock: mismatched MsgBlock - got %v, want %v",
 			spew.Sdump(msgBlock), spew.Sdump(&Block100000))
 	}
+
+	assertCachedBlockTxHashes(t, b)
 }
 
 // TestNewBlockFromBlockAndBytes tests creation of a Block from a MsgBlock and
@@ -228,6 +230,59 @@ func TestNewBlockFromBlockAndBytes(t *testing.T) {
 	if msgBlock := b.MsgBlock(); !reflect.DeepEqual(msgBlock, &Block100000) {
 		t.Errorf("MsgBlock: mismatched MsgBlock - got %v, want %v",
 			spew.Sdump(msgBlock), spew.Sdump(&Block100000))
+	}
+
+	assertCachedBlockTxHashes(t, b)
+}
+
+func TestRawBlockTransactionsAfterSparseTxAccess(t *testing.T) {
+	var block100000Buf bytes.Buffer
+	if err := Block100000.Serialize(&block100000Buf); err != nil {
+		t.Errorf("Serialize: %v", err)
+	}
+	block100000Bytes := block100000Buf.Bytes()
+
+	b, err := hnsutil.NewBlockFromReader(bytes.NewReader(block100000Bytes))
+	if err != nil {
+		t.Fatalf("NewBlockFromReader: %v", err)
+	}
+	b.SetBlockBytes(block100000Bytes)
+
+	firstTx, err := b.Tx(0)
+	if err != nil {
+		t.Fatalf("Tx(0): %v", err)
+	}
+
+	transactions := b.Transactions()
+	if transactions[0] != firstTx {
+		t.Fatal("Transactions replaced existing Tx(0) wrapper")
+	}
+
+	assertCachedBlockTxHashes(t, b)
+}
+
+func assertCachedBlockTxHashes(t *testing.T, b *hnsutil.Block) {
+	t.Helper()
+
+	transactions := b.Transactions()
+	msgTransactions := b.MsgBlock().Transactions
+	if len(transactions) != len(msgTransactions) {
+		t.Fatalf("Transactions: got %d, want %d",
+			len(transactions), len(msgTransactions))
+	}
+
+	for i, tx := range transactions {
+		wantHash := msgTransactions[i].TxHash()
+		if gotHash := tx.Hash(); !gotHash.IsEqual(&wantHash) {
+			t.Fatalf("Transactions[%d].Hash: got %v, want %v",
+				i, gotHash, wantHash)
+		}
+
+		wantWitnessHash := msgTransactions[i].WitnessHash()
+		if gotHash := tx.WitnessHash(); !gotHash.IsEqual(&wantWitnessHash) {
+			t.Fatalf("Transactions[%d].WitnessHash: got %v, want %v",
+				i, gotHash, wantWitnessHash)
+		}
 	}
 }
 
