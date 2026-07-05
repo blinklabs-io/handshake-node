@@ -191,6 +191,60 @@ func TestInvalidFlagCombinations(t *testing.T) {
 	}
 }
 
+func TestTaprootWitnessProgramRejectedInHandshake(t *testing.T) {
+	t.Parallel()
+
+	taprootProgram := hexToBytes("79be667ef9dcbbac55a06295ce870b07029" +
+		"bfcdb2dce28d959f2815b16f81798")
+	pkScript := append([]byte{OP_1, OP_DATA_32}, taprootProgram...)
+	tx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  chainhash.Hash{0x01},
+				Index: 0,
+			},
+			Sequence: 4294967295,
+			Witness: wire.TxWitness{
+				{0x01},
+			},
+		}},
+		TxOut: []*wire.TxOut{{
+			Value: 1000000000,
+		}},
+	}
+
+	flags := ScriptBip16 | ScriptVerifyWitness | ScriptVerifyTaproot
+	vm, err := NewEngine(pkScript, tx, 0, flags, nil, nil, -1, nil)
+	if err != nil {
+		t.Fatalf("failed to create script engine: %v", err)
+	}
+
+	err = vm.Execute()
+	if !IsErrorCode(err, ErrDiscourageUpgradableWitnessProgram) {
+		t.Fatalf("expected Handshake Taproot quarantine error, got %v",
+			err)
+	}
+
+	var scriptErr Error
+	if !errors.As(err, &scriptErr) {
+		t.Fatalf("expected script error, got %T", err)
+	}
+	const wantDesc = "taproot witness programs are not valid in Handshake"
+	if scriptErr.Description != wantDesc {
+		t.Fatalf("expected quarantine error %q, got %q", wantDesc,
+			scriptErr.Description)
+	}
+}
+
+func TestStandardVerifyFlagsExcludeTaproot(t *testing.T) {
+	t.Parallel()
+
+	if StandardVerifyFlags&ScriptVerifyTaproot != 0 {
+		t.Fatal("StandardVerifyFlags must not include ScriptVerifyTaproot")
+	}
+}
+
 // TestCheckPubKeyEncoding ensures the internal checkPubKeyEncoding function
 // works as expected.
 func TestCheckPubKeyEncoding(t *testing.T) {

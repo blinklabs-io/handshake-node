@@ -96,8 +96,8 @@ const (
 	// non-standard.
 	ScriptVerifyWitnessPubKeyType
 
-	// ScriptVerifyTaproot defines whether or not to verify a transaction
-	// output using the new taproot validation rules.
+	// ScriptVerifyTaproot is retained for API compatibility.  Handshake does
+	// not support Taproot consensus execution.
 	ScriptVerifyTaproot
 
 	// ScriptVerifyDiscourageUpgradeableWitnessProgram defines whether or
@@ -605,152 +605,14 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 			return scriptError(ErrWitnessProgramWrongLength, errStr)
 		}
 
-		// We're attempting to verify a taproot input, and the witness
-		// program data push is of the expected size, so we'll be looking for a
-		// normal key-path spend, or a merkle proof for a tapscript with
-		// execution afterwards.
+		// Handshake does not support Taproot spends.  Version 1, 32-byte
+		// witness programs are quarantined here even when ScriptVerifyTaproot
+		// is set.
 	case vm.isWitnessVersionActive(TaprootWitnessVersion) &&
 		len(vm.witnessProgram) == payToTaprootDataSize && !vm.bip16:
 
 		errStr := "taproot witness programs are not valid in Handshake"
 		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
-
-		// If there're no stack elements at all, then this is an
-		// invalid spend.
-		if len(witness) == 0 {
-			return scriptError(ErrWitnessProgramEmpty, "witness "+
-				"program empty passed empty witness")
-		}
-
-		// At this point, we know taproot is active, so we'll populate
-		// the taproot execution context.
-		vm.taprootCtx = newTaprootExecutionCtx(
-			int32(witness.SerializeSize()),
-		)
-
-		// If we can detect the annex, then drop that off the stack,
-		// we'll only need it to compute the sighash later.
-		if isAnnexedWitness(witness) {
-			vm.taprootCtx.annex, _ = extractAnnex(witness)
-
-			// Snip the annex off the end of the witness stack.
-			witness = witness[:len(witness)-1]
-		}
-
-		// From here, we'll either be validating a normal key spend, or
-		// a spend from the tap script leaf using a committed leaf.
-		switch {
-		// If there's only a single element left on the stack (the
-		// signature), then we'll apply the normal top-level schnorr
-		// signature verification.
-		case len(witness) == 1:
-			// As we only have a single element left (after maybe
-			// removing the annex), we'll do normal taproot
-			// keyspend validation.
-			rawSig := witness[0]
-			err := VerifyTaprootKeySpend(
-				vm.witnessProgram, rawSig, &vm.tx, vm.txIdx,
-				vm.prevOutFetcher, vm.hashCache, vm.sigCache,
-			)
-			if err != nil {
-				// TODO(roasbeef): proper error
-				return err
-			}
-
-			// TODO(roasbeef): or remove the other items from the stack?
-			vm.taprootCtx.mustSucceed = true
-			return nil
-
-		// Otherwise, we need to attempt full tapscript leaf
-		// verification in place.
-		default:
-			// First, attempt to parse the control block, if this
-			// isn't formatted properly, then we'll end execution
-			// right here.
-			controlBlock, err := ParseControlBlock(
-				witness[len(witness)-1],
-			)
-			if err != nil {
-				return err
-			}
-
-			// Now that we know the control block is valid, we'll
-			// verify the top-level taproot commitment, which
-			// proves that the specified script was committed to in
-			// the merkle tree.
-			witnessScript := witness[len(witness)-2]
-			err = VerifyTaprootLeafCommitment(
-				controlBlock, vm.witnessProgram, witnessScript,
-			)
-			if err != nil {
-				return err
-			}
-
-			// Now that we know the commitment is valid, we'll
-			// check to see if OP_SUCCESS op codes are found in the
-			// script. If so, then we'll return here early as we
-			// skip proper validation.
-			if ScriptHasOpSuccess(witnessScript) {
-				// An op success op code has been found, however if
-				// the policy flag forbidding them is active, then
-				// we'll return an error.
-				if vm.hasFlag(ScriptVerifyDiscourageOpSuccess) {
-					errStr := fmt.Sprintf("script contains " +
-						"OP_SUCCESS op code")
-					return scriptError(ErrDiscourageOpSuccess, errStr)
-				}
-
-				// Otherwise, the script passes scott free.
-				vm.taprootCtx.mustSucceed = true
-				return nil
-			}
-
-			// Before we proceed with normal execution, check the
-			// leaf version of the script, as if the policy flag is
-			// active, then we should only allow the base leaf
-			// version.
-			if controlBlock.LeafVersion != BaseLeafVersion {
-				switch {
-				case vm.hasFlag(ScriptVerifyDiscourageUpgradeableTaprootVersion):
-					errStr := fmt.Sprintf("tapscript is attempting "+
-						"to use version: %v", controlBlock.LeafVersion)
-					return scriptError(
-						ErrDiscourageUpgradeableTaprootVersion, errStr,
-					)
-				default:
-					// If the policy flag isn't active,
-					// then execution succeeds here as we
-					// don't know the rules of the future
-					// leaf versions.
-					vm.taprootCtx.mustSucceed = true
-					return nil
-				}
-			}
-
-			// Now that we know we don't have any op success
-			// fields, ensure that the script parses properly.
-			//
-			// TODO(roasbeef): combine w/ the above?
-			err = checkScriptParses(vm.version, witnessScript)
-			if err != nil {
-				return err
-			}
-
-			// Now that we know the script parses, and we have a
-			// valid leaf version, we'll save the tapscript hash of
-			// the leaf, as we need that for signature validation
-			// later.
-			vm.taprootCtx.tapLeafHash = NewBaseTapLeaf(
-				witnessScript,
-			).TapHash()
-
-			// Otherwise, we'll now "recurse" one level deeper, and
-			// set the remaining witness (leaving off the annex and
-			// the witness script) as the execution stack, and
-			// enter further execution.
-			vm.scripts = append(vm.scripts, witnessScript)
-			vm.SetStack(witness[:len(witness)-2])
-		}
 
 	case vm.hasFlag(ScriptVerifyDiscourageUpgradeableWitnessProgram):
 		errStr := fmt.Sprintf("new witness program versions "+
@@ -766,16 +628,6 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 	// TODO(roasbeef): other sanity checks here
 	switch {
 
-	// In addition to the normal script element size limits, taproot also
-	// enforces a limit on the max _starting_ stack size.
-	case vm.isWitnessVersionActive(TaprootWitnessVersion):
-		if vm.dstack.Depth() > MaxStackSize {
-			str := fmt.Sprintf("tapscript stack size %d > max allowed %d",
-				vm.dstack.Depth(), MaxStackSize)
-			return scriptError(ErrStackOverflow, str)
-		}
-
-		fallthrough
 	case vm.isWitnessVersionActive(BaseSegwitWitnessVersion):
 		// All elements within the witness stack must not be greater
 		// than the maximum bytes which are allowed to be pushed onto
