@@ -43,8 +43,20 @@ func TestNetworkParams(t *testing.T) {
 			wantNet:  uint32(chaincfg.MainNetParams.Net),
 		},
 		{
+			name:     "mainnet mixed case",
+			input:    "MaInNeT",
+			wantName: "mainnet",
+			wantNet:  uint32(chaincfg.MainNetParams.Net),
+		},
+		{
 			name:     "regtest",
 			input:    "regtest",
+			wantName: "regtest",
+			wantNet:  uint32(chaincfg.RegressionNetParams.Net),
+		},
+		{
+			name:     "regtest surrounding spaces",
+			input:    "  regtest\t",
 			wantName: "regtest",
 			wantNet:  uint32(chaincfg.RegressionNetParams.Net),
 		},
@@ -174,7 +186,11 @@ func TestParseConfigBrontideDefaultIdentityPath(t *testing.T) {
 		t.Fatalf("parseConfig: %v", err)
 	}
 
-	want := filepath.Join(os.TempDir(), defaultIdentityKeyFile)
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	want := filepath.Join(configDir, "hsdinterop", defaultIdentityKeyFile)
 	if cfg.identityKeyPath != want {
 		t.Fatalf("identity key path: got %q, want %q", cfg.identityKeyPath, want)
 	}
@@ -273,5 +289,23 @@ func TestRunParseFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "addr is required") {
 		t.Fatalf("stderr: got %q", stderr.String())
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run([]string{"--help"}, io.Discard, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	output := stderr.String()
+	if strings.Contains(output, "hsdinterop:") {
+		t.Fatalf("stderr: got failure output %q", output)
+	}
+	if !strings.Contains(output, "Handshake network: mainnet|regtest") {
+		t.Fatalf("stderr: missing supported network help in %q", output)
+	}
+	if strings.Contains(output, "testnet") || strings.Contains(output, "simnet") {
+		t.Fatalf("stderr: advertised unsupported network in %q", output)
 	}
 }

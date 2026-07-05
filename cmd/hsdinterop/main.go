@@ -98,7 +98,7 @@ func parseConfig(args []string, output io.Writer) (*config, error) {
 	}
 
 	addr := fs.String("addr", "", "Handshake peer address as host:port")
-	network := fs.String("network", "mainnet", "Handshake network: mainnet|testnet|regtest|simnet")
+	network := fs.String("network", "mainnet", "Handshake network: mainnet|regtest")
 	timeout := fs.Duration("timeout", defaultTimeout, "Maximum time allowed for dial and handshake")
 	transport := fs.String("transport", string(transportPlaintext), "P2P transport: plaintext|brontide")
 	remoteKeyHex := fs.String("remote-key", "", "Remote compressed secp256k1 static public key hex for brontide transport")
@@ -144,7 +144,11 @@ func parseConfig(args []string, output io.Writer) (*config, error) {
 			return nil, errors.New("identity-key requires --transport=brontide")
 		}
 	} else if *identityKeyPath == "" {
-		*identityKeyPath = filepath.Join(os.TempDir(), defaultIdentityKeyFile)
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("default identity key path: %w", err)
+		}
+		*identityKeyPath = filepath.Join(configDir, "hsdinterop", defaultIdentityKeyFile)
 	}
 
 	var remoteKey []byte
