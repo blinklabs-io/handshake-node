@@ -881,6 +881,14 @@ func loadConfig() (*config, []string, error) {
 			fmt.Fprintln(os.Stderr, usageMessage)
 			return nil, nil, err
 		}
+		if _, err := hnsutilAddressToWire(addr); err != nil {
+			str := "%s: mining address '%s' is not supported in " +
+				"transaction outputs: %v"
+			err := fmt.Errorf(str, funcName, strAddr, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
 		cfg.miningAddrs = append(cfg.miningAddrs, addr)
 	}
 

@@ -141,7 +141,8 @@ func NewTxFromBytes(serializedTx []byte) (*Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	tx.setBytes(serializedTx)
+	consumed := len(serializedTx) - br.Len()
+	tx.setBytes(append([]byte(nil), serializedTx[:consumed]...))
 	return tx, nil
 }
 

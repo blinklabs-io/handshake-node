@@ -330,6 +330,18 @@ func rpcDecodeHexError(gotHex string) *hnsjson.RPCError {
 			gotHex))
 }
 
+func hnsutilAddressToWire(addr hnsutil.Address) (wire.Address, error) {
+	if addr == nil {
+		return wire.Address{}, errors.New("nil address")
+	}
+
+	wireAddr, err := wire.NewAddress(addr.Version(), addr.Hash())
+	if err != nil {
+		return wire.Address{}, err
+	}
+	return *wireAddr, nil
+}
+
 // rpcNoTxInfoError is a convenience function for returning a nicely formatted
 // RPC error which indicates there is no information available for the provided
 // transaction hash.
@@ -575,11 +587,9 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 
 		// Ensure the network encoded with the address matches the
-		// network the server is currently on.  Handshake uses a single
-		// unified address shape (version + hash) so we copy those
-		// fields directly into the wire form.  DecodeAddress already
-		// validates the version/hash/HRP combination, so no further
-		// PayToAddrScript pre-flight is required here.
+		// network the server is currently on.  DecodeAddress validates
+		// the bech32 address range, then hnsutilAddressToWire applies
+		// the narrower transaction output rules.
 		if !addr.IsForNet(params) {
 			return nil, &hnsjson.RPCError{
 				Code: hnsjson.ErrRPCInvalidAddressOrKey,
@@ -587,9 +597,13 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 					" is for the wrong network",
 			}
 		}
-		wireAddr := wire.Address{
-			Version: addr.Version(),
-			Hash:    addr.Hash(),
+		wireAddr, err := hnsutilAddressToWire(addr)
+		if err != nil {
+			return nil, &hnsjson.RPCError{
+				Code: hnsjson.ErrRPCInvalidAddressOrKey,
+				Message: "Invalid address or key: " +
+					err.Error(),
+			}
 		}
 
 		// Convert the HNS amount to integer dollarydoos, then range-check
@@ -1667,9 +1681,10 @@ func (state *gbtWorkState) updateBlockTemplate(s *rpcServer, useCoinbaseValue bo
 			// pay to the randomly selected payment address.
 			// Handshake TxOut uses Address instead of PkScript;
 			// convert the hnsutil.Address into the wire form.
-			wireAddr := wire.Address{
-				Version: payToAddr.Version(),
-				Hash:    payToAddr.Hash(),
+			wireAddr, err := hnsutilAddressToWire(payToAddr)
+			if err != nil {
+				return internalRPCError(err.Error(),
+					"Failed to convert mining address")
 			}
 			template.Block.Transactions[0].TxOut[0].Address = wireAddr
 			template.ValidPayAddress = true

@@ -273,8 +273,8 @@ func TestAddressEncodeDecode(t *testing.T) {
 			hash:    make([]byte, 20),
 		},
 		{
-			name:    "version 31 with 2-byte hash (minimum)",
-			version: 31,
+			name:    "version 16 with 2-byte hash (minimum)",
+			version: 16,
 			hash:    []byte{0xaa, 0xbb},
 		},
 		{
@@ -368,8 +368,8 @@ func TestAddressValidation(t *testing.T) {
 		hash    []byte
 	}{
 		{
-			name:    "version > 31",
-			version: 32,
+			name:    "version > 16",
+			version: 17,
 			hash:    make([]byte, 20),
 		},
 		{
@@ -409,8 +409,8 @@ func TestAddressValidation(t *testing.T) {
 		data []byte
 	}{
 		{
-			name: "version > 31",
-			data: []byte{32, 20}, // version=32, hashLen=20
+			name: "version > 16",
+			data: []byte{17, 20}, // version=17, hashLen=20
 		},
 		{
 			name: "hash too short (1 byte)",
@@ -521,33 +521,19 @@ func TestAddressWitnessProgram(t *testing.T) {
 	}
 }
 
-func TestAddressWitnessProgramCompatibilityBoundary(t *testing.T) {
+func TestAddressRejectsVersionsWithoutSmallIntOpcode(t *testing.T) {
 	hash := []byte{0xaa, 0xbb}
-	addr, err := NewAddress(17, hash)
-	if err != nil {
-		t.Fatalf("NewAddress: unexpected error: %v", err)
+	if _, err := NewAddress(17, hash); err == nil {
+		t.Fatal("NewAddress accepted version 17")
 	}
 
 	var buf bytes.Buffer
-	if err := addr.Encode(&buf); err != nil {
-		t.Fatalf("Encode: unexpected error: %v", err)
+	if err := (&Address{Version: 17, Hash: hash}).Encode(&buf); err == nil {
+		t.Fatal("Encode accepted version 17")
 	}
 
 	var decoded Address
-	if err := decoded.Decode(&buf); err != nil {
-		t.Fatalf("Decode: unexpected error: %v", err)
-	}
-	if decoded.Version != 17 || !bytes.Equal(decoded.Hash, hash) {
-		t.Fatalf("Decode mismatch: got version=%d hash=%x, want version=17 hash=%x",
-			decoded.Version, decoded.Hash, hash)
-	}
-
-	program := decoded.WitnessProgram()
-	if len(program) == 0 {
-		t.Fatal("WitnessProgram returned empty script")
-	}
-	if program[0] <= 0x60 {
-		t.Fatalf("version 17 WitnessProgram first opcode = 0x%02x, want above OP_16",
-			program[0])
+	if err := decoded.Decode(bytes.NewReader([]byte{17, byte(len(hash)), hash[0], hash[1]})); err == nil {
+		t.Fatal("Decode accepted version 17")
 	}
 }
