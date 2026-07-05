@@ -262,8 +262,8 @@ func TestPeerConnection(t *testing.T) {
 		wantLastPingNonce:   uint64(0),
 		wantLastPingMicros:  int64(0),
 		wantTimeOffset:      int64(0),
-		wantBytesSent:       173, // 164 version + 9 verack
-		wantBytesReceived:   173,
+		wantBytesSent:       180, // 171 version + 9 verack
+		wantBytesReceived:   180,
 		wantWitnessEnabled:  false,
 	}
 	wantStats2 := peerStats{
@@ -277,8 +277,8 @@ func TestPeerConnection(t *testing.T) {
 		wantLastPingNonce:   uint64(0),
 		wantLastPingMicros:  int64(0),
 		wantTimeOffset:      int64(0),
-		wantBytesSent:       173, // 164 version + 9 verack
-		wantBytesReceived:   173,
+		wantBytesSent:       180, // 171 version + 9 verack
+		wantBytesReceived:   180,
 		wantWitnessEnabled:  false,
 	}
 

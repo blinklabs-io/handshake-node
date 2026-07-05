@@ -20,6 +20,11 @@ import (
 func TestVersion(t *testing.T) {
 	pver := ProtocolVersion
 
+	if DefaultUserAgent != "/handshake-node:0.5.0/" {
+		t.Fatalf("DefaultUserAgent: got %q, want %q",
+			DefaultUserAgent, "/handshake-node:0.5.0/")
+	}
+
 	// Create version message data.
 	lastBlock := int32(234234)
 	tcpAddrMe := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
