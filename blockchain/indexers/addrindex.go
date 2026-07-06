@@ -10,10 +10,10 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -697,6 +697,17 @@ func (idx *AddrIndex) Create(dbTx database.Tx) error {
 // stored in the order they appear in the block.
 type writeIndexData map[[addrKeySize]byte][]int
 
+// indexAddress maps the passed Handshake wire address to the associated
+// transaction using the passed map.
+func (idx *AddrIndex) indexAddress(data writeIndexData, address wire.Address, txIdx int) {
+	addr, err := hnsutil.NewAddress(address.Version, address.Hash,
+		idx.chainParams)
+	if err != nil {
+		return
+	}
+	indexParsedAddress(data, addr, txIdx)
+}
+
 // indexPkScript extracts all standard addresses from the passed public key
 // script and maps each of them to the associated transaction using the passed
 // map.
@@ -710,24 +721,28 @@ func (idx *AddrIndex) indexPkScript(data writeIndexData, pkScript []byte, txIdx 
 	}
 
 	for _, addr := range addrs {
-		addrKey, err := addrToKey(addr)
-		if err != nil {
-			// Ignore unsupported address types.
-			continue
-		}
-
-		// Avoid inserting the transaction more than once.  Since the
-		// transactions are indexed serially any duplicates will be
-		// indexed in a row, so checking the most recent entry for the
-		// address is enough to detect duplicates.
-		indexedTxns := data[addrKey]
-		numTxns := len(indexedTxns)
-		if numTxns > 0 && indexedTxns[numTxns-1] == txIdx {
-			continue
-		}
-		indexedTxns = append(indexedTxns, txIdx)
-		data[addrKey] = indexedTxns
+		indexParsedAddress(data, addr, txIdx)
 	}
+}
+
+func indexParsedAddress(data writeIndexData, addr hnsutil.Address, txIdx int) {
+	addrKey, err := addrToKey(addr)
+	if err != nil {
+		// Ignore unsupported address types.
+		return
+	}
+
+	// Avoid inserting the transaction more than once.  Since the
+	// transactions are indexed serially any duplicates will be indexed in a
+	// row, so checking the most recent entry for the address is enough to
+	// detect duplicates.
+	indexedTxns := data[addrKey]
+	numTxns := len(indexedTxns)
+	if numTxns > 0 && indexedTxns[numTxns-1] == txIdx {
+		return
+	}
+	indexedTxns = append(indexedTxns, txIdx)
+	data[addrKey] = indexedTxns
 }
 
 // indexBlock extract all of the standard addresses from all of the transactions
@@ -747,8 +762,12 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block *hnsutil.Block,
 				// We'll access the slice of all the
 				// transactions spent in this block properly
 				// ordered to fetch the previous input script.
-				pkScript := stxos[stxoIndex].PkScript
-				idx.indexPkScript(data, pkScript, txIdx)
+				stxo := stxos[stxoIndex]
+				if len(stxo.Address.Hash) > 0 {
+					idx.indexAddress(data, stxo.Address, txIdx)
+				} else {
+					idx.indexPkScript(data, stxo.PkScript, txIdx)
+				}
 
 				// With an input indexed, we'll advance the
 				// stxo counter.
@@ -757,7 +776,7 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block *hnsutil.Block,
 		}
 
 		for _, txOut := range tx.MsgTx().TxOut {
-			idx.indexPkScript(data, txOut.Address.WitnessProgram(), txIdx)
+			idx.indexAddress(data, txOut.Address, txIdx)
 		}
 	}
 }
@@ -878,30 +897,43 @@ func (idx *AddrIndex) indexUnconfirmedAddresses(pkScript []byte, tx *hnsutil.Tx)
 	_, addresses, _, _ := txscript.ExtractPkScriptAddrs(pkScript,
 		idx.chainParams)
 	for _, addr := range addresses {
-		// Ignore unsupported address types.
-		addrKey, err := addrToKey(addr)
-		if err != nil {
-			continue
-		}
-
-		// Add a mapping from the address to the transaction.
-		idx.unconfirmedLock.Lock()
-		addrIndexEntry := idx.txnsByAddr[addrKey]
-		if addrIndexEntry == nil {
-			addrIndexEntry = make(map[chainhash.Hash]*hnsutil.Tx)
-			idx.txnsByAddr[addrKey] = addrIndexEntry
-		}
-		addrIndexEntry[*tx.Hash()] = tx
-
-		// Add a mapping from the transaction to the address.
-		addrsByTxEntry := idx.addrsByTx[*tx.Hash()]
-		if addrsByTxEntry == nil {
-			addrsByTxEntry = make(map[[addrKeySize]byte]struct{})
-			idx.addrsByTx[*tx.Hash()] = addrsByTxEntry
-		}
-		addrsByTxEntry[addrKey] = struct{}{}
-		idx.unconfirmedLock.Unlock()
+		idx.indexUnconfirmedAddress(addr, tx)
 	}
+}
+
+func (idx *AddrIndex) indexUnconfirmedWireAddress(address wire.Address, tx *hnsutil.Tx) {
+	addr, err := hnsutil.NewAddress(address.Version, address.Hash,
+		idx.chainParams)
+	if err != nil {
+		return
+	}
+	idx.indexUnconfirmedAddress(addr, tx)
+}
+
+func (idx *AddrIndex) indexUnconfirmedAddress(addr hnsutil.Address, tx *hnsutil.Tx) {
+	// Ignore unsupported address types.
+	addrKey, err := addrToKey(addr)
+	if err != nil {
+		return
+	}
+
+	// Add a mapping from the address to the transaction.
+	idx.unconfirmedLock.Lock()
+	addrIndexEntry := idx.txnsByAddr[addrKey]
+	if addrIndexEntry == nil {
+		addrIndexEntry = make(map[chainhash.Hash]*hnsutil.Tx)
+		idx.txnsByAddr[addrKey] = addrIndexEntry
+	}
+	addrIndexEntry[*tx.Hash()] = tx
+
+	// Add a mapping from the transaction to the address.
+	addrsByTxEntry := idx.addrsByTx[*tx.Hash()]
+	if addrsByTxEntry == nil {
+		addrsByTxEntry = make(map[[addrKeySize]byte]struct{})
+		idx.addrsByTx[*tx.Hash()] = addrsByTxEntry
+	}
+	addrsByTxEntry[addrKey] = struct{}{}
+	idx.unconfirmedLock.Unlock()
 }
 
 // AddUnconfirmedTx adds all addresses related to the transaction to the
@@ -927,12 +959,17 @@ func (idx *AddrIndex) AddUnconfirmedTx(tx *hnsutil.Tx, utxoView *blockchain.Utxo
 			// call out all inputs must be available.
 			continue
 		}
-		idx.indexUnconfirmedAddresses(entry.PkScript(), tx)
+		address := entry.Address()
+		if len(address.Hash) > 0 {
+			idx.indexUnconfirmedWireAddress(address, tx)
+		} else {
+			idx.indexUnconfirmedAddresses(entry.PkScript(), tx)
+		}
 	}
 
 	// Index addresses of all created outputs.
 	for _, txOut := range tx.MsgTx().TxOut {
-		idx.indexUnconfirmedAddresses(txOut.Address.WitnessProgram(), tx)
+		idx.indexUnconfirmedWireAddress(txOut.Address, tx)
 	}
 }
 

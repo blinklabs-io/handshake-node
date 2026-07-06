@@ -278,6 +278,11 @@ func TestAddressEncodeDecode(t *testing.T) {
 			hash:    []byte{0xaa, 0xbb},
 		},
 		{
+			name:    "version 31 with 2-byte hash (minimum)",
+			version: 31,
+			hash:    []byte{0xaa, 0xbb},
+		},
+		{
 			name:    "version 5 with 40-byte hash (maximum)",
 			version: 5,
 			hash:    make([]byte, 40),
@@ -368,8 +373,8 @@ func TestAddressValidation(t *testing.T) {
 		hash    []byte
 	}{
 		{
-			name:    "version > 16",
-			version: 17,
+			name:    "version > 31",
+			version: 32,
 			hash:    make([]byte, 20),
 		},
 		{
@@ -409,8 +414,8 @@ func TestAddressValidation(t *testing.T) {
 		data []byte
 	}{
 		{
-			name: "version > 16",
-			data: []byte{17, 20}, // version=17, hashLen=20
+			name: "version > 31",
+			data: []byte{32, 20}, // version=32, hashLen=20
 		},
 		{
 			name: "hash too short (1 byte)",
@@ -521,19 +526,34 @@ func TestAddressWitnessProgram(t *testing.T) {
 	}
 }
 
-func TestAddressRejectsVersionsWithoutSmallIntOpcode(t *testing.T) {
+func TestAddressVersionsAboveSmallIntOpcode(t *testing.T) {
 	hash := []byte{0xaa, 0xbb}
-	if _, err := NewAddress(17, hash); err == nil {
-		t.Fatal("NewAddress accepted version 17")
+	addr, err := NewAddress(17, hash)
+	if err != nil {
+		t.Fatalf("NewAddress rejected version 17: %v", err)
 	}
 
 	var buf bytes.Buffer
-	if err := (&Address{Version: 17, Hash: hash}).Encode(&buf); err == nil {
-		t.Fatal("Encode accepted version 17")
+	if err := addr.Encode(&buf); err != nil {
+		t.Fatalf("Encode rejected version 17: %v", err)
 	}
 
 	var decoded Address
-	if err := decoded.Decode(bytes.NewReader([]byte{17, byte(len(hash)), hash[0], hash[1]})); err == nil {
-		t.Fatal("Decode accepted version 17")
+	if err := decoded.Decode(bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Decode rejected version 17: %v", err)
+	}
+	if decoded.Version != 17 || !bytes.Equal(decoded.Hash, hash) {
+		t.Fatalf("Decode = version %d hash %x, want version 17 hash %x",
+			decoded.Version, decoded.Hash, hash)
+	}
+	if got := decoded.WitnessProgram(); got != nil {
+		t.Fatalf("WitnessProgram for version 17 = %x, want nil", got)
+	}
+	if got, want := decoded.OutputKey(), []byte{17, 2, 0xaa, 0xbb}; !bytes.Equal(got, want) {
+		t.Fatalf("OutputKey for version 17 = %x, want %x", got, want)
+	}
+
+	if _, err := NewAddress(32, hash); err == nil {
+		t.Fatal("NewAddress accepted version 32")
 	}
 }

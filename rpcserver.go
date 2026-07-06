@@ -342,6 +342,37 @@ func hnsutilAddressToWire(addr hnsutil.Address) (wire.Address, error) {
 	return *wireAddr, nil
 }
 
+func wireAddressToHnsutilAddress(addr wire.Address,
+	chainParams *chaincfg.Params) (hnsutil.Address, error) {
+
+	if len(addr.Hash) == 0 {
+		return nil, errors.New("empty address")
+	}
+	return hnsutil.NewAddress(addr.Version, addr.Hash, chainParams)
+}
+
+func extractTxOutAddresses(txOut *wire.TxOut,
+	chainParams *chaincfg.Params) (txscript.ScriptClass, []hnsutil.Address, int) {
+
+	scriptClass, addrs, reqSigs, _ := txscript.ExtractPkScriptAddrs(
+		txOut.Address.WitnessProgram(), chainParams)
+	if len(addrs) > 0 {
+		return scriptClass, addrs, reqSigs
+	}
+
+	addr, err := wireAddressToHnsutilAddress(txOut.Address, chainParams)
+	if err != nil {
+		return scriptClass, nil, reqSigs
+	}
+	if scriptClass == txscript.NonStandardTy {
+		scriptClass = txscript.WitnessUnknownTy
+	}
+	if reqSigs == 0 {
+		reqSigs = 1
+	}
+	return scriptClass, []hnsutil.Address{addr}, reqSigs
+}
+
 // rpcNoTxInfoError is a convenience function for returning a nicely formatted
 // RPC error which indicates there is no information available for the provided
 // transaction hash.
@@ -715,11 +746,8 @@ func createVoutList(mtx *wire.MsgTx, chainParams *chaincfg.Params, filterAddrMap
 		// script doesn't fully parse, so ignore the error here.
 		disbuf, _ := txscript.DisasmString(wpScript)
 
-		// Ignore the error here since an error means the script
-		// couldn't parse and there is no additional information about
-		// it anyways.
-		scriptClass, addrs, reqSigs, _ := txscript.ExtractPkScriptAddrs(
-			wpScript, chainParams)
+		scriptClass, addrs, reqSigs := extractTxOutAddresses(v,
+			chainParams)
 
 		// Encode the addresses while checking if the address passes the
 		// filter when needed.
@@ -2788,6 +2816,7 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	var pkScript []byte
 	var isCoinbase bool
 	var address string
+	var txOutForAddress *wire.TxOut
 	includeMempool := true
 	if c.IncludeMempool != nil {
 		includeMempool = *c.IncludeMempool
@@ -2822,6 +2851,7 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		value = txOut.Value
 		pkScript = txOut.Address.WitnessProgram()
 		isCoinbase = blockchain.IsCoinBaseTx(mtx)
+		txOutForAddress = txOut
 	} else {
 		out := wire.OutPoint{Hash: *txHash, Index: c.Vout}
 		entry, err := s.cfg.Chain.FetchUtxoEntry(out)
@@ -2844,6 +2874,7 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		value = entry.Amount()
 		pkScript = entry.PkScript()
 		isCoinbase = entry.IsCoinBase()
+		txOutForAddress = entry.TxOut()
 	}
 
 	// Disassemble script into single line printable format.
@@ -2856,6 +2887,15 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	// and there is no additional information about it anyways.
 	scriptClass, addrs, reqSigs, _ := txscript.ExtractPkScriptAddrs(pkScript,
 		s.cfg.ChainParams)
+	if len(addrs) == 0 && txOutForAddress != nil {
+		fallbackClass, fallbackAddrs, fallbackReqSigs := extractTxOutAddresses(
+			txOutForAddress, s.cfg.ChainParams)
+		if len(fallbackAddrs) > 0 {
+			scriptClass = fallbackClass
+			addrs = fallbackAddrs
+			reqSigs = fallbackReqSigs
+		}
+	}
 	addresses := make([]string, len(addrs))
 	for i, addr := range addrs {
 		addresses[i] = addr.EncodeAddress()
@@ -3112,11 +3152,7 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 			continue
 		}
 
-		// Ignore the error here since an error means the script
-		// couldn't parse and there is no additional information about
-		// it anyways.
-		_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
-			originTxOut.Address.WitnessProgram(), chainParams)
+		_, addrs, _ := extractTxOutAddresses(&originTxOut, chainParams)
 
 		// Encode the addresses while checking if the address passes the
 		// filter when needed.

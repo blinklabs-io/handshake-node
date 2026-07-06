@@ -9,9 +9,9 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsutil/gcs"
 	"github.com/blinklabs-io/handshake-node/hnsutil/gcs/builder"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -277,5 +277,41 @@ func BuilderTest(b *builder.GCSBuilder, hash *chainhash.Hash, p uint8,
 	}
 	if f.N() != originalSize {
 		t.Fatal("Filter size increased with duplicate items")
+	}
+}
+
+func TestBuildBasicFilterIncludesHighVersionAddressKeys(t *testing.T) {
+	addrs := []wire.Address{
+		{Version: 17, Hash: []byte{0x01, 0x01}},
+		{Version: 17, Hash: []byte{0x02, 0x02}},
+	}
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	for _, addr := range addrs {
+		tx.AddTxOut(wire.NewTxOut(0, addr, wire.Covenant{}))
+	}
+
+	block := &wire.MsgBlock{
+		Transactions: []*wire.MsgTx{tx},
+	}
+	filter, err := builder.BuildBasicFilter(block, nil)
+	if err != nil {
+		t.Fatalf("BuildBasicFilter: %v", err)
+	}
+	if got := filter.N(); got != uint32(len(addrs)) {
+		t.Fatalf("filter entries: got %d, want %d", got, len(addrs))
+	}
+
+	blockHash := block.BlockHash()
+	key := builder.DeriveKey(&blockHash)
+	for _, addr := range addrs {
+		match, err := filter.Match(key, addr.OutputKey())
+		if err != nil {
+			t.Fatalf("filter match: %v", err)
+		}
+		if !match {
+			t.Fatalf("filter did not match address key %x",
+				addr.OutputKey())
+		}
 	}
 }
