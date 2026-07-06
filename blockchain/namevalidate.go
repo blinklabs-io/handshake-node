@@ -25,11 +25,12 @@ type namePrevOutput struct {
 }
 
 type nameBlockView struct {
-	chain  *BlockChain
-	states map[chainhash.Hash]*nameState
-	dirty  map[chainhash.Hash]struct{}
-	undo   []nameUndoEntry
-	seen   map[chainhash.Hash]struct{}
+	chain           *BlockChain
+	states          map[chainhash.Hash]*nameState
+	dirty           map[chainhash.Hash]struct{}
+	undo            []nameUndoEntry
+	seen            map[chainhash.Hash]struct{}
+	mainChainHeight func(chainhash.Hash) (int32, error)
 }
 
 func newNameBlockView(dbTx database.Tx, chain *BlockChain) (*nameBlockView, error) {
@@ -89,12 +90,28 @@ func nameStatesEqual(a, b *nameState) bool {
 	return bytes.Equal(encodedA, encodedB)
 }
 
-func checkNameRoot(dbTx database.Tx, block *hnsutil.Block) error {
-	root, err := dbFetchNameRoot(dbTx)
-	if err != nil {
-		return err
+func calcNameRootFromStates(states map[chainhash.Hash]*nameState) (
+	chainhash.Hash, error) {
+
+	leaves := make([]urkelLeaf, 0, len(states))
+	for nameHash, ns := range states {
+		if ns == nil || ns.isNull() {
+			continue
+		}
+		value, err := ns.encode()
+		if err != nil {
+			return chainhash.Hash{}, err
+		}
+		leaves = append(leaves, urkelLeaf{
+			key:   nameHash,
+			value: value,
+		})
 	}
 
+	return calcUrkelRoot(leaves), nil
+}
+
+func checkNameRootAgainst(root chainhash.Hash, block *hnsutil.Block) error {
 	headerRoot := block.MsgBlock().Header.NameRoot
 	if !headerRoot.IsEqual(&root) {
 		str := fmt.Sprintf("block name root is invalid - block "+
@@ -104,6 +121,15 @@ func checkNameRoot(dbTx database.Tx, block *hnsutil.Block) error {
 	}
 
 	return nil
+}
+
+func checkNameRoot(dbTx database.Tx, block *hnsutil.Block) error {
+	root, err := dbFetchNameRoot(dbTx)
+	if err != nil {
+		return err
+	}
+
+	return checkNameRootAgainst(root, block)
 }
 
 func (v *nameBlockView) applyTx(dbTx database.Tx, tx *hnsutil.Tx,
@@ -299,7 +325,7 @@ func (v *nameBlockView) applyClaim(dbTx database.Tx, ns *nameState,
 	flags, _ := covenantU8(covenant, 3)
 	weak := flags&1 != 0
 	blockHash, _ := covenantHash(covenant, 4)
-	claimed, err := v.chain.mainChainHeight(dbTx, blockHash)
+	claimed, err := v.mainChainHeightForHash(dbTx, blockHash)
 	if err != nil {
 		return err
 	}
@@ -346,7 +372,7 @@ func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 		return badCovenant("REGISTER covenant before close")
 	}
 	hash, _ := covenantHash(covenant, 3)
-	ok, err := v.chain.verifyNameRenewalHash(dbTx, hash, height)
+	ok, err := v.verifyNameRenewalHash(dbTx, hash, height)
 	if err != nil {
 		return err
 	}
@@ -417,7 +443,7 @@ func (v *nameBlockView) applyRenew(dbTx database.Tx, ns *nameState,
 	}
 
 	hash, _ := covenantHash(covenant, 2)
-	ok, err := v.chain.verifyNameRenewalHash(dbTx, hash, height)
+	ok, err := v.verifyNameRenewalHash(dbTx, hash, height)
 	if err != nil {
 		return err
 	}
@@ -459,7 +485,7 @@ func (v *nameBlockView) applyFinalize(dbTx database.Tx, ns *nameState,
 	}
 
 	hash, _ := covenantHash(covenant, 6)
-	ok, err := v.chain.verifyNameRenewalHash(dbTx, hash, height)
+	ok, err := v.verifyNameRenewalHash(dbTx, hash, height)
 	if err != nil {
 		return err
 	}
@@ -730,6 +756,92 @@ func (b *BlockChain) checkNameBlockForBestChain(block *hnsutil.Block) (
 	return view, nil
 }
 
+// nameReorgView mirrors the name state, committed root, and active chain used
+// while verifyReorganizationValidity replays detach and attach blocks.
+type nameReorgView struct {
+	view      *nameBlockView
+	root      chainhash.Hash
+	mainChain *chainView
+}
+
+func newNameReorgView(dbTx database.Tx, chain *BlockChain) (*nameReorgView, error) {
+	root, err := dbFetchNameRoot(dbTx)
+	if err != nil {
+		return nil, err
+	}
+
+	view, err := newNameBlockView(dbTx, chain)
+	if err != nil {
+		return nil, err
+	}
+
+	reorgView := &nameReorgView{
+		view:      view,
+		root:      root,
+		mainChain: newChainView(chain.bestChain.Tip()),
+	}
+	view.mainChainHeight = reorgView.mainChainHeightForHash
+	return reorgView, nil
+}
+
+func (v *nameReorgView) mainChainHeightForHash(hash chainhash.Hash) (
+	int32, error) {
+
+	node := v.view.chain.index.LookupNode(&hash)
+	if node == nil || !v.mainChain.Contains(node) {
+		return -1, nil
+	}
+	return node.height, nil
+}
+
+func (v *nameReorgView) disconnectBlock(node *blockNode,
+	block *hnsutil.Block, undo []nameUndoEntry) error {
+
+	for _, entry := range undo {
+		if entry.existed {
+			v.view.states[entry.nameHash] = entry.state.clone()
+			continue
+		}
+		delete(v.view.states, entry.nameHash)
+	}
+
+	if v.view.chain.chainParams.NameTreeInterval != 0 &&
+		uint32(node.height)%v.view.chain.chainParams.NameTreeInterval == 0 {
+
+		v.root = block.MsgBlock().Header.NameRoot
+	}
+
+	v.mainChain.SetTip(node.parent)
+	return nil
+}
+
+func (v *nameReorgView) checkConnectBlock(block *hnsutil.Block) (
+	*nameBlockView, error) {
+
+	if err := checkNameRootAgainst(v.root, block); err != nil {
+		return nil, err
+	}
+	return v.view, nil
+}
+
+func (v *nameReorgView) connectBlock(node *blockNode) error {
+	if v.view.chain.chainParams.NameTreeInterval != 0 &&
+		uint32(node.height)%v.view.chain.chainParams.NameTreeInterval == 0 {
+
+		root, err := calcNameRootFromStates(v.view.states)
+		if err != nil {
+			return err
+		}
+		v.root = root
+	}
+
+	v.view.undo = nil
+	v.view.dirty = make(map[chainhash.Hash]struct{})
+	v.view.seen = make(map[chainhash.Hash]struct{})
+	v.mainChain.SetTip(node)
+	return nil
+}
+
 func (b *BlockChain) connectNames(dbTx database.Tx, node *blockNode,
 	block *hnsutil.Block, stxos []SpentTxOut) error {
 
@@ -830,14 +942,23 @@ func (b *BlockChain) disconnectNames(dbTx database.Tx, node *blockNode,
 	return nil
 }
 
-func (b *BlockChain) verifyNameRenewalHash(dbTx database.Tx,
+func (v *nameBlockView) mainChainHeightForHash(dbTx database.Tx,
+	hash chainhash.Hash) (int32, error) {
+
+	if v.mainChainHeight != nil {
+		return v.mainChainHeight(hash)
+	}
+	return v.chain.mainChainHeight(dbTx, hash)
+}
+
+func (v *nameBlockView) verifyNameRenewalHash(dbTx database.Tx,
 	hash chainhash.Hash, height uint32) (bool, error) {
 
-	if height < b.chainParams.NameRenewalMaturity {
+	if height < v.chain.chainParams.NameRenewalMaturity {
 		return true, nil
 	}
 
-	blockHeight, err := b.mainChainHeight(dbTx, hash)
+	blockHeight, err := v.mainChainHeightForHash(dbTx, hash)
 	if err != nil {
 		return false, err
 	}
@@ -845,12 +966,12 @@ func (b *BlockChain) verifyNameRenewalHash(dbTx database.Tx,
 		return false, nil
 	}
 
-	maxHeight := int64(height) - int64(b.chainParams.NameRenewalMaturity)
+	maxHeight := int64(height) - int64(v.chain.chainParams.NameRenewalMaturity)
 	if int64(blockHeight) > maxHeight {
 		return false, nil
 	}
 
-	minHeight := int64(height) - int64(b.chainParams.NameRenewalPeriod)
+	minHeight := int64(height) - int64(v.chain.chainParams.NameRenewalPeriod)
 	if minHeight < 0 {
 		minHeight = 0
 	}
