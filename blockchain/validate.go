@@ -1107,6 +1107,16 @@ func CheckTransactionInputs(tx *hnsutil.Tx, txHeight int32, utxoView *UtxoViewpo
 //
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, view *UtxoViewpoint, stxos *[]SpentTxOut) error {
+	return b.checkConnectBlockWithNameView(node, block, view, stxos, nil, false)
+}
+
+// checkConnectBlockWithNameView is the implementation for checkConnectBlock
+// with the name state supplied by the caller.  Reorg preflight uses this to
+// validate against a simulated attach-chain name state.
+func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
+	block *hnsutil.Block, view *UtxoViewpoint, stxos *[]SpentTxOut,
+	nameView *nameBlockView, nameViewReady bool) error {
+
 	// If the side chain blocks end up in the database, a call to
 	// CheckBlockSanity should be done here in case a previous version
 	// allowed a block that is no longer valid.  However, since the
@@ -1161,9 +1171,11 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 		return err
 	}
 
-	nameView, err := b.checkNameBlockForBestChain(block)
-	if err != nil {
-		return err
+	if !nameViewReady {
+		nameView, err = b.checkNameBlockForBestChain(block)
+		if err != nil {
+			return err
+		}
 	}
 
 	enforceBIP0016 := true

@@ -1033,6 +1033,18 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 	detachSpentTxOuts := make([][]SpentTxOut, 0, detachNodes.Len())
 	attachBlocks := make([]*hnsutil.Block, 0, attachNodes.Len())
 
+	var nameReorg *nameReorgView
+	if attachNodes.Len() != 0 {
+		err := b.db.View(func(dbTx database.Tx) error {
+			var err error
+			nameReorg, err = newNameReorgView(dbTx, b)
+			return err
+		})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
 	// Disconnect all of the blocks back to the point of the fork.  This
 	// entails loading the blocks and their associated spent txos from the
 	// database and using that information to unspend all of the spent txos
@@ -1067,8 +1079,17 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 		// Load all of the spent txos for the block from the spend
 		// journal.
 		var stxos []SpentTxOut
+		var nameUndo []nameUndoEntry
 		err = b.db.View(func(dbTx database.Tx) error {
+			var err error
 			stxos, err = dbFetchSpendJournalEntry(dbTx, block)
+			if err != nil {
+				return err
+			}
+			if nameReorg == nil {
+				return nil
+			}
+			nameUndo, err = dbFetchNameUndo(dbTx, block.Hash())
 			return err
 		})
 		if err != nil {
@@ -1082,6 +1103,12 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 		err = view.disconnectTransactions(b.db, block, stxos)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		if nameReorg != nil {
+			err = nameReorg.disconnectBlock(n, block, nameUndo)
+			if err != nil {
+				return nil, nil, nil, err
+			}
 		}
 	}
 
@@ -1121,9 +1148,33 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			err = view.connectTransactions(block, nil)
-			if err != nil {
-				return nil, nil, nil, err
+			if nameReorg != nil {
+				nameView, err := nameReorg.checkConnectBlock(block)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				for _, tx := range block.Transactions() {
+					prevOutputs, err := prevOutputsFromView(tx, view)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+					if err := nameView.applyTx(nil, tx, uint32(n.height),
+						n.parent.timestamp, prevOutputs); err != nil {
+						return nil, nil, nil, err
+					}
+					if err := view.connectTransaction(tx, n.height, nil); err != nil {
+						return nil, nil, nil, err
+					}
+				}
+				view.SetBestHash(&n.hash)
+				if err := nameReorg.connectBlock(n); err != nil {
+					return nil, nil, nil, err
+				}
+			} else {
+				err = view.connectTransactions(block, nil)
+				if err != nil {
+					return nil, nil, nil, err
+				}
 			}
 
 			continue
@@ -1137,7 +1188,7 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 		// In the case the block is determined to be invalid due to a
 		// rule violation, mark it as invalid and mark all of its
 		// descendants as having an invalid ancestor.
-		err = b.checkConnectBlock(n, block, view, nil)
+		nameView, err := nameReorg.checkConnectBlock(block)
 		if err != nil {
 			if _, ok := err.(RuleError); ok {
 				b.index.SetStatusFlags(n, statusValidateFailed)
@@ -1146,6 +1197,20 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 					b.index.SetStatusFlags(dn, statusInvalidAncestor)
 				}
 			}
+			return nil, nil, nil, err
+		}
+		err = b.checkConnectBlockWithNameView(n, block, view, nil, nameView, true)
+		if err != nil {
+			if _, ok := err.(RuleError); ok {
+				b.index.SetStatusFlags(n, statusValidateFailed)
+				for de := e.Next(); de != nil; de = de.Next() {
+					dn := de.Value.(*blockNode)
+					b.index.SetStatusFlags(dn, statusInvalidAncestor)
+				}
+			}
+			return nil, nil, nil, err
+		}
+		if err := nameReorg.connectBlock(n); err != nil {
 			return nil, nil, nil, err
 		}
 		b.index.SetStatusFlags(n, statusValid)

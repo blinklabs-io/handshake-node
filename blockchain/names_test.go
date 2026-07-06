@@ -12,6 +12,7 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -418,6 +419,57 @@ func TestNameBlockViewRegisterClearsData(t *testing.T) {
 	}
 	if len(ns.data) != 0 {
 		t.Fatalf("REGISTER preserved data %x, want empty", ns.data)
+	}
+}
+
+func TestNameRootReorgPreflightRejectsMismatchedRoot(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	chain, teardown, err := chainSetup("namerootreorgpreflight", &params)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	tip := chain.bestChain.Tip()
+	block := hnsutil.NewBlock(&wire.MsgBlock{
+		Header: wire.BlockHeader{
+			PrevBlock: tip.hash,
+			NameRoot:  chainhash.Hash{0x01},
+		},
+	})
+
+	err = chain.db.View(func(dbTx database.Tx) error {
+		nameReorg, err := newNameReorgView(dbTx, chain)
+		if err != nil {
+			return err
+		}
+		_, err = nameReorg.checkConnectBlock(block)
+		return err
+	})
+	if err == nil {
+		t.Fatal("checkConnectBlock: expected ErrBadNameRoot")
+	}
+	if ruleErr, ok := err.(RuleError); !ok ||
+		ruleErr.ErrorCode != ErrBadNameRoot {
+
+		t.Fatalf("checkConnectBlock error = %T %v, want ErrBadNameRoot",
+			err, err)
+	}
+	if chain.bestChain.Tip() != tip {
+		t.Fatal("preflight mutated the best chain tip")
+	}
+
+	var root chainhash.Hash
+	err = chain.db.View(func(dbTx database.Tx) error {
+		var err error
+		root, err = dbFetchNameRoot(dbTx)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("dbFetchNameRoot: %v", err)
+	}
+	if root != (chainhash.Hash{}) {
+		t.Fatalf("preflight mutated name root to %v", root)
 	}
 }
 
