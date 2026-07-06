@@ -63,11 +63,135 @@ type nameState struct {
 	weak       bool
 }
 
+// NameState is an immutable snapshot of the persisted state for a Handshake
+// name.
+type NameState struct {
+	nameHash   chainhash.Hash
+	name       []byte
+	height     uint32
+	renewal    uint32
+	owner      wire.OutPoint
+	value      int64
+	highest    int64
+	data       []byte
+	transfer   uint32
+	revoked    uint32
+	claimed    uint32
+	renewals   uint32
+	registered bool
+	expired    bool
+	weak       bool
+}
+
 func newNameState(nameHash chainhash.Hash) *nameState {
 	return &nameState{
 		nameHash: nameHash,
 		owner:    nullNameOwner(),
 	}
+}
+
+func newNameStateView(ns *nameState) *NameState {
+	if ns == nil {
+		return nil
+	}
+
+	return &NameState{
+		nameHash:   ns.nameHash,
+		name:       append([]byte(nil), ns.name...),
+		height:     ns.height,
+		renewal:    ns.renewal,
+		owner:      ns.owner,
+		value:      ns.value,
+		highest:    ns.highest,
+		data:       append([]byte(nil), ns.data...),
+		transfer:   ns.transfer,
+		revoked:    ns.revoked,
+		claimed:    ns.claimed,
+		renewals:   ns.renewals,
+		registered: ns.registered,
+		expired:    ns.expired,
+		weak:       ns.weak,
+	}
+}
+
+// NameHash returns the consensus name hash.
+func (ns *NameState) NameHash() chainhash.Hash {
+	return ns.nameHash
+}
+
+// NameBytes returns a copy of the raw name bytes.
+func (ns *NameState) NameBytes() []byte {
+	return append([]byte(nil), ns.name...)
+}
+
+// Name returns the raw name as a string.
+func (ns *NameState) Name() string {
+	return string(ns.name)
+}
+
+// Height returns the height at which the current name lifecycle began.
+func (ns *NameState) Height() uint32 {
+	return ns.height
+}
+
+// Renewal returns the height of the most recent renewal.
+func (ns *NameState) Renewal() uint32 {
+	return ns.renewal
+}
+
+// Owner returns the current name owner outpoint.
+func (ns *NameState) Owner() wire.OutPoint {
+	return ns.owner
+}
+
+// Value returns the current name value.
+func (ns *NameState) Value() int64 {
+	return ns.value
+}
+
+// Highest returns the highest bid value tracked for the name.
+func (ns *NameState) Highest() int64 {
+	return ns.highest
+}
+
+// Data returns a copy of the current resource data.
+func (ns *NameState) Data() []byte {
+	return append([]byte(nil), ns.data...)
+}
+
+// Transfer returns the transfer height, or zero when no transfer is pending.
+func (ns *NameState) Transfer() uint32 {
+	return ns.transfer
+}
+
+// Revoked returns the revoke height, or zero when the name is not revoked.
+func (ns *NameState) Revoked() uint32 {
+	return ns.revoked
+}
+
+// Claimed returns the claim height, or zero when the name was not claimed.
+func (ns *NameState) Claimed() uint32 {
+	return ns.claimed
+}
+
+// Renewals returns the number of renewals tracked for the name.
+func (ns *NameState) Renewals() uint32 {
+	return ns.renewals
+}
+
+// Registered returns whether the name has been registered.
+func (ns *NameState) Registered() bool {
+	return ns.registered
+}
+
+// Expired returns whether the name is marked expired.
+func (ns *NameState) Expired() bool {
+	return ns.expired
+}
+
+// Weak returns whether the name was claimed with the weak flag.
+func (ns *NameState) Weak() bool {
+	return ns.weak
 }
 
 func nullNameOwner() wire.OutPoint {
@@ -495,6 +619,11 @@ func covenantU8(covenant wire.Covenant, index int) (uint8, bool) {
 		return 0, false
 	}
 	return item[0], true
+}
+
+// HashName returns the Handshake consensus hash for the provided raw name.
+func HashName(name []byte) chainhash.Hash {
+	return hashName(name)
 }
 
 func hashName(name []byte) chainhash.Hash {

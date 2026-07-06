@@ -88,6 +88,26 @@ func dbFetchAllNameStates(dbTx database.Tx) (map[chainhash.Hash]*nameState, erro
 	return states, nil
 }
 
+func dbFetchNameState(dbTx database.Tx, nameHash chainhash.Hash) (
+	*nameState, bool, error) {
+
+	bucket := dbTx.Metadata().Bucket(nameStateBucketName)
+	if bucket == nil {
+		return nil, false, nil
+	}
+
+	serialized := bucket.Get(nameHash[:])
+	if serialized == nil {
+		return nil, false, nil
+	}
+
+	ns, err := decodeNameState(nameHash, serialized)
+	if err != nil {
+		return nil, false, err
+	}
+	return ns, true, nil
+}
+
 func dbPutNameState(dbTx database.Tx, ns *nameState) error {
 	bucket := dbTx.Metadata().Bucket(nameStateBucketName)
 	if bucket == nil {
@@ -412,6 +432,42 @@ func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
 
 	proof := proveUrkel(tree, key)
 	return proof.Encode()
+}
+
+// FetchNameState returns a read-only snapshot of the current state for the
+// provided raw name.  Invalid names are rejected before lookup.  Missing names
+// return found=false and a nil error.
+func (b *BlockChain) FetchNameState(name []byte) (*NameState, bool, error) {
+	if !verifyName(name) {
+		return nil, false, fmt.Errorf("invalid Handshake name %q", name)
+	}
+
+	return b.FetchNameStateByHash(hashName(name))
+}
+
+// FetchNameStateByHash returns a read-only snapshot of the current state for
+// the provided name hash.  Missing names return found=false and a nil error.
+func (b *BlockChain) FetchNameStateByHash(nameHash chainhash.Hash) (
+	*NameState, bool, error) {
+
+	var state *NameState
+	var found bool
+	err := b.db.View(func(dbTx database.Tx) error {
+		ns, ok, err := dbFetchNameState(dbTx, nameHash)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		state = newNameStateView(ns)
+		found = true
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return state, found, nil
 }
 
 // FetchNameProof returns an hsd-compatible Urkel proof for the provided name
