@@ -34,7 +34,7 @@ func New(inputs []*wire.OutPoint,
 		return nil, ErrInvalidPsbtFormat
 	}
 
-	unsignedTx := wire.NewMsgTx(version)
+	unsignedTx := wire.NewMsgTx(uint32(version))
 	unsignedTx.LockTime = nLockTime
 	for i, in := range inputs {
 		unsignedTx.AddTxIn(&wire.TxIn{

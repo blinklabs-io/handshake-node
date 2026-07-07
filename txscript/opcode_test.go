@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 // TestOpcodeDisabled tests the opcodeDisabled function manually because all
@@ -30,6 +32,133 @@ func TestOpcodeDisabled(t *testing.T) {
 				"want %v", err, ErrDisabledOpcode)
 			continue
 		}
+	}
+}
+
+func TestVerifyLockTimeHandshakeSemantics(t *testing.T) {
+	tests := []struct {
+		name       string
+		txLockTime int64
+		lockTime   int64
+		wantErr    bool
+	}{
+		{
+			name:       "height satisfied",
+			txLockTime: 100,
+			lockTime:   99,
+		},
+		{
+			name:       "height equal",
+			txLockTime: 100,
+			lockTime:   100,
+		},
+		{
+			name:       "height unsatisfied",
+			txLockTime: 99,
+			lockTime:   100,
+			wantErr:    true,
+		},
+		{
+			name:       "time satisfied",
+			txLockTime: LockTimeFlag | 100,
+			lockTime:   LockTimeFlag | 99,
+		},
+		{
+			name:       "time equal",
+			txLockTime: LockTimeFlag | 100,
+			lockTime:   LockTimeFlag | 100,
+		},
+		{
+			name:       "time unsatisfied",
+			txLockTime: LockTimeFlag | 99,
+			lockTime:   LockTimeFlag | 100,
+			wantErr:    true,
+		},
+		{
+			name:       "mismatched type",
+			txLockTime: LockTimeFlag | 100,
+			lockTime:   100,
+			wantErr:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := verifyLockTime(test.txLockTime, LockTimeFlag,
+				LockTimeMask, test.lockTime)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("verifyLockTime error = %v, wantErr %v",
+					err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestOpcodeTypeHandshakeSemantics(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		txIdx    int
+		txOut    []*wire.TxOut
+		expected uint8
+	}{
+		{
+			name:  "same index covenant type",
+			txIdx: 0,
+			txOut: []*wire.TxOut{{
+				Value: 1,
+				Covenant: wire.Covenant{
+					Type: wire.CovenantTransfer,
+				},
+			}},
+			expected: wire.CovenantTransfer,
+		},
+		{
+			name:  "missing same index output is none",
+			txIdx: 1,
+			txOut: []*wire.TxOut{{
+				Value: 1,
+				Covenant: wire.Covenant{
+					Type: wire.CovenantFinalize,
+				},
+			}},
+			expected: wire.CovenantNone,
+		},
+		{
+			name:     "nil same index output is none",
+			txIdx:    0,
+			txOut:    []*wire.TxOut{nil},
+			expected: wire.CovenantNone,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tx := &wire.MsgTx{
+				Version: 1,
+				TxIn: []*wire.TxIn{
+					{Sequence: wire.MaxTxInSequenceNum},
+					{Sequence: wire.MaxTxInSequenceNum},
+				},
+				TxOut: test.txOut,
+			}
+			pkScript := mustParseShortForm(fmt.Sprintf(
+				"OP_TYPE %d OP_EQUAL", test.expected,
+			))
+
+			vm, err := NewEngine(pkScript, tx, test.txIdx, 0, nil,
+				nil, 0, nil)
+			if err != nil {
+				t.Fatalf("NewEngine: %v", err)
+			}
+
+			if err := vm.Execute(); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+		})
 	}
 }
 
@@ -75,6 +204,9 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xa9: "OP_HASH160", 0xaa: "OP_HASH256", 0xab: "OP_CODESEPARATOR",
 		0xac: "OP_CHECKSIG", 0xad: "OP_CHECKSIGVERIFY",
 		0xae: "OP_CHECKMULTISIG", 0xaf: "OP_CHECKMULTISIGVERIFY",
+		0xc0: "OP_BLAKE160", 0xc1: "OP_BLAKE256",
+		0xc2: "OP_SHA3", 0xc3: "OP_KECCAK",
+		0xd0: "OP_TYPE",
 		0xfa: "OP_SMALLINTEGER", 0xfb: "OP_PUBKEYS",
 		0xfd: "OP_PUBKEYHASH", 0xfe: "OP_PUBKEY",
 		0xff: "OP_INVALIDOPCODE", 0xba: "OP_CHECKSIGADD",
@@ -123,7 +255,8 @@ func TestOpcodeDisasm(t *testing.T) {
 			}
 
 		// OP_UNKNOWN#.
-		case opcodeVal >= 0xbb && opcodeVal <= 0xf9 || opcodeVal == 0xfc:
+		case (opcodeVal >= 0xbb && opcodeVal <= 0xf9 ||
+			opcodeVal == 0xfc) && expectedStr == "":
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}
 
@@ -190,7 +323,8 @@ func TestOpcodeDisasm(t *testing.T) {
 			}
 
 		// OP_UNKNOWN#.
-		case opcodeVal >= 0xba && opcodeVal <= 0xf9 || opcodeVal == 0xfc:
+		case (opcodeVal >= 0xba && opcodeVal <= 0xf9 ||
+			opcodeVal == 0xfc) && expectedStr == "":
 			switch opcodeVal {
 			// OP_UNKNOWN186 a.k.a 0xba is now OP_CHECKSIGADD.
 			case 0xba:

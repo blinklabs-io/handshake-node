@@ -93,9 +93,22 @@ func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
 
 	msgTx := tx.MsgTx()
 	var conjured uint64
+	seenProofs := make(map[chainhash.Hash]struct{})
+	if len(msgTx.TxIn) > 1 {
+		seenProofs = make(map[chainhash.Hash]struct{},
+			len(msgTx.TxIn)-1)
+	}
 	for i := 1; i < len(msgTx.TxIn); i++ {
 		if i >= len(msgTx.TxOut) {
 			return 0, badCovenant("coinbase proof input is unlinked")
+		}
+
+		if len(msgTx.TxIn[i].Witness) == 1 {
+			proofHash := chainhash.HashH(msgTx.TxIn[i].Witness[0])
+			if _, exists := seenProofs[proofHash]; exists {
+				return 0, badCovenant("duplicate coinbase proof")
+			}
+			seenProofs[proofHash] = struct{}{}
 		}
 
 		if msgTx.TxOut[i].Covenant.Type != wire.CovenantClaim {

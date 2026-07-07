@@ -156,7 +156,6 @@ func TestBIP0032Vectors(t *testing.T) {
 			wantPriv: "xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L",
 			net:      &chaincfg.MainNetParams,
 		},
-
 	}
 
 tests:
@@ -623,7 +622,7 @@ func TestExtendedKeyAPI(t *testing.T) {
 		}
 
 		// Verify concrete derivation: the address must be version 0,
-		// live on mainnet, and wrap Hash160 of the compressed pubkey.
+		// live on mainnet, and wrap BLAKE2b-160 of the compressed pubkey.
 		addr, err := key.Address(&chaincfg.MainNetParams)
 		if err != nil {
 			t.Errorf("Address #%d (%s): unexpected error: %v", i,
@@ -640,7 +639,7 @@ func TestExtendedKeyAPI(t *testing.T) {
 				i, test.name, addr.HRP())
 			continue
 		}
-		wantHash := hnsutil.Hash160(pubKey.SerializeCompressed())
+		wantHash := hnsutil.Blake160(pubKey.SerializeCompressed())
 		if !bytes.Equal(addr.Hash(), wantHash) {
 			t.Errorf("Address #%d (%s): hash mismatch -- got %x, "+
 				"want %x", i, test.name, addr.Hash(), wantHash)

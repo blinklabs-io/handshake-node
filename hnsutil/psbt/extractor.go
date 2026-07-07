@@ -39,7 +39,7 @@ func Extract(p *Packet) (*wire.MsgTx, error) {
 		// final sigScript (if present).
 		pInput := p.Inputs[i]
 		if pInput.FinalScriptSig != nil {
-			tin.SignatureScript = pInput.FinalScriptSig
+			return nil, ErrUnsupportedScriptType
 		}
 
 		// Similarly, if there's a final witness, then we'll also need

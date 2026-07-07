@@ -2,6 +2,7 @@ package txscript
 
 import (
 	"bytes"
+	"encoding/hex"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -27,8 +28,8 @@ func TestParsePkScript(t *testing.T) {
 			pkScript: []byte{
 				// OP_DUP
 				0x76,
-				// OP_HASH160
-				0xa9,
+				// OP_BLAKE160
+				0xc0,
 				// OP_DATA_20
 				0x14,
 				// <20-byte pubkey hash>
@@ -49,8 +50,8 @@ func TestParsePkScript(t *testing.T) {
 			pkScript: []byte{
 				// OP_DUP
 				0x76,
-				// OP_HASH160
-				0xa9,
+				// OP_BLAKE160
+				0xc0,
 				// OP_DATA_20
 				0x14,
 				// <20-byte pubkey hash>
@@ -200,6 +201,38 @@ func TestParsePkScript(t *testing.T) {
 	}
 }
 
+func TestBlake160MainnetPubKeyProgramVector(t *testing.T) {
+	t.Parallel()
+
+	pubKey, err := hex.DecodeString(
+		"028eec61c7f625ee4bd415305cfc25396b1b083e70836386d0c0f2d50f33439b7c",
+	)
+	if err != nil {
+		t.Fatalf("DecodeString pubkey: %v", err)
+	}
+	wantHash, err := hex.DecodeString(
+		"ff1538413692fc752d0a5c26373f1c8141a764fe",
+	)
+	if err != nil {
+		t.Fatalf("DecodeString hash: %v", err)
+	}
+
+	gotHash := blake160(pubKey)
+	if !bytes.Equal(gotHash, wantHash) {
+		t.Fatalf("blake160 mismatch: got %x, want %x", gotHash, wantHash)
+	}
+
+	pkScript, err := ComputePkScript(nil, wire.TxWitness{nil, pubKey})
+	if err != nil {
+		t.Fatalf("ComputePkScript: %v", err)
+	}
+	wantScript := append([]byte{OP_0, OP_DATA_20}, wantHash...)
+	if !bytes.Equal(pkScript.Script(), wantScript) {
+		t.Fatalf("witness program mismatch: got %x, want %x",
+			pkScript.Script(), wantScript)
+	}
+}
+
 // TestComputePkScript ensures that we can correctly re-derive an output's
 // pkScript by looking at the input's signature script/witness attempting to
 // spend it.
@@ -250,14 +283,14 @@ func TestComputePkScript(t *testing.T) {
 			pkScript: []byte{
 				// OP_DUP
 				0x76,
-				// OP_HASH160
-				0xa9,
+				// OP_BLAKE160
+				0xc0,
 				// OP_DATA_20
 				0x14,
 				// <20-byte pubkey hash>
-				0xf0, 0x7a, 0xb8, 0xce, 0x72, 0xda, 0x4e, 0x76,
-				0x0b, 0x74, 0x7d, 0x48, 0xd6, 0x65, 0xec, 0x96,
-				0xad, 0xf0, 0x24, 0xf5,
+				0xe9, 0x90, 0xa8, 0x38, 0x2b, 0xa1, 0x94, 0xb4,
+				0x3f, 0x6d, 0x34, 0x3c, 0xc8, 0xcc, 0x66, 0xcf,
+				0x00, 0xf2, 0x49, 0xf1,
 				// OP_EQUALVERIFY
 				0x88,
 				// OP_CHECKSIG
@@ -370,10 +403,10 @@ func TestComputePkScript(t *testing.T) {
 				// OP_DATA_32
 				0x20,
 				// <32-byte script hash>
-				0x01, 0xd5, 0xd9, 0x2e, 0xff, 0xa6, 0xff, 0xba,
-				0x3e, 0xfa, 0x37, 0x9f, 0x98, 0x30, 0xd0, 0xf7,
-				0x56, 0x18, 0xb1, 0x33, 0x93, 0x82, 0x71, 0x52,
-				0xd2, 0x6e, 0x43, 0x09, 0x00, 0x0e, 0x88, 0xb1,
+				0x3d, 0x08, 0xca, 0xbc, 0xf6, 0x64, 0x75, 0xb5,
+				0xa6, 0x32, 0x1a, 0x27, 0xcc, 0xc3, 0x6c, 0xfc,
+				0x46, 0xe3, 0x54, 0x68, 0xa8, 0x44, 0xd8, 0xab,
+				0x05, 0xdb, 0x4a, 0x31, 0xa6, 0x54, 0x44, 0xad,
 			},
 		},
 		{
@@ -400,9 +433,9 @@ func TestComputePkScript(t *testing.T) {
 				// OP_DATA_20
 				0x14,
 				// <20-byte pubkey hash>
-				0x1d, 0x7c, 0xd6, 0xc7, 0x5c, 0x2e, 0x86, 0xf4,
-				0xcb, 0xf9, 0x8e, 0xae, 0xd2, 0x21, 0xb3, 0x0b,
-				0xd9, 0xa0, 0xb9, 0x28,
+				0x91, 0x0b, 0xa9, 0x18, 0x1b, 0x65, 0xb3, 0xa7,
+				0x55, 0xae, 0x12, 0xcd, 0x6e, 0x87, 0x73, 0xe8,
+				0x87, 0xc8, 0x41, 0xc0,
 			},
 		},
 		// Invalid v0 P2WPKH - same as above but missing a byte on the

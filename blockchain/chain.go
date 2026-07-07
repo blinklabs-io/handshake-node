@@ -102,6 +102,7 @@ type BlockChain struct {
 	sigCache            *txscript.SigCache
 	indexManager        IndexManager
 	hashCache           *txscript.HashCache
+	assumeValid         *chainhash.Hash
 
 	// The following fields are calculated based upon the provided chain
 	// parameters.  They are also set when the instance is created and
@@ -139,6 +140,12 @@ type BlockChain struct {
 	// It is protected by the chain lock.
 	utxoCache *utxoCache
 
+	// nameRootCache tracks encoded name states while connecting or
+	// disconnecting blocks on the active chain so periodic name root
+	// commits do not need to rescan and re-encode the entire DB bucket.
+	// It is protected by the chain lock.
+	nameRootCache *nameRootCache
+
 	// These fields are related to handling of orphan blocks.  They are
 	// protected by a combination of the chain lock and the orphan lock.
 	orphanLock   sync.RWMutex
@@ -148,8 +155,9 @@ type BlockChain struct {
 
 	// These fields are related to checkpoint handling.  They are protected
 	// by the chain lock.
-	nextCheckpoint *chaincfg.Checkpoint
-	checkpointNode *blockNode
+	nextCheckpoint  *chaincfg.Checkpoint
+	checkpointNode  *blockNode
+	assumeValidNode *blockNode
 
 	// The state is used as a fairly efficient way to cache information
 	// about the current best chain state that is returned to callers when
@@ -656,8 +664,13 @@ func (b *BlockChain) connectBlock(node *blockNode, block *hnsutil.Block,
 			}
 		}
 
+		err := spendCoinbaseAirdrops(dbTx, block)
+		if err != nil {
+			return err
+		}
+
 		// Update best block state.
-		err := dbPutBestState(dbTx, state, node.workSum)
+		err = dbPutBestState(dbTx, state, node.workSum)
 		if err != nil {
 			return err
 		}
@@ -694,6 +707,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *hnsutil.Block,
 		return nil
 	})
 	if err != nil {
+		b.nameRootCache = nil
 		return err
 	}
 
@@ -745,6 +759,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *hnsutil.Block, view
 		return err
 	})
 	if err != nil {
+		b.nameRootCache = nil
 		return err
 	}
 
@@ -797,6 +812,11 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *hnsutil.Block, view
 			return err
 		}
 
+		err = unspendCoinbaseAirdrops(dbTx, block)
+		if err != nil {
+			return err
+		}
+
 		err = b.disconnectNames(dbTx, node, block)
 		if err != nil {
 			return err
@@ -829,6 +849,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *hnsutil.Block, view
 		return nil
 	})
 	if err != nil {
+		b.nameRootCache = nil
 		return err
 	}
 
@@ -1034,10 +1055,15 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 	attachBlocks := make([]*hnsutil.Block, 0, attachNodes.Len())
 
 	var nameReorg *nameReorgView
+	var airdropReorg *airdropSpentField
 	if attachNodes.Len() != 0 {
 		err := b.db.View(func(dbTx database.Tx) error {
 			var err error
 			nameReorg, err = newNameReorgView(dbTx, b)
+			if err != nil {
+				return err
+			}
+			airdropReorg, err = dbFetchAirdropSpentField(dbTx)
 			return err
 		})
 		if err != nil {
@@ -1110,6 +1136,12 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 				return nil, nil, nil, err
 			}
 		}
+		if airdropReorg != nil {
+			err = airdropReorg.unspendBlock(block)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
 	}
 
 	// Perform several checks to verify each block that needs to be attached
@@ -1176,6 +1208,12 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 					return nil, nil, nil, err
 				}
 			}
+			if airdropReorg != nil {
+				err = airdropReorg.spendBlock(block)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+			}
 
 			continue
 		}
@@ -1199,7 +1237,8 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 			}
 			return nil, nil, nil, err
 		}
-		err = b.checkConnectBlockWithNameView(n, block, view, nil, nameView, true)
+		err = b.checkConnectBlockWithNameView(n, block, view, nil, nameView,
+			true, airdropReorg)
 		if err != nil {
 			if _, ok := err.(RuleError); ok {
 				b.index.SetStatusFlags(n, statusValidateFailed)
@@ -1287,10 +1326,21 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *hnsutil.Block, fla
 			}
 		}
 
+		err := b.db.View(func(dbTx database.Tx) error {
+			return checkCoinbaseAirdropsAvailable(dbTx, block)
+		})
+		if err != nil {
+			if _, ok := err.(RuleError); ok {
+				b.index.SetStatusFlags(node, statusValidateFailed)
+				flushIndexState()
+			}
+			return false, err
+		}
+
 		// Connect the transactions to the cache.  All the txs are considered valid
 		// at this point as they have passed validation or was considered valid already.
 		stxos := make([]SpentTxOut, 0, countSpentOutputs(block))
-		err := b.utxoCache.connectTransactions(block, &stxos)
+		err = b.utxoCache.connectTransactions(block, &stxos)
 		if err != nil {
 			return false, err
 		}
@@ -1964,6 +2014,36 @@ func (b *BlockChain) LocateHeaders(locator BlockLocator, hashStop *chainhash.Has
 	return headers
 }
 
+func (b *BlockChain) updateBestHeaderForInvalidation() {
+	if b.bestHeader == nil || b.bestHeader.Tip() == nil ||
+		!b.index.NodeStatus(b.bestHeader.Tip()).KnownInvalid() {
+
+		return
+	}
+
+	candidates := b.index.InactiveTips(b.bestHeader)
+	for node := b.bestHeader.Tip(); node != nil; node = node.parent {
+		if !b.index.NodeStatus(node).KnownInvalid() {
+			candidates = append(candidates, node)
+			break
+		}
+	}
+
+	var bestTip *blockNode
+	for _, tip := range candidates {
+		if b.index.NodeStatus(tip).KnownInvalid() {
+			continue
+		}
+		if bestTip == nil || tip.workSum.Cmp(bestTip.workSum) > 0 {
+			bestTip = tip
+		}
+	}
+
+	if bestTip != nil {
+		b.bestHeader.SetTip(bestTip)
+	}
+}
+
 // InvalidateBlock invalidates the requested block and all its descedents.  If a block
 // in the best chain is invalidated, the active chain tip will be the parent of the
 // invalidated block.
@@ -2019,6 +2099,7 @@ func (b *BlockChain) InvalidateBlock(hash *chainhash.Hash) error {
 			}
 		}
 
+		b.updateBestHeaderForInvalidation()
 		if writeErr := b.index.flushToDB(); writeErr != nil {
 			return fmt.Errorf("Error flushing block index "+
 				"changes to disk: %v", writeErr)
@@ -2056,6 +2137,7 @@ func (b *BlockChain) InvalidateBlock(hash *chainhash.Hash) error {
 		return err
 	}
 
+	b.updateBestHeaderForInvalidation()
 	if writeErr := b.index.flushToDB(); writeErr != nil {
 		log.Warnf("Error flushing block index changes to disk: %v", writeErr)
 	}
@@ -2288,6 +2370,15 @@ type Config struct {
 	// will target for with block files.  Prune at 0 specifies that no
 	// blocks will be deleted.
 	Prune uint64
+
+	// AssumeValid identifies a trusted block hash below which script
+	// validation may be skipped.  All other consensus checks are still
+	// performed.  The optimization only applies once the hash is known in
+	// the block index and only to blocks on that block's ancestor path.
+	//
+	// This field can be nil to fully validate scripts for all blocks that
+	// are not already covered by checkpoint fast validation.
+	AssumeValid *chainhash.Hash
 }
 
 // New returns a BlockChain instance using the provided configuration details.
@@ -2346,6 +2437,10 @@ func New(config *Config) (*BlockChain, error) {
 		warningCaches:       newThresholdCaches(vbNumBits),
 		deploymentCaches:    newThresholdCaches(chaincfg.DefinedDeployments),
 		pruneTarget:         config.Prune,
+	}
+	if config.AssumeValid != nil {
+		assumeValid := *config.AssumeValid
+		b.assumeValid = &assumeValid
 	}
 
 	// Ensure all the deployments are synchronized with our clock if

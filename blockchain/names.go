@@ -927,7 +927,7 @@ func checkBlockNameLimits(block *hnsutil.Block) error {
 	for _, tx := range block.Transactions() {
 		if hasSeenMutableName(tx, seen) {
 			return ruleError(ErrInvalidCovenant,
-				"block contains duplicate covenant name action")
+				"block contains duplicate covenant name action across transactions")
 		}
 
 		for _, txOut := range tx.MsgTx().TxOut {
@@ -967,7 +967,6 @@ func checkBlockNameLimits(block *hnsutil.Block) error {
 }
 
 func hasSeenMutableName(tx *hnsutil.Tx, seen map[chainhash.Hash]struct{}) bool {
-	txSeen := make(map[chainhash.Hash]struct{})
 	for _, txOut := range tx.MsgTx().TxOut {
 		covenant := txOut.Covenant
 		if !isMutableNameCovenant(covenant.Type) {
@@ -980,10 +979,6 @@ func hasSeenMutableName(tx *hnsutil.Tx, seen map[chainhash.Hash]struct{}) bool {
 		if _, exists := seen[nameHash]; exists {
 			return true
 		}
-		if _, exists := txSeen[nameHash]; exists {
-			return true
-		}
-		txSeen[nameHash] = struct{}{}
 	}
 	return false
 }

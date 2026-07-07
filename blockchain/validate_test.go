@@ -10,9 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -60,6 +61,75 @@ func TestSequenceLocksActive(t *testing.T) {
 			t.Fatalf("SequenceLockActive #%d got %v want %v", i,
 				got, test.want)
 		}
+	}
+}
+
+func TestCoinbaseTransactionIsFinalized(t *testing.T) {
+	blockHeight := int32(1)
+	blockTime := time.Unix(1, 0)
+
+	coinbaseOutpoint := wire.NewOutPoint(&chainhash.Hash{}, math.MaxUint32)
+	coinbaseTx := wire.NewMsgTx(wire.TxVersion)
+	coinbaseTx.AddTxIn(wire.NewTxIn(coinbaseOutpoint, 0, nil))
+	coinbaseTx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	coinbaseTx.LockTime = uint32(blockHeight + 1)
+	if !IsFinalizedTransaction(hnsutil.NewTx(coinbaseTx), blockHeight,
+		blockTime) {
+		t.Fatal("coinbase transaction with locktime/sequence data is not finalized")
+	}
+
+	prevHash := chainhash.Hash{0x01}
+	prevOut := wire.NewOutPoint(&prevHash, 0)
+	regularTx := wire.NewMsgTx(wire.TxVersion)
+	regularTx.AddTxIn(wire.NewTxIn(prevOut, 0, nil))
+	regularTx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	regularTx.LockTime = uint32(blockHeight + 1)
+	if IsFinalizedTransaction(hnsutil.NewTx(regularTx), blockHeight,
+		blockTime) {
+		t.Fatal("regular transaction with future locktime and non-final sequence is finalized")
+	}
+}
+
+func TestHandshakeLockTimeTransactionFinality(t *testing.T) {
+	prevHash := chainhash.Hash{0x01}
+	prevOut := wire.NewOutPoint(&prevHash, 0)
+
+	makeTx := func(lockTime uint32, sequence uint32) *hnsutil.Tx {
+		tx := wire.NewMsgTx(wire.TxVersion)
+		tx.AddTxIn(wire.NewTxIn(prevOut, sequence, nil))
+		tx.AddTxOut(wire.NewTxOut(1, wire.Address{},
+			wire.Covenant{}))
+		tx.LockTime = lockTime
+		return hnsutil.NewTx(tx)
+	}
+
+	const blockHeight = int32(100)
+	blockTime := time.Unix(1000*txscript.LockTimeMultiplier, 0)
+
+	heightFinal := makeTx(99, 0)
+	if !IsFinalizedTransaction(heightFinal, blockHeight, blockTime) {
+		t.Fatal("height locktime below block height is not finalized")
+	}
+
+	heightEqual := makeTx(100, 0)
+	if IsFinalizedTransaction(heightEqual, blockHeight, blockTime) {
+		t.Fatal("height locktime equal to block height is finalized")
+	}
+
+	timeFinal := makeTx(txscript.LockTimeFlag|999, 0)
+	if !IsFinalizedTransaction(timeFinal, blockHeight, blockTime) {
+		t.Fatal("time locktime below block time is not finalized")
+	}
+
+	timeEqual := makeTx(txscript.LockTimeFlag|1000, 0)
+	if IsFinalizedTransaction(timeEqual, blockHeight, blockTime) {
+		t.Fatal("time locktime equal to block time is finalized")
+	}
+
+	timeSequenceFinal := makeTx(txscript.LockTimeFlag|1000,
+		wire.MaxTxInSequenceNum)
+	if !IsFinalizedTransaction(timeSequenceFinal, blockHeight, blockTime) {
+		t.Fatal("max-sequence transaction is not finalized")
 	}
 }
 
@@ -237,6 +307,41 @@ func TestCheckSerializedHeight(t *testing.T) {
 	}
 }
 
+func TestCheckCoinbaseHeightUsesHandshakeLockTime(t *testing.T) {
+	coinbaseOutpoint := wire.NewOutPoint(&chainhash.Hash{}, math.MaxUint32)
+	coinbaseTx := wire.NewMsgTx(1)
+	coinbaseTx.LockTime = 187205
+	coinbaseTx.AddTxIn(wire.NewTxIn(
+		coinbaseOutpoint,
+		wire.MaxTxInSequenceNum,
+		wire.TxWitness{
+			[]byte("ViaBTC"),
+			[]byte{0x7c, 0x52, 0x4f, 0xd5, 0x39, 0xe1, 0xea, 0xb8},
+			[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		},
+	))
+
+	err := CheckCoinbaseHeight(hnsutil.NewTx(coinbaseTx), 187205)
+	if err != nil {
+		t.Fatalf("CheckCoinbaseHeight: %v", err)
+	}
+
+	err = CheckCoinbaseHeight(hnsutil.NewTx(coinbaseTx), 187206)
+	if rerr, ok := err.(RuleError); !ok ||
+		rerr.ErrorCode != ErrBadCoinbaseHeight {
+
+		t.Fatalf("CheckCoinbaseHeight wrong error: %v", err)
+	}
+
+	coinbaseTx.LockTime = uint32(math.MaxInt32) + 1
+	err = CheckCoinbaseHeight(hnsutil.NewTx(coinbaseTx), 187205)
+	if rerr, ok := err.(RuleError); !ok ||
+		rerr.ErrorCode != ErrBadCoinbaseHeight {
+
+		t.Fatalf("CheckCoinbaseHeight overflow wrong error: %v", err)
+	}
+}
+
 // init recomputes the merkle root for Block100000 from its transactions so
 // the header is consistent with the Handshake wire format.
 func init() {
@@ -279,13 +384,13 @@ var Block100000 = wire.MsgBlock{
 					},
 					Witness: wire.TxWitness{[]byte{
 						0x04, 0x4c, 0x86, 0x04, 0x1b, 0x02, 0x06, 0x02,
-										}},
+					}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
-					Value: 0x12a05f200, // 5000000000
+					Value:    0x12a05f200, // 5000000000
 					Address:  wire.Address{},
 					Covenant: wire.Covenant{},
 				},
@@ -327,18 +432,18 @@ var Block100000 = wire.MsgBlock{
 						0x1f, 0x63, 0x3f, 0x25, 0xf8, 0x7c, 0x16, 0x1b,
 						0xc6, 0xf8, 0xa6, 0x30, 0x12, 0x1d, 0xf2, 0xb3,
 						0xd3, // 65-byte pubkey
-										}},
+					}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
-					Value: 0x2123e300, // 556000000
+					Value:    0x2123e300, // 556000000
 					Address:  wire.Address{},
 					Covenant: wire.Covenant{},
 				},
 				{
-					Value: 0x108e20f00, // 4444000000
+					Value:    0x108e20f00, // 4444000000
 					Address:  wire.Address{},
 					Covenant: wire.Covenant{},
 				},
@@ -379,18 +484,18 @@ var Block100000 = wire.MsgBlock{
 						0xa7, 0xb9, 0x0d, 0xa4, 0x63, 0x1e, 0xe3, 0x95,
 						0x60, 0x63, 0x9d, 0xb4, 0x62, 0xe9, 0xcb, 0x85,
 						0x0f, // 65-byte pubkey
-										}},
+					}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
-					Value: 0xf4240, // 1000000
+					Value:    0xf4240, // 1000000
 					Address:  wire.Address{},
 					Covenant: wire.Covenant{},
 				},
 				{
-					Value: 0x11d260c0, // 299000000
+					Value:    0x11d260c0, // 299000000
 					Address:  wire.Address{},
 					Covenant: wire.Covenant{},
 				},
@@ -432,13 +537,13 @@ var Block100000 = wire.MsgBlock{
 						0xdb, 0xfd, 0xd5, 0xaa, 0xd3, 0xe0, 0x63, 0xce,
 						0x6a, 0xf4, 0xcf, 0xaa, 0xea, 0x4e, 0xa1, 0x4f,
 						0xbb, // 65-byte pubkey
-										}},
+					}},
 					Sequence: 0xffffffff,
 				},
 			},
 			TxOut: []*wire.TxOut{
 				{
-					Value: 0xf4240, // 1000000
+					Value:    0xf4240, // 1000000
 					Address:  wire.Address{},
 					Covenant: wire.Covenant{},
 				},

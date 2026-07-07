@@ -528,29 +528,34 @@ func TestAddressWitnessProgram(t *testing.T) {
 
 func TestAddressVersionsAboveSmallIntOpcode(t *testing.T) {
 	hash := []byte{0xaa, 0xbb}
-	addr, err := NewAddress(17, hash)
-	if err != nil {
-		t.Fatalf("NewAddress rejected version 17: %v", err)
-	}
+	for _, version := range []uint8{17, 31} {
+		addr, err := NewAddress(version, hash)
+		if err != nil {
+			t.Fatalf("NewAddress rejected version %d: %v", version, err)
+		}
 
-	var buf bytes.Buffer
-	if err := addr.Encode(&buf); err != nil {
-		t.Fatalf("Encode rejected version 17: %v", err)
-	}
+		var buf bytes.Buffer
+		if err := addr.Encode(&buf); err != nil {
+			t.Fatalf("Encode rejected version %d: %v", version, err)
+		}
 
-	var decoded Address
-	if err := decoded.Decode(bytes.NewReader(buf.Bytes())); err != nil {
-		t.Fatalf("Decode rejected version 17: %v", err)
-	}
-	if decoded.Version != 17 || !bytes.Equal(decoded.Hash, hash) {
-		t.Fatalf("Decode = version %d hash %x, want version 17 hash %x",
-			decoded.Version, decoded.Hash, hash)
-	}
-	if got := decoded.WitnessProgram(); got != nil {
-		t.Fatalf("WitnessProgram for version 17 = %x, want nil", got)
-	}
-	if got, want := decoded.OutputKey(), []byte{17, 2, 0xaa, 0xbb}; !bytes.Equal(got, want) {
-		t.Fatalf("OutputKey for version 17 = %x, want %x", got, want)
+		var decoded Address
+		if err := decoded.Decode(bytes.NewReader(buf.Bytes())); err != nil {
+			t.Fatalf("Decode rejected version %d: %v", version, err)
+		}
+		if decoded.Version != version || !bytes.Equal(decoded.Hash, hash) {
+			t.Fatalf("Decode = version %d hash %x, want version %d hash %x",
+				decoded.Version, decoded.Hash, version, hash)
+		}
+		if got := decoded.WitnessProgram(); got != nil {
+			t.Fatalf("WitnessProgram for version %d = %x, want nil", version, got)
+		}
+
+		wantOutputKey := []byte{version, byte(len(hash)), hash[0], hash[1]}
+		if got := decoded.OutputKey(); !bytes.Equal(got, wantOutputKey) {
+			t.Fatalf("OutputKey for version %d = %x, want %x",
+				version, got, wantOutputKey)
+		}
 	}
 
 	if _, err := NewAddress(32, hash); err == nil {

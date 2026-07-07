@@ -15,9 +15,9 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
 
 // isFinalized considers this input finalized if it contains at least one of
@@ -31,7 +31,7 @@ func isFinalized(p *Packet, inIndex int) bool {
 // isFinalizableWitnessInput returns true if the target input is a witness UTXO
 // that can be finalized.
 func isFinalizableWitnessInput(pInput *PInput) bool {
-	pkScript := pInput.WitnessUtxo.PkScript
+	pkScript := txOutPkScript(pInput.WitnessUtxo)
 
 	switch {
 	// If this is a native witness output, then we require both
@@ -112,7 +112,8 @@ func isFinalizableLegacyInput(p *Packet, pInput *PInput, inIndex int) bool {
 	// Otherwise, we'll verify that we only have a RedeemScript if the prev
 	// output script is P2SH.
 	outIndex := p.UnsignedTx.TxIn[inIndex].PreviousOutPoint.Index
-	if txscript.IsPayToScriptHash(pInput.NonWitnessUtxo.TxOut[outIndex].PkScript) {
+	if txscript.IsPayToScriptHash(txOutPkScript(
+		pInput.NonWitnessUtxo.TxOut[outIndex])) {
 		if pInput.RedeemScript == nil {
 			return false
 		}
@@ -210,7 +211,7 @@ func Finalize(p *Packet, inIndex int) error {
 	// witness or legacy UTXO.
 	switch {
 	case pInput.WitnessUtxo != nil:
-		pkScript := pInput.WitnessUtxo.PkScript
+		pkScript := txOutPkScript(pInput.WitnessUtxo)
 
 		switch {
 		case txscript.IsPayToTaproot(pkScript):

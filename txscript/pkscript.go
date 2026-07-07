@@ -2,6 +2,7 @@ package txscript
 
 import (
 	"crypto/sha256"
+	"crypto/sha3"
 	"errors"
 	"fmt"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -195,7 +197,7 @@ func computeNonWitnessPkScript(sigScript []byte) (PkScript, error) {
 		// a P2PKH redeem script.
 		pubKey := sigScript[len(sigScript)-compressedPubKeyLen:]
 		if btcec.IsCompressedPubKey(pubKey) {
-			pubKeyHash := hash160(pubKey)
+			pubKeyHash := blake160(pubKey)
 			script, err := payToPubKeyHashScript(pubKeyHash)
 			if err != nil {
 				return PkScript{}, err
@@ -246,7 +248,7 @@ func computeWitnessPkScript(witness wire.TxWitness) (PkScript, error) {
 	// If the witness stack has a size of 2 and its last item is a
 	// compressed public key, then this is a P2WPKH witness.
 	case len(witness) == 2 && len(lastWitnessItem) == compressedPubKeyLen:
-		pubKeyHash := hash160(lastWitnessItem)
+		pubKeyHash := blake160(lastWitnessItem)
 		script, err := payToWitnessPubKeyHashScript(pubKeyHash)
 		if err != nil {
 			return pkScript, err
@@ -257,7 +259,7 @@ func computeWitnessPkScript(witness wire.TxWitness) (PkScript, error) {
 
 	// For any other witnesses, we'll assume it's a P2WSH witness.
 	default:
-		scriptHash := sha256.Sum256(lastWitnessItem)
+		scriptHash := sha3.Sum256(lastWitnessItem)
 		script, err := payToWitnessScriptHashScript(scriptHash[:])
 		if err != nil {
 			return pkScript, err
@@ -268,6 +270,16 @@ func computeWitnessPkScript(witness wire.TxWitness) (PkScript, error) {
 	}
 
 	return pkScript, nil
+}
+
+// blake160 returns the Handshake BLAKE2b-160 hash of the given data.
+func blake160(data []byte) []byte {
+	h, err := blake2b.New(20, nil)
+	if err != nil {
+		panic("invalid blake2b-160 size")
+	}
+	h.Write(data)
+	return h.Sum(nil)
 }
 
 // hash160 returns the RIPEMD160 hash of the SHA-256 HASH of the given data.

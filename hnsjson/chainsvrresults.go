@@ -267,6 +267,35 @@ type GetBlockTemplateResultAux struct {
 	Flags string `json:"flags"`
 }
 
+// GetBlockTemplateResultClaim models hsd's claim proof metadata included in
+// getblocktemplate results.
+type GetBlockTemplateResultClaim struct {
+	Data         string `json:"data"`
+	Name         string `json:"name"`
+	NameHash     string `json:"namehash"`
+	Version      uint8  `json:"version"`
+	Hash         string `json:"hash"`
+	Value        int64  `json:"value"`
+	Fee          int64  `json:"fee"`
+	Weak         bool   `json:"weak"`
+	CommitHash   string `json:"commitHash"`
+	CommitHeight uint32 `json:"commitHeight"`
+	Weight       int64  `json:"weight"`
+}
+
+// GetBlockTemplateResultAirdrop models hsd's airdrop proof metadata included
+// in getblocktemplate results.
+type GetBlockTemplateResultAirdrop struct {
+	Data     string `json:"data"`
+	Position uint32 `json:"position"`
+	Version  uint8  `json:"version"`
+	Address  string `json:"address"`
+	Value    int64  `json:"value"`
+	Fee      int64  `json:"fee"`
+	Rate     int64  `json:"rate"`
+	Weak     bool   `json:"weak"`
+}
+
 // GetBlockTemplateResult models the data returned from the getblocktemplate
 // command.
 type GetBlockTemplateResult struct {
@@ -286,8 +315,14 @@ type GetBlockTemplateResult struct {
 	CoinbaseValue *int64                     `json:"coinbasevalue,omitempty"`
 	WorkID        string                     `json:"workid,omitempty"`
 
-	// Witness commitment defined in BIP 0141.
-	DefaultWitnessCommitment string `json:"default_witness_commitment,omitempty"`
+	// Handshake block header fields exposed by hsd getblocktemplate.
+	MerkleRoot   string                          `json:"merkleroot,omitempty"`
+	WitnessRoot  string                          `json:"witnessroot,omitempty"`
+	TreeRoot     string                          `json:"treeroot,omitempty"`
+	ReservedRoot string                          `json:"reservedroot,omitempty"`
+	Mask         string                          `json:"mask,omitempty"`
+	Claims       []GetBlockTemplateResultClaim   `json:"claims"`
+	Airdrops     []GetBlockTemplateResultAirdrop `json:"airdrops"`
 
 	// Optional long polling from BIP 0022.
 	LongPollID  string `json:"longpollid,omitempty"`

@@ -5,7 +5,7 @@
 package txscript
 
 import (
-	"crypto/sha256"
+	"crypto/sha3"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -37,7 +37,7 @@ func TestDebugEngine(t *testing.T) {
 	witnessScript, err := builder.Script()
 	require.NoError(t, err)
 
-	scriptHash := sha256.Sum256(witnessScript)
+	scriptHash := sha3.Sum256(witnessScript)
 	p2wshScript, err := NewScriptBuilder().
 		AddOp(OP_0).
 		AddData(scriptHash[:]).

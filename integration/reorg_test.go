@@ -19,7 +19,6 @@ import (
 // between the fork point and the current height on the new chain to never be
 // downloaded.
 func TestReorgFromForkPoint(t *testing.T) {
-	t.Skip("Skipping: integration test requires Handshake-aware block generation and peer sync")
 	t.Parallel()
 
 	const (

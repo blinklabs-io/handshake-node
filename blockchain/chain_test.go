@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -1395,6 +1395,46 @@ func addBlocks(count int, chain *BlockChain, prevBlock *hnsutil.Block,
 	}
 
 	return blockHashes, spendablesOuts, nil
+}
+
+func TestInvalidateBlockUpdatesBestHeader(t *testing.T) {
+	chain := newFakeChain(&chaincfg.MainNetParams)
+	chain.bestHeader = newChainView(chain.bestChain.Genesis())
+
+	activeHeaders := chainedNodes(chain.bestChain.Genesis(), 3)
+	for _, node := range activeHeaders {
+		node.status = statusHeaderStored
+		chain.index.AddNode(node)
+	}
+
+	sideHeaders := chainedNodes(activeHeaders[0], 4)
+	for _, node := range sideHeaders {
+		node.status = statusHeaderStored
+		chain.index.AddNode(node)
+	}
+
+	chain.bestHeader.SetTip(tstTip(sideHeaders))
+	if got := chain.bestHeader.Tip(); got != tstTip(sideHeaders) {
+		t.Fatalf("best header tip = %v, want side tip %v",
+			got.hash, tstTip(sideHeaders).hash)
+	}
+
+	invalidateHash := &sideHeaders[1].hash
+	if err := chain.InvalidateBlock(invalidateHash); err != nil {
+		t.Fatalf("InvalidateBlock: %v", err)
+	}
+
+	if got := chain.bestHeader.Tip(); got != tstTip(activeHeaders) {
+		t.Fatalf("best header tip = %v, want active header tip %v",
+			got.hash, tstTip(activeHeaders).hash)
+	}
+
+	if !chain.index.NodeStatus(sideHeaders[1]).KnownInvalid() {
+		t.Fatal("invalidated side header is not marked invalid")
+	}
+	if !chain.index.NodeStatus(tstTip(sideHeaders)).KnownInvalid() {
+		t.Fatal("side header descendant is not marked invalid")
+	}
 }
 
 func TestInvalidateBlock(t *testing.T) {

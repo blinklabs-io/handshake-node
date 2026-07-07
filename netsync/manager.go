@@ -5,7 +5,6 @@
 package netsync
 
 import (
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,9 +25,19 @@ const (
 	// requesting more.
 	minInFlightBlocks = 10
 
+	// maxInFlightBlocks is the maximum number of blocks to request from
+	// the sync peer during initial block download. Keeping this bounded
+	// avoids flooding the peer with a full inv-sized request and receiving
+	// many far-future blocks before their parents.
+	maxInFlightBlocks = 128
+
 	// maxRejectedTxns is the maximum number of rejected transactions
 	// hashes to store in memory.
 	maxRejectedTxns = 1000
+
+	// maxRejectedBlocks is the maximum number of rejected block hashes to
+	// store in memory.
+	maxRejectedBlocks = wire.MaxInvPerMsg
 
 	// maxRequestedBlocks is the maximum number of requested block
 	// hashes to store in memory.
@@ -189,6 +198,7 @@ type SyncManager struct {
 	quit           chan struct{}
 
 	// These fields should only be accessed from the blockHandler thread
+	rejectedBlocks   map[chainhash.Hash]struct{}
 	rejectedTxns     map[chainhash.Hash]struct{}
 	requestedTxns    map[chainhash.Hash]struct{}
 	requestedBlocks  map[chainhash.Hash]struct{}
@@ -251,6 +261,20 @@ func (sm *SyncManager) fetchHigherPeers(height int32) []*peerpkg.Peer {
 	return higherPeers
 }
 
+func highestBlockPeer(peers []*peerpkg.Peer) *peerpkg.Peer {
+	if len(peers) == 0 {
+		return nil
+	}
+
+	bestPeer := peers[0]
+	for _, peer := range peers[1:] {
+		if peer.LastBlock() > bestPeer.LastBlock() {
+			bestPeer = peer
+		}
+	}
+	return bestPeer
+}
+
 // isInIBDMode returns true if there's more blocks needed to be downloaded to
 // catch up to the latest chain tip.
 func (sm *SyncManager) isInIBDMode() bool {
@@ -263,8 +287,8 @@ func (sm *SyncManager) isInIBDMode() bool {
 	return true
 }
 
-// fetchHeaders randomly picks a peer that has a higher advertised header
-// and pushes a get headers message to it.
+// fetchHeaders picks the peer with the highest advertised header height and
+// pushes a getheaders message to it.
 func (sm *SyncManager) fetchHeaders() {
 	_, height := sm.chain.BestHeader()
 	higherPeers := sm.fetchHigherPeers(height)
@@ -272,7 +296,7 @@ func (sm *SyncManager) fetchHeaders() {
 		log.Warnf("No sync peer candidates available")
 		return
 	}
-	bestPeer := higherPeers[rand.Intn(len(higherPeers))]
+	bestPeer := highestBlockPeer(higherPeers)
 
 	locator, err := sm.chain.LatestBlockLocatorByHeader()
 	if err != nil {
@@ -327,14 +351,13 @@ func (sm *SyncManager) startSync() {
 	best := sm.chain.BestSnapshot()
 	higherPeers := sm.fetchHigherPeers(best.Height)
 
-	// Pick randomly from the set of peers greater than our
-	// block height.
+	// Pick the peer with the highest advertised block height.
 	//
-	// TODO(conner): Use a better algorithm to ranking peers based on
+	// TODO(conner): Use a better algorithm to rank peers based on
 	// observed metrics and/or sync in parallel.
 	var bestPeer *peerpkg.Peer
 	if len(higherPeers) > 0 {
-		bestPeer = higherPeers[rand.Intn(len(higherPeers))]
+		bestPeer = highestBlockPeer(higherPeers)
 	}
 
 	if bestPeer == nil {
@@ -521,10 +544,17 @@ func (sm *SyncManager) clearRequestedState(state *peerSyncState) {
 
 	// Remove requested blocks from the global map so that they will be
 	// fetched from elsewhere next time we get an inv.
-	// TODO: we could possibly here check which peers have these blocks
-	// and request them now to speed things up a little.
 	for blockHash := range state.requestedBlocks {
 		delete(sm.requestedBlocks, blockHash)
+	}
+}
+
+// resetRequestedBlocksForPeer clears all block requests tracked under the
+// peer's sync state and the matching global request entries.
+func (sm *SyncManager) resetRequestedBlocksForPeer(state *peerSyncState) {
+	for blockHash := range state.requestedBlocks {
+		delete(sm.requestedBlocks, blockHash)
+		delete(state.requestedBlocks, blockHash)
 	}
 }
 
@@ -575,6 +605,14 @@ func (sm *SyncManager) handleTxMsg(tmsg *txMsg) {
 
 	// Process the transaction to include validation, insertion in the
 	// memory pool, orphan handling, etc.
+	if sm.txMemPool == nil {
+		log.Debugf("Ignoring transaction %v from %s: no mempool "+
+			"configured", txHash, peer)
+		delete(state.requestedTxns, *txHash)
+		delete(sm.requestedTxns, *txHash)
+		return
+	}
+
 	acceptedTxs, err := sm.txMemPool.ProcessTransaction(tmsg.tx,
 		true, true, mempool.Tag(peer.ID()))
 
@@ -631,6 +669,20 @@ func (sm *SyncManager) current() bool {
 		return false
 	}
 	return true
+}
+
+func shouldMarkRejectedBlockInvalid(ruleErr blockchain.RuleError) bool {
+	switch ruleErr.ErrorCode {
+	case blockchain.ErrDuplicateBlock,
+		blockchain.ErrTimeTooNew,
+		blockchain.ErrPreviousBlockUnknown,
+		blockchain.ErrInvalidAncestorBlock,
+		blockchain.ErrPrevBlockNotBest,
+		blockchain.ErrKnownInvalidBlock:
+		return false
+	default:
+		return true
+	}
 }
 
 // checkHeadersList checks if the sync manager is in the initial block download
@@ -718,9 +770,23 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		// rejected as opposed to something actually going wrong, so log
 		// it as such.  Otherwise, something really did go wrong, so log
 		// it as an actual error.
-		if _, ok := err.(blockchain.RuleError); ok {
+		if ruleErr, ok := err.(blockchain.RuleError); ok {
 			log.Infof("Rejected block %v from %s: %v", blockHash,
 				peer, err)
+			if shouldMarkRejectedBlockInvalid(ruleErr) {
+				limitAdd(sm.rejectedBlocks, *blockHash, maxRejectedBlocks)
+				if invalidateErr := sm.chain.InvalidateBlock(blockHash); invalidateErr != nil {
+					log.Debugf("Unable to mark rejected block %v invalid: %v",
+						blockHash, invalidateErr)
+				}
+				state.syncCandidate = false
+				sm.resetRequestedBlocksForPeer(state)
+				if peer == sm.syncPeer {
+					sm.updateSyncPeer(true)
+				} else {
+					peer.Disconnect()
+				}
+			}
 		} else {
 			log.Errorf("Failed to process block %v: %v",
 				blockHash, err)
@@ -752,14 +818,11 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 	// Request the parents for the orphan block from the peer that sent it.
 	if isOrphan {
 		// We've just received an orphan block from a peer. In order
-		// to update the height of the peer, we try to extract the
-		// block height from the scriptSig of the coinbase transaction.
-		// Extraction is only attempted if the block's version is
-		// high enough (ver 2+).
-		header := &bmsg.block.MsgBlock().Header
-		if blockchain.ShouldHaveSerializedBlockHeight(header) {
+		// to update the height of the peer, we extract the Handshake
+		// coinbase height from tx.LockTime.
+		if len(bmsg.block.Transactions()) > 0 {
 			coinbaseTx := bmsg.block.Transactions()[0]
-			cbHeight, err := blockchain.ExtractCoinbaseHeight(coinbaseTx)
+			cbHeight, err := blockchain.CoinbaseBlockHeight(coinbaseTx)
 			if err != nil {
 				log.Warnf("Unable to extract height from "+
 					"coinbase tx: %v", err)
@@ -886,6 +949,16 @@ func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.HnsMsgGetData
 	}
 	length := bestHeaderHeight - forkHeight
 	gdmsg := wire.NewHnsMsgGetDataSizeHint(uint(length))
+	peerState := sm.peerStates[peer]
+	if peerState == nil {
+		log.Warnf("fetching header blocks for unknown peer %v", peer)
+		return gdmsg
+	}
+	remainingSlots := maxInFlightBlocks - len(peerState.requestedBlocks)
+	if remainingSlots <= 0 {
+		return gdmsg
+	}
+
 	numRequested := 0
 	for h := forkHeight + 1; h <= bestHeaderHeight; h++ {
 		hash, err := sm.chain.HeaderHashByHeight(h)
@@ -893,6 +966,9 @@ func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.HnsMsgGetData
 			log.Warnf("error while fetching the block hash for height %v -- %v",
 				h, err)
 			return gdmsg
+		}
+		if !sm.chain.IsValidHeader(hash) {
+			continue
 		}
 
 		iv := wire.NewInvVect(wire.InvTypeBlock, hash)
@@ -913,8 +989,6 @@ func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.HnsMsgGetData
 				continue
 			}
 
-			peerState := sm.peerStates[peer]
-
 			sm.requestedBlocks[*hash] = struct{}{}
 			peerState.requestedBlocks[*hash] = struct{}{}
 
@@ -922,7 +996,7 @@ func (sm *SyncManager) buildBlockRequest(peer *peerpkg.Peer) *wire.HnsMsgGetData
 			numRequested++
 		}
 
-		if numRequested >= wire.MaxInvPerMsg {
+		if numRequested >= remainingSlots || numRequested >= wire.MaxInvPerMsg {
 			break
 		}
 	}
@@ -953,16 +1027,30 @@ func (sm *SyncManager) handleHeadersMsg(hmsg *headersMsg) {
 		)
 		if err != nil {
 			log.Warnf("Received block header from peer %v "+
-				"failed header verification -- disconnecting",
-				peer.Addr())
+				"failed header verification: %v -- disconnecting",
+				peer.Addr(), err)
 			peer.Disconnect()
 			return
 		}
+	}
 
-		sm.progressLogger.SetLastLogTime(time.Now())
+	lastHeader := msg.Headers[numHeaders-1]
+	lastHeaderHash := lastHeader.BlockHash()
+	if headerHeight, err := sm.chain.HeaderHeightByHash(lastHeaderHash); err == nil {
+		peer.UpdateLastAnnouncedBlock(&lastHeaderHash)
+		if !sm.ibdMode || headerHeight > peer.LastBlock() {
+			peer.UpdateLastBlockHeight(headerHeight)
+		}
 	}
 
 	bestHash, bestHeight := sm.chain.BestHeader()
+	targetHeaderHeight := peer.LastBlock()
+	if bestHeight > targetHeaderHeight {
+		targetHeaderHeight = bestHeight
+	}
+	sm.progressLogger.LogHeaderProgress(
+		numHeaders, bestHeight, targetHeaderHeight,
+	)
 	if sm.ibdMode {
 		if sm.syncPeer == nil {
 			// Return if we've disconnected from the syncPeer.
@@ -997,6 +1085,8 @@ func (sm *SyncManager) handleNotFoundMsg(nfmsg *notFoundMsg) {
 		log.Warnf("Received notfound message from unknown peer %s", peer)
 		return
 	}
+
+	missingSyncBlock := false
 	for _, inv := range nfmsg.notFound.InvVects() {
 		// verify the hash was actually announced by the peer
 		// before deleting from the global requested maps.
@@ -1007,6 +1097,9 @@ func (sm *SyncManager) handleNotFoundMsg(nfmsg *notFoundMsg) {
 			if _, exists := state.requestedBlocks[inv.Hash]; exists {
 				delete(state.requestedBlocks, inv.Hash)
 				delete(sm.requestedBlocks, inv.Hash)
+				if sm.ibdMode && peer == sm.syncPeer {
+					missingSyncBlock = true
+				}
 			}
 
 		case wire.InvTypeWitnessTx:
@@ -1017,6 +1110,14 @@ func (sm *SyncManager) handleNotFoundMsg(nfmsg *notFoundMsg) {
 				delete(sm.requestedTxns, inv.Hash)
 			}
 		}
+	}
+
+	if missingSyncBlock {
+		log.Warnf("Sync peer %s could not provide a requested "+
+			"block; selecting a replacement peer", peer)
+		state.syncCandidate = false
+		sm.resetRequestedBlocksForPeer(state)
+		sm.updateSyncPeer(false)
 	}
 }
 
@@ -1032,6 +1133,9 @@ func (sm *SyncManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 	case wire.InvTypeBlock:
 		// Ask chain if the block is known to it in any form (main
 		// chain, side chain, or orphan).
+		if _, exists := sm.rejectedBlocks[invVect.Hash]; exists {
+			return true, nil
+		}
 		return sm.chain.HaveBlock(&invVect.Hash)
 
 	case wire.InvTypeWitnessTx:
@@ -1039,7 +1143,7 @@ func (sm *SyncManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 	case wire.InvTypeTx:
 		// Ask the transaction memory pool if the transaction is known
 		// to it in any form (main pool or orphan).
-		if sm.txMemPool.HaveTransaction(&invVect.Hash) {
+		if sm.txMemPool != nil && sm.txMemPool.HaveTransaction(&invVect.Hash) {
 			return true, nil
 		}
 
@@ -1379,20 +1483,38 @@ func (sm *SyncManager) handleBlockchainNotification(notification *blockchain.Not
 			break
 		}
 
-		// Remove all of the transactions (except the coinbase) in the
-		// connected block from the transaction pool.  Secondly, remove any
-		// transactions which are now double spends as a result of these
-		// new transactions.  Finally, remove any transaction that is
-		// no longer an orphan. Transactions which depend on a confirmed
-		// transaction are NOT removed recursively because they are still
-		// valid.
-		for _, tx := range block.Transactions()[1:] {
-			sm.txMemPool.RemoveTransaction(tx, false)
-			sm.txMemPool.RemoveDoubleSpends(tx)
-			sm.txMemPool.RemoveOrphan(tx)
-			sm.peerNotifier.TransactionConfirmed(tx)
-			acceptedTxs := sm.txMemPool.ProcessOrphans(tx)
-			sm.peerNotifier.AnnounceNewTransactions(acceptedTxs)
+		if sm.txMemPool != nil {
+			if txs := block.Transactions(); len(txs) > 0 {
+				removedProofs := sm.txMemPool.RemoveCoinbaseProofs(
+					txs[0],
+				)
+				if removedProofs > 0 {
+					log.Debugf("Removed %d mined coinbase "+
+						"proofs from mempool", removedProofs)
+				}
+			}
+
+			// Remove all of the transactions (except the coinbase) in the
+			// connected block from the transaction pool.  Secondly, remove any
+			// transactions which are now double spends as a result of these
+			// new transactions.  Finally, remove any transaction that is
+			// no longer an orphan. Transactions which depend on a confirmed
+			// transaction are NOT removed recursively because they are still
+			// valid.
+			for _, tx := range block.Transactions()[1:] {
+				sm.txMemPool.RemoveTransaction(tx, false)
+				sm.txMemPool.RemoveDoubleSpends(tx)
+				sm.txMemPool.RemoveNameConflicts(tx)
+				sm.txMemPool.RemoveOrphan(tx)
+				sm.peerNotifier.TransactionConfirmed(tx)
+				acceptedTxs := sm.txMemPool.ProcessOrphans(tx)
+				sm.peerNotifier.AnnounceNewTransactions(acceptedTxs)
+			}
+			removedNameTxs := sm.txMemPool.PruneInvalidNameTransactions()
+			if len(removedNameTxs) > 0 {
+				log.Debugf("Removed %d stale name transactions from "+
+					"mempool", len(removedNameTxs))
+			}
 		}
 
 		// Register block with the fee estimator, if it exists.
@@ -1417,16 +1539,19 @@ func (sm *SyncManager) handleBlockchainNotification(notification *blockchain.Not
 			break
 		}
 
-		// Reinsert all of the transactions (except the coinbase) into
-		// the transaction pool.
-		for _, tx := range block.Transactions()[1:] {
-			_, _, err := sm.txMemPool.MaybeAcceptTransaction(tx,
-				false, false)
-			if err != nil {
-				// Remove the transaction and all transactions
-				// that depend on it if it wasn't accepted into
-				// the transaction pool.
-				sm.txMemPool.RemoveTransaction(tx, true)
+		if sm.txMemPool != nil {
+			// Reinsert all of the transactions (except the coinbase) into
+			// the transaction pool.
+			for _, tx := range block.Transactions()[1:] {
+				sm.txMemPool.RemoveNameConflicts(tx)
+				_, _, err := sm.txMemPool.MaybeAcceptTransaction(tx,
+					false, false)
+				if err != nil {
+					// Remove the transaction and all transactions
+					// that depend on it if it wasn't accepted into
+					// the transaction pool.
+					sm.txMemPool.RemoveTransaction(tx, true)
+				}
 			}
 		}
 
@@ -1586,6 +1711,7 @@ func New(config *Config) (*SyncManager, error) {
 		chain:           config.Chain,
 		txMemPool:       config.TxMemPool,
 		chainParams:     config.ChainParams,
+		rejectedBlocks:  make(map[chainhash.Hash]struct{}),
 		rejectedTxns:    make(map[chainhash.Hash]struct{}),
 		requestedTxns:   make(map[chainhash.Hash]struct{}),
 		requestedBlocks: make(map[chainhash.Hash]struct{}),

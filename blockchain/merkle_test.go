@@ -5,11 +5,12 @@
 package blockchain
 
 import (
+	"encoding/hex"
 	"fmt"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +31,41 @@ func TestMerkle(t *testing.T) {
 	}
 }
 
+func TestHandshakeMerkleRootHsdVector(t *testing.T) {
+	// This is a one-transaction regtest block produced locally before the
+	// hsd mrkl algorithm was wired in. Its header roots are intentionally
+	// stale, but hsd parses the transaction and calculates these roots.
+	const blockHex = "0300000016f64c6a00000000ae3895cf597eff05b19e02a70ceeeecb9dc72dbfe6504a50e9343a72f06a87c50000000000000000000000000000000000000000000000000000000000000000cc745a419550540a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004681c964f027e618b23a875cfb0a590c8d8e55fc5c2899a49f14cd6dc02b65500000020ffff7f2000000000000000000000000000000000000000000000000000000000000000000100000000010000000000000000000000000000000000000000000000000000000000000000ffffffffffffffff0100943577000000000014000000000000000000000000000000000000000000000100000001185100152f503253482f68616e647368616b652d6e6f64652f"
+
+	blockBytes, err := hex.DecodeString(blockHex)
+	require.NoError(t, err)
+
+	block, err := hnsutil.NewBlockFromBytes(blockBytes)
+	require.NoError(t, err)
+
+	wantMerkle := mustRawHash(t,
+		"5462c9d572575bf328213030a7812b4f338968df9c9299213061c44ffe4445eb",
+	)
+	wantWitness := mustRawHash(t,
+		"006372ac82e16c288ef8639e1fbe9f44a730b23c53d7d28cd58085518bb574a0",
+	)
+
+	require.Equal(t, wantMerkle, CalcMerkleRoot(block.Transactions(), false))
+	require.Equal(t, wantWitness, CalcMerkleRoot(block.Transactions(), true))
+}
+
+func mustRawHash(t *testing.T, hashHex string) chainhash.Hash {
+	t.Helper()
+
+	hashBytes, err := hex.DecodeString(hashHex)
+	require.NoError(t, err)
+	require.Len(t, hashBytes, chainhash.HashSize)
+
+	var hash chainhash.Hash
+	copy(hash[:], hashBytes)
+	return hash
+}
+
 func makeHashes(size int) []*chainhash.Hash {
 	var hashes = make([]*chainhash.Hash, size)
 	for i := range hashes {
@@ -48,9 +84,9 @@ func makeTxs(size int) []*hnsutil.Tx {
 	return txs
 }
 
-// BenchmarkRollingMerkle benches the RollingMerkleTree while varying the number
-// of leaves pushed to the tree.
-func BenchmarkRollingMerkle(b *testing.B) {
+// BenchmarkCalcMerkleRoot benches root calculation while varying the number of
+// leaves pushed to the tree.
+func BenchmarkCalcMerkleRoot(b *testing.B) {
 	sizes := []int{
 		1000,
 		2000,
@@ -64,7 +100,7 @@ func BenchmarkRollingMerkle(b *testing.B) {
 		txs := makeTxs(size)
 		name := fmt.Sprintf("%d", size)
 		b.Run(name, func(b *testing.B) {
-			benchmarkRollingMerkle(b, txs)
+			benchmarkCalcMerkleRoot(b, txs)
 		})
 	}
 }
@@ -90,7 +126,7 @@ func BenchmarkMerkle(b *testing.B) {
 	}
 }
 
-func benchmarkRollingMerkle(b *testing.B, txs []*hnsutil.Tx) {
+func benchmarkCalcMerkleRoot(b *testing.B, txs []*hnsutil.Tx) {
 	b.ReportAllocs()
 	b.ResetTimer()
 

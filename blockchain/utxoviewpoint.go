@@ -246,18 +246,17 @@ func addressFromPkScript(pkScript []byte) (wire.Address, error) {
 }
 
 func txOutPkScript(txOut *wire.TxOut) []byte {
-	rawScript := txOut.Address.Hash
-	if isRawNullDataScript(rawScript) {
-		return append([]byte(nil), rawScript...)
+	if txOut.Address.Version == 31 {
+		script := make([]byte, 0, 2+len(txOut.Address.Hash))
+		script = append(script, txscript.OP_RETURN)
+		if len(txOut.Address.Hash) > 0 {
+			script = append(script, byte(len(txOut.Address.Hash)))
+			script = append(script, txOut.Address.Hash...)
+		}
+		return script
 	}
 
-	pkScript := txOut.Address.WitnessProgram()
-	if txscript.GetScriptClass(pkScript) == txscript.NonStandardTy &&
-		len(rawScript) > 0 {
-		return append([]byte(nil), rawScript...)
-	}
-
-	return pkScript
+	return txOut.Address.WitnessProgram()
 }
 
 func cloneAddress(address wire.Address) wire.Address {
@@ -278,8 +277,10 @@ func cloneCovenant(covenant wire.Covenant) wire.Covenant {
 	}
 }
 
-func isRawNullDataScript(script []byte) bool {
-	return txscript.GetScriptClass(script) == txscript.NullDataTy
+func txOutIsUnspendable(txOut *wire.TxOut) bool {
+	return txOut.Address.Version == 31 ||
+		txOut.Covenant.Type == wire.CovenantRevoke ||
+		txscript.IsUnspendable(txOutPkScript(txOut))
 }
 
 // addTxOut adds the specified output to the view if it is not provably
@@ -288,10 +289,10 @@ func isRawNullDataScript(script []byte) bool {
 // possible it has changed during a reorg.
 func (view *UtxoViewpoint) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, isCoinBase bool, blockHeight int32) {
 	// Don't add provably unspendable outputs.
-	pkScript := txOutPkScript(txOut)
-	if txscript.IsUnspendable(pkScript) {
+	if txOutIsUnspendable(txOut) {
 		return
 	}
+	pkScript := txOutPkScript(txOut)
 
 	// Update existing entries.  All fields are updated because it's
 	// possible (although extremely unlikely) that the existing entry is
@@ -488,10 +489,10 @@ func (view *UtxoViewpoint) disconnectTransactions(db database.DB, block *hnsutil
 		txHash := tx.Hash()
 		prevOut := wire.OutPoint{Hash: *txHash}
 		for txOutIdx, txOut := range tx.MsgTx().TxOut {
-			pkScript := txOutPkScript(txOut)
-			if txscript.IsUnspendable(pkScript) {
+			if txOutIsUnspendable(txOut) {
 				continue
 			}
+			pkScript := txOutPkScript(txOut)
 
 			prevOut.Index = uint32(txOutIdx)
 			entry := view.entries[prevOut]

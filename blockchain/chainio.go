@@ -1386,7 +1386,7 @@ func (b *BlockChain) createChainState() error {
 		if err != nil {
 			return err
 		}
-		if _, err := dbStoreCurrentNameSnapshot(dbTx); err != nil {
+		if _, err := dbStoreCurrentNameRoot(dbTx); err != nil {
 			return err
 		}
 

@@ -13,7 +13,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -341,10 +340,10 @@ func (s *utxoCache) addTxOut(outpoint wire.OutPoint, txOut *wire.TxOut, isCoinBa
 	blockHeight int32) error {
 
 	// Don't add provably unspendable outputs.
-	pkScript := txOutPkScript(txOut)
-	if txscript.IsUnspendable(pkScript) {
+	if txOutIsUnspendable(txOut) {
 		return nil
 	}
+	pkScript := txOutPkScript(txOut)
 
 	entry := new(UtxoEntry)
 	entry.amount = txOut.Value

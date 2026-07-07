@@ -31,6 +31,30 @@ const (
 	csvKey = "csv"
 )
 
+func testWitnessPubKeyHashAddress(t *testing.T, net *chaincfg.Params) wire.Address {
+	t.Helper()
+
+	key, err := btcec.NewPrivateKey()
+	if err != nil {
+		t.Fatalf("unable to create key: %v", err)
+	}
+	addr, err := hnsutil.NewAddressPubKeyHash(
+		hnsutil.Blake160(key.PubKey().SerializeCompressed()), net,
+	)
+	if err != nil {
+		t.Fatalf("unable to create address: %v", err)
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		t.Fatalf("unable to create address script: %v", err)
+	}
+	wireAddr, err := txscript.AddressFromWitnessProgram(script)
+	if err != nil {
+		t.Fatalf("unable to convert address script: %v", err)
+	}
+	return wireAddr
+}
+
 // makeTestOutput creates an on-chain output paying to a freshly generated
 // Handshake version-0 pubkey-hash output with the specified amount.
 func makeTestOutput(r *rpctest.Harness, t *testing.T,
@@ -46,7 +70,7 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	// Using the key created above, generate an address which it's able to
 	// spend.
 	witnessAddr, err := hnsutil.NewAddressPubKeyHash(
-		hnsutil.Hash160(key.PubKey().SerializeCompressed()), r.ActiveNet,
+		hnsutil.Blake160(key.PubKey().SerializeCompressed()), r.ActiveNet,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -150,7 +174,7 @@ func p2wpkhWitnessSignature(tx *wire.MsgTx, idx int, amount hnsutil.Amount,
 //  2. Transactions with final lock-times from the PoV of MTP should be
 //     accepted to the mempool and mined in future block.
 func TestBIP0113Activation(t *testing.T) {
-	t.Skip("Skipping: integration test fails with merkle root mismatch after PoW hash change; needs Handshake-aware block generation")
+	t.Skip("Skipping: requires Handshake-specific CSV activation heights; current test still hard-codes btcd-era regtest heights")
 	t.Parallel()
 
 	hnsCfg := []string{"--rejectnonstd"}
@@ -179,7 +203,7 @@ func TestBIP0113Activation(t *testing.T) {
 		PreviousOutPoint: *testOutput,
 	})
 	tx.AddTxOut(&wire.TxOut{
-		Address: wire.Address{},
+		Address: testWitnessPubKeyHashAddress(t, r.ActiveNet),
 		Value:   outputValue - 1000,
 	})
 
@@ -274,7 +298,7 @@ func TestBIP0113Activation(t *testing.T) {
 			PreviousOutPoint: *testOutput,
 		})
 		tx.AddTxOut(&wire.TxOut{
-			Address: wire.Address{},
+			Address: testWitnessPubKeyHashAddress(t, r.ActiveNet),
 			Value:   outputValue - 1000,
 		})
 		tx.LockTime = uint32(medianTimePast + timeLockDelta)
@@ -443,7 +467,7 @@ func assertTxInBlock(r *rpctest.Harness, t *testing.T, blockHash *chainhash.Hash
 //  1. See the cases exercised within the table driven tests towards the end
 //     of this test.
 func TestBIP0068AndBIP0112Activation(t *testing.T) {
-	t.Skip("Skipping: integration test fails with merkle root mismatch after PoW hash change; needs Handshake-aware block generation")
+	t.Skip("Skipping: requires Handshake-specific CSV activation heights; current test still hard-codes btcd-era regtest heights")
 	t.Parallel()
 
 	// We'd like the test proper evaluation and validation of the BIP 68
@@ -469,7 +493,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 
 	sweepOutput := &wire.TxOut{
 		Value:   outputAmt - 5000,
-		Address: wire.Address{},
+		Address: testWitnessPubKeyHashAddress(t, r.ActiveNet),
 	}
 
 	// As the soft-fork hasn't yet activated _any_ transaction version

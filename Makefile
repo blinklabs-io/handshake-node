@@ -19,7 +19,7 @@ GOIMPORTS_COMMIT := a24facf9e5586c95743d2f4ad15d148c7a8cf00b
 GOBUILD := go build -v
 GOINSTALL := go install -v 
 DEV_TAGS := rpctest
-GOTEST_DEV = go test -v -tags=$(DEV_TAGS)
+GOTEST_DEV = go test -p 1 -v -tags=$(DEV_TAGS)
 GOTEST := go test -v
 COVER_FLAGS = -coverprofile=coverage.txt -covermode=atomic -coverpkg=$(PKG)/...
 
@@ -93,12 +93,11 @@ release-install:
 check: unit
 
 #? unit: Run unit tests
-# hnsutil/psbt is still Bitcoin-PSBT specific and is intentionally excluded
-# until the Phase 6 wallet/PSBT integration port.
 unit:
 	@$(call print, "Running unit tests.")
 	$(GOTEST_DEV) ./... -test.timeout=20m
 	cd hnsutil && $(GOTEST_DEV) ./... -test.timeout=20m
+	cd hnsutil/psbt && $(GOTEST_DEV) ./... -test.timeout=20m
 
 #? unit-cover: Run unit coverage tests
 unit-cover:
@@ -106,12 +105,14 @@ unit-cover:
 	$(GOTEST) $(COVER_FLAGS) ./...
 
 	cd hnsutil && $(GOTEST) $(COVER_FLAGS) ./...
+	cd hnsutil/psbt && $(GOTEST) $(COVER_FLAGS) ./...
 
 #? unit-race: Run unit race tests
 unit-race:
 	@$(call print, "Running unit race tests.")
 	env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 	cd hnsutil && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
+	cd hnsutil/psbt && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 
 # =========
 # UTILITIES

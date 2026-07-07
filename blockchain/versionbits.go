@@ -161,6 +161,10 @@ var _ thresholdConditionChecker = deploymentChecker{}
 //
 // This is part of the thresholdConditionChecker interface implementation.
 func (c deploymentChecker) HasStarted(blkNode *blockNode) bool {
+	if c.deployment == nil || c.deployment.DeploymentStarter == nil {
+		return false
+	}
+
 	// Can't fail as we make sure to set the clock above when we
 	// instantiate *BlockChain.
 	header := blkNode.Header()
@@ -177,6 +181,10 @@ func (c deploymentChecker) HasStarted(blkNode *blockNode) bool {
 //
 // This is part of the thresholdConditionChecker interface implementation.
 func (c deploymentChecker) HasEnded(blkNode *blockNode) bool {
+	if c.deployment == nil || c.deployment.DeploymentEnder == nil {
+		return false
+	}
+
 	// Can't fail as we make sure to set the clock above when we
 	// instantiate *BlockChain.
 	header := blkNode.Header()

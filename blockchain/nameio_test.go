@@ -122,6 +122,82 @@ func TestFetchNameStateByHash(t *testing.T) {
 	}
 }
 
+func TestLazyNameBlockViewLoadsTouchedStates(t *testing.T) {
+	chain := setupNameStateQueryChain(t, "lazynamestateview")
+	want := testNameStateForQuery("lazy")
+	other := testNameStateForQuery("other")
+	storeNameStateForQuery(t, chain, want)
+	storeNameStateForQuery(t, chain, other)
+
+	view := newLazyNameBlockView(chain)
+	err := chain.db.View(func(dbTx database.Tx) error {
+		got, err := view.get(dbTx, want.nameHash)
+		if err != nil {
+			return err
+		}
+		if !nameStatesEqual(got, want) {
+			t.Fatalf("loaded state mismatch")
+		}
+		if _, ok := view.states[other.nameHash]; ok {
+			t.Fatalf("lazy view loaded untouched state")
+		}
+
+		missingHash := chainhash.Hash{0x42}
+		missing, err := view.get(dbTx, missingHash)
+		if err != nil {
+			return err
+		}
+		if !missing.isNull() {
+			t.Fatalf("missing state is not null: %+v", missing)
+		}
+		if _, ok := view.loaded[missingHash]; !ok {
+			t.Fatalf("missing state was not marked loaded")
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("lazy get: %v", err)
+	}
+}
+
+func TestLazyNameBlockViewRequiresDBForUnloadedState(t *testing.T) {
+	chain := setupNameStateQueryChain(t, "lazynamestateviewnodb")
+	view := newLazyNameBlockView(chain)
+
+	if _, err := view.get(nil, chainhash.Hash{0x99}); err == nil {
+		t.Fatal("lazy get without dbTx: expected error")
+	}
+}
+
+func TestNameRoot(t *testing.T) {
+	chain := setupNameStateQueryChain(t, "namerootquery")
+
+	got, err := chain.NameRoot()
+	if err != nil {
+		t.Fatalf("NameRoot: %v", err)
+	}
+	if got != (chainhash.Hash{}) {
+		t.Fatalf("NameRoot before store = %v, want zero hash", got)
+	}
+
+	want := chainhash.Hash{0x2a, 0x7f}
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		return dbPutNameRoot(dbTx, want)
+	})
+	if err != nil {
+		t.Fatalf("dbPutNameRoot: %v", err)
+	}
+
+	got, err = chain.NameRoot()
+	if err != nil {
+		t.Fatalf("NameRoot after store: %v", err)
+	}
+	if got != want {
+		t.Fatalf("NameRoot after store = %v, want %v", got, want)
+	}
+}
+
 func setupNameStateQueryChain(t *testing.T, dbName string) *BlockChain {
 	t.Helper()
 

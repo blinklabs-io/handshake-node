@@ -1,13 +1,13 @@
 package netsync
 
 import (
-	"bufio"
-	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
-	"os"
+	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,9 +18,11 @@ import (
 	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mempool"
+	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +39,21 @@ func (noopPeerNotifier) AnnounceNewTransactions([]*mempool.TxDesc)            {}
 func (noopPeerNotifier) UpdatePeerHeights(*chainhash.Hash, int32, *peer.Peer) {}
 func (noopPeerNotifier) RelayInventory(*wire.InvVect, interface{})            {}
 func (noopPeerNotifier) TransactionConfirmed(*hnsutil.Tx)                     {}
+
+type recordingPeerNotifier struct {
+	noopPeerNotifier
+
+	relayed []*wire.InvVect
+	data    []interface{}
+}
+
+func (n *recordingPeerNotifier) RelayInventory(iv *wire.InvVect,
+	data interface{}) {
+
+	ivCopy := *iv
+	n.relayed = append(n.relayed, &ivCopy)
+	n.data = append(n.data, data)
+}
 
 // dbSetup is used to create a new db with the genesis block already inserted.
 // It returns a teardown function the caller should invoke when done testing to
@@ -101,35 +118,6 @@ func chainSetup(t *testing.T, params *chaincfg.Params) (
 	return chain, teardown, nil
 }
 
-// loadHeaders loads headers from mainnet from 1 to 11.
-func loadHeaders(t *testing.T) []*wire.BlockHeader {
-	testFile := "blockheaders-mainnet-1-11.txt"
-	filename := filepath.Join("testdata/", testFile)
-
-	file, err := os.Open(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	headers := make([]*wire.BlockHeader, 0, 10)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		b, err := hex.DecodeString(line)
-		if err != nil {
-			t.Fatalf("failed to read block headers from file %v", testFile)
-		}
-
-		r := bytes.NewReader(b)
-		header := new(wire.BlockHeader)
-		header.Deserialize(r)
-
-		headers = append(headers, header)
-	}
-
-	return headers
-}
-
 func makeMockSyncManager(t *testing.T,
 	params *chaincfg.Params) (*SyncManager, func()) {
 
@@ -148,20 +136,160 @@ func makeMockSyncManager(t *testing.T,
 	return sm, tearDown
 }
 
-func TestCheckHeadersList(t *testing.T) {
-	// TODO(handshake): testdata uses Bitcoin mainnet block headers (80B).
-	// Replace blockheaders-mainnet-1-11.txt with Handshake mainnet headers
-	// (236B) and update the hardcoded block hashes below.
-	t.Skip("uses Bitcoin mainnet header testdata; needs Handshake equivalent")
-
-	// Set params to mainnet with a checkpoint at block 11.
-	params := chaincfg.MainNetParams
-	checkpointHeight := int32(11)
-	checkpointHash, err := chainhash.NewHashFromStr(
-		"0000000097be56d606cdd9c54b04d4747e957d3608abe69198c661f2add73073")
-	if err != nil {
-		t.Fatal(err)
+func TestShouldMarkRejectedBlockInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		code blockchain.ErrorCode
+		want bool
+	}{
+		{
+			name: "duplicate",
+			code: blockchain.ErrDuplicateBlock,
+			want: false,
+		},
+		{
+			name: "future time",
+			code: blockchain.ErrTimeTooNew,
+			want: false,
+		},
+		{
+			name: "unknown parent",
+			code: blockchain.ErrPreviousBlockUnknown,
+			want: false,
+		},
+		{
+			name: "invalid ancestor",
+			code: blockchain.ErrInvalidAncestorBlock,
+			want: false,
+		},
+		{
+			name: "proposal parent not best",
+			code: blockchain.ErrPrevBlockNotBest,
+			want: false,
+		},
+		{
+			name: "already known invalid",
+			code: blockchain.ErrKnownInvalidBlock,
+			want: false,
+		},
+		{
+			name: "invalid covenant",
+			code: blockchain.ErrInvalidCovenant,
+			want: true,
+		},
 	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := shouldMarkRejectedBlockInvalid(blockchain.RuleError{
+				ErrorCode: test.code,
+			})
+			if got != test.want {
+				t.Fatalf("shouldMarkRejectedBlockInvalid(%v) = %v, want %v",
+					test.code, got, test.want)
+			}
+		})
+	}
+}
+
+func connectSyncTestPeer(t *testing.T, params *chaincfg.Params,
+	height int32) (*peer.Peer, net.Conn, func()) {
+
+	t.Helper()
+
+	verack := make(chan struct{}, 1)
+	p := peer.NewInboundPeer(&peer.Config{
+		ChainParams:    params,
+		AllowSelfConns: true,
+		Listeners: peer.MessageListeners{
+			OnVerAck: func(*peer.Peer, *wire.HnsMsgVerack) {
+				verack <- struct{}{}
+			},
+		},
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
+	accepted := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			accepted <- err
+			return
+		}
+		p.AssociateConnection(conn)
+		accepted <- nil
+	}()
+
+	remote, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	select {
+	case err := <-accepted:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		remote.Close()
+		t.Fatal("timed out waiting for inbound peer connection")
+	}
+
+	remoteNA := wire.NewNetAddressIPPort(net.ParseIP("127.0.0.1"), 0,
+		wire.SFNodeNetwork)
+	remoteVersion := &wire.HnsMsgVersion{
+		Version:  peer.MaxProtocolVersion,
+		Services: uint64(wire.SFNodeNetwork),
+		Time:     uint64(time.Now().Unix()),
+		Remote:   wire.NewHnsNetAddress(remoteNA),
+		Agent:    wire.DefaultUserAgent,
+		Height:   uint32(height),
+	}
+	remoteVersion.SetNonce(uint64(height) + 1)
+
+	_, err = wire.WriteHnsMessageN(remote, remoteVersion, params.Net)
+	require.NoError(t, err)
+	require.IsType(t, &wire.HnsMsgVersion{},
+		readSyncTestPeerMessage(t, remote, params))
+	require.IsType(t, &wire.HnsMsgVerack{},
+		readSyncTestPeerMessage(t, remote, params))
+	_, err = wire.WriteHnsMessageN(remote, &wire.HnsMsgVerack{},
+		params.Net)
+	require.NoError(t, err)
+
+	select {
+	case <-verack:
+	case <-time.After(time.Second):
+		remote.Close()
+		t.Fatal("timed out waiting for peer negotiation")
+	}
+	p.UpdateLastBlockHeight(height)
+
+	cleanup := func() {
+		p.Disconnect()
+		remote.Close()
+	}
+
+	return p, remote, cleanup
+}
+
+func readSyncTestPeerMessage(t *testing.T, remote net.Conn,
+	params *chaincfg.Params) wire.HandshakeMessage {
+
+	t.Helper()
+
+	require.NoError(t, remote.SetReadDeadline(time.Now().Add(time.Second)))
+	_, msg, _, err := wire.ReadHandshakeMessageN(remote, params.Net)
+	require.NoError(t, err)
+	return msg
+}
+
+func TestCheckHeadersList(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 12)
+
+	// Set params to regtest with a generated checkpoint at block 11.
+	checkpointHeight := int32(11)
+	checkpointHash := blocks[checkpointHeight-1].Hash()
 	params.Checkpoints = []chaincfg.Checkpoint{
 		{
 			Height: checkpointHeight,
@@ -174,67 +302,60 @@ func TestCheckHeadersList(t *testing.T) {
 	defer tearDown()
 
 	// Setup SyncManager with headers processed.
-	headers := loadHeaders(t)
-	for _, header := range headers {
+	for _, block := range blocks[:checkpointHeight] {
 		isMainChain, err := sm.chain.ProcessBlockHeader(
-			header, blockchain.BFNone, false)
+			&block.MsgBlock().Header, blockchain.BFNone, false)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		if !isMainChain {
 			t.Fatalf("expected block header %v to be in the main chain",
-				header.BlockHash())
+				block.Hash())
 		}
 	}
 
 	tests := []struct {
-		hash              string
+		hash              *chainhash.Hash
 		isCheckpointBlock bool
 		behaviorFlags     blockchain.BehaviorFlags
 	}{
 		{
-			hash:              chaincfg.MainNetParams.GenesisHash.String(),
+			hash:              params.GenesisHash,
 			isCheckpointBlock: false,
 			behaviorFlags:     blockchain.BFFastAdd,
 		},
 		{
 			// Block 10.
-			hash:              "000000002c05cc2e78923c34df87fd108b22221ac6076c18f3ade378a4d915e9",
+			hash:              blocks[9].Hash(),
 			isCheckpointBlock: false,
 			behaviorFlags:     blockchain.BFFastAdd,
 		},
 		{
 			// Block 11.
-			hash:              "0000000097be56d606cdd9c54b04d4747e957d3608abe69198c661f2add73073",
+			hash:              blocks[10].Hash(),
 			isCheckpointBlock: true,
 			behaviorFlags:     blockchain.BFFastAdd,
 		},
 		{
 			// Block 12.
-			hash:              "0000000027c2488e2510d1acf4369787784fa20ee084c258b58d9fbd43802b5e",
+			hash:              blocks[11].Hash(),
 			isCheckpointBlock: false,
 			behaviorFlags:     blockchain.BFNone,
 		},
 	}
 
 	for _, test := range tests {
-		hash, err := chainhash.NewHashFromStr(test.hash)
-		if err != nil {
-			t.Errorf("NewHashFromStr: %v", err)
-			continue
-		}
-
 		// Make sure that when the ibd mode is off, we always get
 		// false and BFNone.
 		sm.ibdMode = false
-		isCheckpoint, gotFlags := sm.checkHeadersList(hash)
+		isCheckpoint, gotFlags := sm.checkHeadersList(test.hash)
 		require.Equal(t, false, isCheckpoint)
 		require.Equal(t, blockchain.BFNone, gotFlags)
 
 		// Now check that the test values are correct.
 		sm.ibdMode = true
-		isCheckpoint, gotFlags = sm.checkHeadersList(hash)
+		isCheckpoint, gotFlags = sm.checkHeadersList(test.hash)
 		require.Equal(t, test.isCheckpointBlock, isCheckpoint)
 		require.Equal(t, test.behaviorFlags, gotFlags)
 	}
@@ -298,6 +419,630 @@ func TestFetchHigherPeers(t *testing.T) {
 	}
 }
 
+func TestStartSyncChoosesHighestPeer(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	lowPeer := newSyncCandidate(t, sm, 5)
+	highPeer := newSyncCandidate(t, sm, 12)
+	midPeer := newSyncCandidate(t, sm, 9)
+
+	sm.startSync()
+
+	require.True(t, sm.syncPeer == highPeer,
+		"startSync selected peer height %d; low=%d mid=%d high=%d",
+		sm.syncPeer.LastBlock(), lowPeer.LastBlock(),
+		midPeer.LastBlock(), highPeer.LastBlock())
+	require.True(t, sm.ibdMode)
+}
+
+func TestStartSyncSendsGetHeadersLocator(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	syncPeer, remote, cleanup := connectSyncTestPeer(t, &params, 12)
+	defer cleanup()
+	sm.peerStates[syncPeer] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+
+	sm.startSync()
+
+	require.True(t, sm.syncPeer == syncPeer)
+	require.True(t, sm.ibdMode)
+
+	msg := readSyncTestPeerMessage(t, remote, &params)
+	getHeaders, ok := msg.(*wire.HnsMsgGetHeaders)
+	require.True(t, ok, "got %T, want *wire.HnsMsgGetHeaders", msg)
+	require.NotEmpty(t, getHeaders.Locator)
+	gotLocator := chainhash.Hash(getHeaders.Locator[0])
+	require.True(t, gotLocator.IsEqual(params.GenesisHash))
+	require.Equal(t, [32]byte{}, getHeaders.StopHash)
+}
+
+func TestStartSyncSendsGetDataForHeaderBlocks(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	const numBlocks = 3
+	blocks := generateTestBlocks(t, &params, numBlocks)
+	for _, block := range blocks {
+		_, err := sm.chain.ProcessBlockHeader(
+			&block.MsgBlock().Header, blockchain.BFNone, false)
+		require.NoError(t, err)
+	}
+
+	syncPeer, remote, cleanup := connectSyncTestPeer(
+		t, &params, numBlocks)
+	defer cleanup()
+	sm.peerStates[syncPeer] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+
+	sm.startSync()
+
+	require.True(t, sm.syncPeer == syncPeer)
+	require.True(t, sm.ibdMode)
+
+	msg := readSyncTestPeerMessage(t, remote, &params)
+	getData, ok := msg.(*wire.HnsMsgGetData)
+	require.True(t, ok, "got %T, want *wire.HnsMsgGetData", msg)
+	require.Len(t, getData.Inventory, numBlocks)
+
+	got := make(map[chainhash.Hash]struct{}, len(getData.Inventory))
+	for _, item := range getData.Inventory {
+		iv := item.InvVect()
+		require.Equal(t, wire.InvTypeBlock, iv.Type)
+		got[iv.Hash] = struct{}{}
+	}
+	for _, block := range blocks {
+		require.Contains(t, got, *block.Hash())
+		require.Contains(t, sm.requestedBlocks, *block.Hash())
+		require.Contains(t, sm.peerStates[syncPeer].requestedBlocks,
+			*block.Hash())
+	}
+}
+
+func TestHandleBlockMsgRequestsParentsForOrphanBlock(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 2)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	p, remote, cleanup := connectSyncTestPeer(t, &params, 2)
+	defer cleanup()
+	sm.peerStates[p] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+
+	orphan := blocks[1]
+	orphanHash := orphan.Hash()
+	sm.peerStates[p].requestedBlocks[*orphanHash] = struct{}{}
+	sm.requestedBlocks[*orphanHash] = struct{}{}
+
+	sm.handleBlockMsg(&blockMsg{
+		block: orphan,
+		peer:  p,
+	})
+
+	require.True(t, sm.chain.IsKnownOrphan(orphanHash))
+	require.NotContains(t, sm.requestedBlocks, *orphanHash)
+	require.NotContains(t, sm.peerStates[p].requestedBlocks, *orphanHash)
+
+	msg := readSyncTestPeerMessage(t, remote, &params)
+	getBlocks, ok := msg.(*wire.HnsMsgGetBlocks)
+	require.True(t, ok, "got %T, want *wire.HnsMsgGetBlocks", msg)
+	stopHash := chainhash.Hash(getBlocks.StopHash)
+	require.Equal(t, *orphanHash, stopHash)
+	locatorHashes := make([]chainhash.Hash, 0,
+		len(getBlocks.LocatorHashes()))
+	for _, hash := range getBlocks.LocatorHashes() {
+		locatorHashes = append(locatorHashes, *hash)
+	}
+	require.Contains(t, locatorHashes, *params.GenesisHash)
+}
+
+func TestHandleBlockMsgClearsRequestedStateForKnownBlock(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 1)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	block := blocks[0]
+	_, isOrphan, err := sm.chain.ProcessBlock(block, blockchain.BFNone)
+	require.NoError(t, err)
+	require.False(t, isOrphan)
+
+	p := newSyncCandidate(t, sm, 1)
+	blockHash := block.Hash()
+	sm.peerStates[p].requestedBlocks[*blockHash] = struct{}{}
+	sm.requestedBlocks[*blockHash] = struct{}{}
+
+	sm.handleBlockMsg(&blockMsg{
+		block: block,
+		peer:  p,
+	})
+
+	require.NotContains(t, sm.requestedBlocks, *blockHash)
+	require.NotContains(t, sm.peerStates[p].requestedBlocks, *blockHash)
+}
+
+func TestHandleBlockMsgStayingCurrentAcceptsForkAndReorg(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	sm.ibdMode = false
+
+	mainBlocks := generateTestBlocksFrom(t, &params, *params.GenesisHash,
+		params.GenesisBlock.Header.Timestamp, 0, 1, 1)
+	forkBlocks := generateTestBlocksFrom(t, &params, *params.GenesisHash,
+		params.GenesisBlock.Header.Timestamp, 0, 2, 2)
+
+	p := newSyncCandidate(t, sm, 2)
+	requestBlock := func(block *hnsutil.Block) {
+		blockHash := block.Hash()
+		sm.peerStates[p].requestedBlocks[*blockHash] = struct{}{}
+		sm.requestedBlocks[*blockHash] = struct{}{}
+		sm.handleBlockMsg(&blockMsg{
+			block: block,
+			peer:  p,
+		})
+		require.NotContains(t, sm.requestedBlocks, *blockHash)
+		require.NotContains(t, sm.peerStates[p].requestedBlocks,
+			*blockHash)
+	}
+
+	requestBlock(mainBlocks[0])
+	mainTip := mainBlocks[0].Hash()
+	best := sm.chain.BestSnapshot()
+	require.Equal(t, int32(1), best.Height)
+	require.True(t, best.Hash.IsEqual(mainTip))
+
+	requestBlock(forkBlocks[0])
+	forkTip := forkBlocks[0].Hash()
+	haveFork, err := sm.chain.HaveBlock(forkTip)
+	require.NoError(t, err)
+	require.True(t, haveFork)
+	best = sm.chain.BestSnapshot()
+	require.Equal(t, int32(1), best.Height)
+	require.True(t, best.Hash.IsEqual(mainTip),
+		"equal-work fork should not replace the current best chain")
+
+	requestBlock(forkBlocks[1])
+	best = sm.chain.BestSnapshot()
+	forkBest := forkBlocks[1].Hash()
+	require.Equal(t, int32(2), best.Height)
+	require.True(t, best.Hash.IsEqual(forkBest),
+		"longer fork should become the best chain")
+}
+
+func TestBlockAcceptedNotificationRelaysInventoryWhenCurrent(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	db, tearDown, err := dbSetup(t, &params)
+	require.NoError(t, err)
+	defer tearDown()
+
+	chain, err := blockchain.New(&blockchain.Config{
+		DB:          db,
+		Checkpoints: params.Checkpoints,
+		ChainParams: &params,
+		TimeSource: &mockTimeSource{
+			adjustedTime: params.GenesisBlock.Header.Timestamp.
+				Add(time.Hour),
+		},
+		SigCache: txscript.NewSigCache(1000),
+	})
+	require.NoError(t, err)
+
+	notifier := &recordingPeerNotifier{}
+	sm := &SyncManager{
+		peerNotifier: notifier,
+		chain:        chain,
+	}
+	block := hnsutil.NewBlock(params.GenesisBlock)
+
+	sm.handleBlockchainNotification(&blockchain.Notification{
+		Type: blockchain.NTBlockAccepted,
+		Data: block,
+	})
+
+	require.Len(t, notifier.relayed, 1)
+	require.Equal(t, wire.InvTypeBlock, notifier.relayed[0].Type)
+	require.True(t, notifier.relayed[0].Hash.IsEqual(block.Hash()))
+	require.Len(t, notifier.data, 1)
+	header, ok := notifier.data[0].(wire.BlockHeader)
+	require.True(t, ok)
+	require.Equal(t, block.MsgBlock().Header, header)
+}
+
+func TestBlockConnectedNotificationRemovesCoinbaseProofs(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	db, tearDown, err := dbSetup(t, &params)
+	require.NoError(t, err)
+	defer tearDown()
+
+	chain, err := blockchain.New(&blockchain.Config{
+		DB:          db,
+		Checkpoints: params.Checkpoints,
+		ChainParams: &params,
+		TimeSource: &mockTimeSource{
+			adjustedTime: params.GenesisBlock.Header.Timestamp.
+				Add(time.Hour),
+		},
+		SigCache: txscript.NewSigCache(1000),
+	})
+	require.NoError(t, err)
+
+	addrHash := make([]byte, 20)
+	addrHash[0] = 0x01
+	addr := wire.Address{Version: 0, Hash: addrHash}
+	proof := mining.CoinbaseProof{
+		Witness: []byte{0xaa, 0xbb},
+		Output:  wire.NewTxOut(100, addr, wire.Covenant{}),
+		Fee:     7,
+	}
+	txPool := mempool.New(&mempool.Config{})
+	_, err = txPool.AddCoinbaseProof(proof)
+	require.NoError(t, err)
+
+	coinbase := wire.NewMsgTx(wire.TxVersion)
+	coinbase.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: wire.MaxPrevOutIndex,
+		},
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  wire.TxWitness{[]byte{0x01}},
+	})
+	coinbase.AddTxOut(wire.NewTxOut(1, addr, wire.Covenant{}))
+	coinbase.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: wire.MaxPrevOutIndex,
+		},
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  wire.TxWitness{proof.Witness},
+	})
+	coinbase.AddTxOut(proof.Output)
+
+	block := hnsutil.NewBlock(&wire.MsgBlock{
+		Transactions: []*wire.MsgTx{coinbase},
+	})
+	sm := &SyncManager{
+		chain:        chain,
+		txMemPool:    txPool,
+		peerNotifier: noopPeerNotifier{},
+	}
+	sm.handleBlockchainNotification(&blockchain.Notification{
+		Type: blockchain.NTBlockConnected,
+		Data: block,
+	})
+
+	proofs, err := txPool.CoinbaseProofs(1)
+	require.NoError(t, err)
+	require.Empty(t, proofs)
+}
+
+func TestBlockDisconnectedNotificationReaddsMempoolTransactions(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.MainNetParams
+	harness := newReorgTxPoolHarness(t, &params)
+
+	fundingTx := harness.addCoinbaseTx(t, 2)
+	inputA := reorgSpendableOutput{
+		outPoint: wire.OutPoint{Hash: *fundingTx.Hash(), Index: 0},
+		amount:   hnsutil.Amount(fundingTx.MsgTx().TxOut[0].Value),
+	}
+	inputB := reorgSpendableOutput{
+		outPoint: wire.OutPoint{Hash: *fundingTx.Hash(), Index: 1},
+		amount:   hnsutil.Amount(fundingTx.MsgTx().TxOut[1].Value),
+	}
+
+	disconnectedOpen := harness.createSignedCovenantTx(
+		t, inputA, 1000, reorgOpenCovenant("phasefive"),
+	)
+	newerOpen := harness.createSignedCovenantTx(
+		t, inputB, 1000, reorgOpenCovenant("phasefive"),
+	)
+
+	_, err := harness.txPool.ProcessTransaction(newerOpen, true, false, 0)
+	require.NoError(t, err)
+	require.True(t, harness.txPool.HaveTransaction(newerOpen.Hash()))
+
+	coinbase, err := harness.createCoinbaseTx(harness.chain.BestHeight()+1, 1)
+	require.NoError(t, err)
+	block := hnsutil.NewBlock(&wire.MsgBlock{
+		Transactions: []*wire.MsgTx{
+			coinbase.MsgTx(),
+			disconnectedOpen.MsgTx(),
+		},
+	})
+	sm := &SyncManager{txMemPool: harness.txPool}
+	sm.handleBlockchainNotification(&blockchain.Notification{
+		Type: blockchain.NTBlockDisconnected,
+		Data: block,
+	})
+
+	require.True(t, harness.txPool.HaveTransaction(disconnectedOpen.Hash()))
+	require.False(t, harness.txPool.HaveTransaction(newerOpen.Hash()))
+}
+
+type reorgTxPoolHarness struct {
+	signKey     *btcec.PrivateKey
+	payScript   []byte
+	payWireAddr wire.Address
+	chainParams *chaincfg.Params
+
+	chain  *reorgFakeChain
+	txPool *mempool.TxPool
+}
+
+type reorgSpendableOutput struct {
+	outPoint wire.OutPoint
+	amount   hnsutil.Amount
+}
+
+func newReorgTxPoolHarness(t *testing.T,
+	chainParams *chaincfg.Params) *reorgTxPoolHarness {
+
+	t.Helper()
+
+	keyBytes, err := hex.DecodeString("700868df1838811ffbdf918fb482c1f7e" +
+		"ad62db4b97bd7012c23e726485e577d")
+	require.NoError(t, err)
+	signKey, signPub := btcec.PrivKeyFromBytes(keyBytes)
+	pubKeyBytes := signPub.SerializeCompressed()
+
+	payAddr, err := hnsutil.NewAddressPubKeyHash(
+		hnsutil.Blake160(pubKeyBytes), chainParams,
+	)
+	require.NoError(t, err)
+	payScript, err := txscript.PayToAddrScript(payAddr)
+	require.NoError(t, err)
+
+	payWireAddr := wire.Address{
+		Version: 0,
+		Hash:    payAddr.ScriptAddress(),
+	}
+	chain := &reorgFakeChain{utxos: blockchain.NewUtxoViewpoint()}
+	harness := &reorgTxPoolHarness{
+		signKey:     signKey,
+		payScript:   payScript,
+		payWireAddr: payWireAddr,
+		chainParams: chainParams,
+		chain:       chain,
+	}
+	harness.txPool = mempool.New(&mempool.Config{
+		Policy: mempool.Policy{
+			DisableRelayPriority: true,
+			FreeTxRelayLimit:     15.0,
+			MaxOrphanTxs:         5,
+			MaxOrphanTxSize:      1000,
+			MaxSigOpCostPerTx:    blockchain.MaxBlockSigOpsCost / 4,
+			MinRelayTxFee:        1000,
+			MaxTxVersion:         1,
+		},
+		ChainParams:      chainParams,
+		FetchUtxoView:    chain.FetchUtxoView,
+		BestHeight:       chain.BestHeight,
+		MedianTimePast:   chain.MedianTimePast,
+		CalcSequenceLock: chain.CalcSequenceLock,
+		HashCache:        txscript.NewHashCache(10),
+	})
+
+	harness.chain.SetMedianTimePast(time.Now())
+	return harness
+}
+
+func (h *reorgTxPoolHarness) createCoinbaseTx(blockHeight int32,
+	numOutputs uint32) (*hnsutil.Tx, error) {
+
+	coinbaseScript, err := txscript.NewScriptBuilder().
+		AddInt64(int64(blockHeight)).AddInt64(0).Script()
+	if err != nil {
+		return nil, err
+	}
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.LockTime = uint32(blockHeight)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: *wire.NewOutPoint(&chainhash.Hash{},
+			wire.MaxPrevOutIndex),
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  [][]byte{coinbaseScript},
+	})
+
+	totalInput := blockchain.CalcBlockSubsidy(blockHeight, h.chainParams)
+	amountPerOutput := totalInput / int64(numOutputs)
+	remainder := totalInput - amountPerOutput*int64(numOutputs)
+	for i := uint32(0); i < numOutputs; i++ {
+		amount := amountPerOutput
+		if i == numOutputs-1 {
+			amount += remainder
+		}
+		tx.AddTxOut(&wire.TxOut{
+			Address: h.payWireAddr,
+			Value:   amount,
+		})
+	}
+
+	return hnsutil.NewTx(tx), nil
+}
+
+func (h *reorgTxPoolHarness) addCoinbaseTx(t *testing.T,
+	numOutputs uint32) *hnsutil.Tx {
+
+	t.Helper()
+
+	coinbaseHeight := h.chain.BestHeight() + 1
+	coinbase, err := h.createCoinbaseTx(coinbaseHeight, numOutputs)
+	require.NoError(t, err)
+
+	h.chain.utxos.AddTxOuts(coinbase, coinbaseHeight)
+	h.chain.SetHeight(coinbaseHeight + int32(h.chainParams.CoinbaseMaturity))
+	h.chain.SetMedianTimePast(time.Now())
+
+	return coinbase
+}
+
+func (h *reorgTxPoolHarness) createSignedCovenantTx(t *testing.T,
+	input reorgSpendableOutput, fee hnsutil.Amount,
+	covenant wire.Covenant) *hnsutil.Tx {
+
+	t.Helper()
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: input.outPoint,
+		Sequence:         wire.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(&wire.TxOut{
+		Address:  h.payWireAddr,
+		Value:    int64(input.amount - fee),
+		Covenant: covenant,
+	})
+
+	sigHashes := txscript.NewTxSigHashes(tx,
+		txscript.NewCannedPrevOutputFetcher(
+			h.payWireAddr, int64(input.amount),
+		),
+	)
+	witness, err := txscript.WitnessSignature(tx, sigHashes, 0,
+		int64(input.amount), h.payScript, txscript.SigHashAll,
+		h.signKey, true)
+	require.NoError(t, err)
+	tx.TxIn[0].Witness = witness
+
+	return hnsutil.NewTx(tx)
+}
+
+type reorgFakeChain struct {
+	sync.RWMutex
+	utxos          *blockchain.UtxoViewpoint
+	currentHeight  int32
+	medianTimePast time.Time
+}
+
+func (c *reorgFakeChain) FetchUtxoView(tx *hnsutil.Tx) (
+	*blockchain.UtxoViewpoint, error) {
+
+	c.RLock()
+	defer c.RUnlock()
+
+	view := blockchain.NewUtxoViewpoint()
+	prevOut := wire.OutPoint{Hash: *tx.Hash()}
+	for txOutIdx := range tx.MsgTx().TxOut {
+		prevOut.Index = uint32(txOutIdx)
+		entry := c.utxos.LookupEntry(prevOut)
+		if entry != nil {
+			view.Entries()[prevOut] = entry.Clone()
+		} else {
+			view.Entries()[prevOut] = nil
+		}
+	}
+	for _, txIn := range tx.MsgTx().TxIn {
+		entry := c.utxos.LookupEntry(txIn.PreviousOutPoint)
+		if entry != nil {
+			view.Entries()[txIn.PreviousOutPoint] = entry.Clone()
+		} else {
+			view.Entries()[txIn.PreviousOutPoint] = nil
+		}
+	}
+
+	return view, nil
+}
+
+func (c *reorgFakeChain) BestHeight() int32 {
+	c.RLock()
+	defer c.RUnlock()
+	return c.currentHeight
+}
+
+func (c *reorgFakeChain) SetHeight(height int32) {
+	c.Lock()
+	defer c.Unlock()
+	c.currentHeight = height
+}
+
+func (c *reorgFakeChain) MedianTimePast() time.Time {
+	c.RLock()
+	defer c.RUnlock()
+	return c.medianTimePast
+}
+
+func (c *reorgFakeChain) SetMedianTimePast(mtp time.Time) {
+	c.Lock()
+	defer c.Unlock()
+	c.medianTimePast = mtp
+}
+
+func (c *reorgFakeChain) CalcSequenceLock(*hnsutil.Tx,
+	*blockchain.UtxoViewpoint) (*blockchain.SequenceLock, error) {
+
+	return &blockchain.SequenceLock{
+		Seconds:     -1,
+		BlockHeight: -1,
+	}, nil
+}
+
+func reorgOpenCovenant(name string) wire.Covenant {
+	return wire.Covenant{
+		Type: wire.CovenantOpen,
+		Items: [][]byte{
+			reorgHashItem(name),
+			reorgU32Item(0),
+			[]byte(name),
+		},
+	}
+}
+
+func reorgHashItem(name string) []byte {
+	hash := blockchain.HashName([]byte(name))
+	item := make([]byte, chainhash.HashSize)
+	copy(item, hash[:])
+	return item
+}
+
+func reorgU32Item(value uint32) []byte {
+	var item [4]byte
+	binary.LittleEndian.PutUint32(item[:], value)
+	return item[:]
+}
+
 // mockTimeSource is used to trick the BlockChain instance to think that we're
 // in the past.  This is so that we can force it to return true for isCurrent().
 type mockTimeSource struct {
@@ -332,10 +1077,6 @@ func (m *mockTimeSource) Offset() time.Duration {
 // The first copy gets processed (removing the hash from requestedBlocks),
 // and the second copy then arrives as "unrequested", disconnecting the peer.
 func TestBuildBlockRequestSkipsInflightBlocks(t *testing.T) {
-	// TODO(handshake): uses loadHeaders() Bitcoin mainnet testdata. Replace
-	// with Handshake-format headers.
-	t.Skip("uses Bitcoin mainnet header testdata; needs Handshake equivalent")
-
 	tests := []struct {
 		name string
 		// inflightHeights are the block heights already in
@@ -374,17 +1115,18 @@ func TestBuildBlockRequestSkipsInflightBlocks(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			params := chaincfg.MainNetParams
+			params := chaincfg.RegressionNetParams
 			params.Checkpoints = nil
 			sm, tearDown := makeMockSyncManager(t, &params)
 			defer tearDown()
 
 			// Process headers 1-11 so the header chain is
 			// ahead of the block chain.
-			headers := loadHeaders(t)
-			for _, header := range headers {
+			const numBlocks = 11
+			blocks := generateTestBlocks(t, &params, numBlocks)
+			for _, block := range blocks {
 				_, err := sm.chain.ProcessBlockHeader(
-					header, blockchain.BFNone, false)
+					&block.MsgBlock().Header, blockchain.BFNone, false)
 				require.NoError(t, err)
 			}
 
@@ -428,6 +1170,95 @@ func TestBuildBlockRequestSkipsInflightBlocks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildBlockRequestCapsInflightBlocks(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	totalBlocks := maxInFlightBlocks + 20
+	blocks := generateTestBlocks(t, &params, totalBlocks)
+	for _, block := range blocks {
+		_, err := sm.chain.ProcessBlockHeader(
+			&block.MsgBlock().Header, blockchain.BFNone, false)
+		require.NoError(t, err)
+	}
+
+	syncPeer := peer.NewInboundPeer(&peer.Config{})
+	sm.syncPeer = syncPeer
+	syncPeerState := &peerSyncState{
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+	sm.peerStates[syncPeer] = syncPeerState
+
+	gdmsg := sm.buildBlockRequest(syncPeer)
+	require.Len(t, gdmsg.Inventory, maxInFlightBlocks)
+
+	for i := 0; i < maxInFlightBlocks; i++ {
+		require.Equal(t, *blocks[i].Hash(),
+			gdmsg.Inventory[i].InvVect().Hash)
+	}
+
+	nextHash := *blocks[maxInFlightBlocks].Hash()
+	delete(sm.requestedBlocks, gdmsg.Inventory[0].InvVect().Hash)
+	delete(syncPeerState.requestedBlocks, gdmsg.Inventory[0].InvVect().Hash)
+	_, _, err := sm.chain.ProcessBlock(blocks[0], blockchain.BFNone)
+	require.NoError(t, err)
+
+	gdmsg = sm.buildBlockRequest(syncPeer)
+	require.Len(t, gdmsg.Inventory, 1)
+	require.Equal(t, nextHash, gdmsg.Inventory[0].InvVect().Hash)
+}
+
+func TestRejectedBlockIsNotRequestedAgain(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	blocks := generateTestBlocks(t, &params, 1)
+	block := blocks[0]
+	_, err := sm.chain.ProcessBlockHeader(
+		&block.MsgBlock().Header, blockchain.BFNone, false)
+	require.NoError(t, err)
+
+	syncPeer := peer.NewInboundPeer(&peer.Config{})
+	sm.syncPeer = syncPeer
+	syncPeerState := &peerSyncState{
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+	sm.peerStates[syncPeer] = syncPeerState
+
+	gdmsg := sm.buildBlockRequest(syncPeer)
+	require.Len(t, gdmsg.Inventory, 1)
+
+	badMsg := *block.MsgBlock()
+	badMsg.Transactions = append([]*wire.MsgTx{}, badMsg.Transactions...)
+	badMsg.Transactions = append(badMsg.Transactions, badMsg.Transactions[0])
+	badBlock := hnsutil.NewBlock(&badMsg)
+
+	sm.handleBlockMsg(&blockMsg{
+		block: badBlock,
+		peer:  syncPeer,
+		reply: make(chan struct{}, 1),
+	})
+
+	blockHash := *block.Hash()
+	require.Contains(t, sm.rejectedBlocks, blockHash)
+	require.NotContains(t, sm.requestedBlocks, blockHash)
+	require.NotContains(t, syncPeerState.requestedBlocks, blockHash)
+
+	haveInv, err := sm.haveInventory(
+		wire.NewInvVect(wire.InvTypeBlock, block.Hash()))
+	require.NoError(t, err)
+	require.True(t, haveInv)
+
+	gdmsg = sm.buildBlockRequest(syncPeer)
+	require.Empty(t, gdmsg.Inventory)
 }
 
 func TestIsInIBDMode(t *testing.T) {
@@ -560,15 +1391,26 @@ func TestIsInIBDMode(t *testing.T) {
 }
 
 // createTestCoinbase creates a minimal coinbase transaction for the given
-// block height.  The witness encodes the height to guarantee unique
-// transaction hashes across blocks.
-func createTestCoinbase(height int32, params *chaincfg.Params) *wire.MsgTx {
-	tx := wire.NewMsgTx(wire.TxVersion)
+// block height.
+func createTestCoinbase(t *testing.T, height int32,
+	params *chaincfg.Params) *wire.MsgTx {
 
-	heightBytes := []byte{
-		byte(height), byte(height >> 8),
-		byte(height >> 16), byte(height >> 24),
-	}
+	return createTestCoinbaseVariant(t, height, params, 0)
+}
+
+func createTestCoinbaseVariant(t *testing.T, height int32,
+	params *chaincfg.Params, variant byte) *wire.MsgTx {
+
+	t.Helper()
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.LockTime = uint32(height)
+
+	heightScript, err := txscript.NewScriptBuilder().
+		AddInt64(int64(height)).
+		AddOp(txscript.OP_0).
+		Script()
+	require.NoError(t, err)
 
 	tx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: wire.OutPoint{
@@ -576,12 +1418,14 @@ func createTestCoinbase(height int32, params *chaincfg.Params) *wire.MsgTx {
 			Index: wire.MaxPrevOutIndex,
 		},
 		Sequence: wire.MaxTxInSequenceNum,
-		Witness:  wire.TxWitness{heightBytes},
+		Witness:  wire.TxWitness{heightScript},
 	})
 
+	addrHash := make([]byte, 20)
+	addrHash[len(addrHash)-1] = variant
 	tx.AddTxOut(&wire.TxOut{
 		Value:   blockchain.CalcBlockSubsidy(height, params),
-		Address: wire.Address{Version: 0, Hash: make([]byte, 20)},
+		Address: wire.Address{Version: 0, Hash: addrHash},
 	})
 
 	return tx
@@ -610,20 +1454,36 @@ func generateTestBlocks(
 
 	t.Helper()
 
+	return generateTestBlocksFrom(t, params, *params.GenesisHash,
+		params.GenesisBlock.Header.Timestamp, 0, count, 0)
+}
+
+func generateTestBlocksFrom(t *testing.T, params *chaincfg.Params,
+	parentHash chainhash.Hash, parentTime time.Time, parentHeight int32,
+	count int, variant byte) []*hnsutil.Block {
+
+	t.Helper()
+
 	blocks := make([]*hnsutil.Block, 0, count)
-	prevHash := params.GenesisHash
+	prevHash := &parentHash
 	prevTime := params.GenesisBlock.Header.Timestamp
 
-	for h := int32(1); h <= int32(count); h++ {
-		cb := createTestCoinbase(h, params)
-		merkleRoot := cb.TxHash()
+	if !parentTime.IsZero() {
+		prevTime = parentTime
+	}
+
+	for i := int32(1); i <= int32(count); i++ {
+		h := parentHeight + i
+		cb := createTestCoinbaseVariant(t, h, params, variant)
+		txs := []*hnsutil.Tx{hnsutil.NewTx(cb)}
 
 		header := wire.BlockHeader{
-			Version:    1,
-			PrevBlock:  *prevHash,
-			MerkleRoot: merkleRoot,
-			Timestamp:  prevTime.Add(time.Minute),
-			Bits:       params.PowLimitBits,
+			Version:     2,
+			PrevBlock:   *prevHash,
+			MerkleRoot:  blockchain.CalcMerkleRoot(txs, false),
+			WitnessRoot: blockchain.CalcMerkleRoot(txs, true),
+			Timestamp:   prevTime.Add(time.Minute),
+			Bits:        params.PowLimitBits,
 		}
 		require.True(t, solveTestBlock(&header, params),
 			"failed to solve block at height %d", h)
@@ -686,10 +1546,6 @@ func generateTestBlocks(
 // headers), then peer 2 stalls during block download (peer 3 finishes blocks).
 // This exercises recovery across three distinct peers.
 func TestSyncStateMachine(t *testing.T) {
-	// TODO(handshake): uses loadHeaders() Bitcoin mainnet testdata. Replace
-	// with Handshake-format headers.
-	t.Skip("uses Bitcoin mainnet header testdata; needs Handshake equivalent")
-
 	t.Parallel()
 
 	const testTotalBlocks = 2 * minInFlightBlocks
@@ -1111,12 +1967,6 @@ func syncStalledHeaderRecovery(t *testing.T, sm *SyncManager,
 // headers are already caught up but the block chain lags behind.  In this
 // case startSync should skip header download and directly request blocks.
 func TestStartSyncBlockFallback(t *testing.T) {
-	// TODO(handshake): test helpers create blocks with Version 1, but
-	// regtest activates BIP0034/BIP0065/BIP0066 at height 0, so headers
-	// fail validation with ErrBlockVersionTooOld.  Adapt block versioning
-	// for Handshake (genesis uses Version 0) before re-enabling.
-	t.Skip("regtest block version validation rejects test-generated blocks")
-
 	t.Parallel()
 
 	params := chaincfg.RegressionNetParams
@@ -1155,6 +2005,126 @@ func TestStartSyncBlockFallback(t *testing.T) {
 		"blocks should be requested via fetchHeaderBlocks")
 }
 
+func TestNotFoundFromSyncPeerSwitchesBlockDownloadPeer(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	const numBlocks = 11
+	blocks := generateTestBlocks(t, &params, numBlocks)
+	for _, block := range blocks {
+		_, err := sm.chain.ProcessBlockHeader(
+			&block.MsgBlock().Header, blockchain.BFNone, false)
+		require.NoError(t, err)
+	}
+
+	stalePeer := newSyncCandidate(t, sm, numBlocks)
+	sm.startSync()
+	require.True(t, sm.syncPeer == stalePeer)
+
+	staleState := sm.peerStates[stalePeer]
+	require.NotEmpty(t, staleState.requestedBlocks)
+
+	replacementPeer := newSyncCandidate(t, sm, numBlocks)
+
+	missingHash := blocks[0].Hash()
+	notFound := wire.NewHnsMsgNotFound()
+	require.NoError(t, notFound.AddInvVect(
+		wire.NewInvVect(wire.InvTypeBlock, missingHash)))
+
+	sm.handleNotFoundMsg(&notFoundMsg{
+		notFound: notFound,
+		peer:     stalePeer,
+	})
+
+	require.False(t, staleState.syncCandidate)
+	require.Empty(t, staleState.requestedBlocks)
+	require.True(t, sm.syncPeer == replacementPeer)
+
+	replacementState := sm.peerStates[replacementPeer]
+	require.Contains(t, replacementState.requestedBlocks, *missingHash)
+	require.Contains(t, sm.requestedBlocks, *missingHash)
+	require.Equal(t, sm.requestedBlocks, replacementState.requestedBlocks)
+}
+
+func TestHeadersAnnouncementUpdatesPeerAndRequestsBlock(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	blocks := generateTestBlocks(t, &params, 1)
+	announcedBlock := blocks[0]
+	announcedHash := announcedBlock.Hash()
+
+	p := newSyncCandidate(t, sm, 0)
+	sm.ibdMode = false
+
+	sm.handleHeadersMsg(&headersMsg{
+		headers: &wire.HnsMsgHeaders{
+			Headers: []*wire.BlockHeader{
+				&announcedBlock.MsgBlock().Header,
+			},
+		},
+		peer: p,
+	})
+
+	require.Equal(t, int32(1), p.LastBlock())
+	lastAnnounced := p.LastAnnouncedBlock()
+	require.NotNil(t, lastAnnounced)
+	require.True(t, lastAnnounced.IsEqual(announcedHash))
+	require.Contains(t, sm.requestedBlocks, *announcedHash)
+	require.Contains(t, sm.peerStates[p].requestedBlocks, *announcedHash)
+}
+
+func TestHandleTxMsgNoMempool(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	p := newSyncCandidate(t, sm, 0)
+	tx := hnsutil.NewTx(wire.NewMsgTx(wire.TxVersion))
+	txHash := tx.Hash()
+
+	state := sm.peerStates[p]
+	state.requestedTxns[*txHash] = struct{}{}
+	sm.requestedTxns[*txHash] = struct{}{}
+
+	sm.handleTxMsg(&txMsg{
+		tx:   tx,
+		peer: p,
+	})
+
+	require.NotContains(t, state.requestedTxns, *txHash)
+	require.NotContains(t, sm.requestedTxns, *txHash)
+}
+
+func TestHaveTransactionInventoryNoMempool(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	hash := chainhash.Hash{0x01}
+	have, err := sm.haveInventory(wire.NewInvVect(wire.InvTypeTx, &hash))
+	require.NoError(t, err)
+	require.False(t, have)
+}
+
 // TestStallNoDisconnectAtSameHeight verifies that handleStallSample does
 // not disconnect a sync peer whose advertised height equals our own.
 func TestStallNoDisconnectAtSameHeight(t *testing.T) {
@@ -1188,12 +2158,6 @@ func TestStallNoDisconnectAtSameHeight(t *testing.T) {
 // isInIBDMode sees IsCurrent()==true with no higher peers, returns false,
 // and startSync exits immediately.
 func TestStartSyncChainCurrent(t *testing.T) {
-	// TODO(handshake): test helpers create blocks with Version 1, but
-	// regtest activates BIP0034/BIP0065/BIP0066 at height 0, so headers
-	// fail validation with ErrBlockVersionTooOld.  Adapt block versioning
-	// for Handshake (genesis uses Version 0) before re-enabling.
-	t.Skip("regtest block version validation rejects test-generated blocks")
-
 	t.Parallel()
 
 	params := chaincfg.RegressionNetParams
@@ -1204,13 +2168,15 @@ func TestStartSyncChainCurrent(t *testing.T) {
 
 	// Mine a single block with a recent timestamp so
 	// IsCurrent() returns true.
-	cb := createTestCoinbase(1, &params)
+	cb := createTestCoinbase(t, 1, &params)
+	txs := []*hnsutil.Tx{hnsutil.NewTx(cb)}
 	header := wire.BlockHeader{
-		Version:    1,
-		PrevBlock:  *params.GenesisHash,
-		MerkleRoot: cb.TxHash(),
-		Timestamp:  time.Now().Truncate(time.Second),
-		Bits:       params.PowLimitBits,
+		Version:     2,
+		PrevBlock:   *params.GenesisHash,
+		MerkleRoot:  blockchain.CalcMerkleRoot(txs, false),
+		WitnessRoot: blockchain.CalcMerkleRoot(txs, true),
+		Timestamp:   time.Now().Truncate(time.Second),
+		Bits:        params.PowLimitBits,
 	}
 	require.True(t, solveTestBlock(&header, &params))
 

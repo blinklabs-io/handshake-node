@@ -97,9 +97,18 @@ func upgradeDBPaths() error {
 	// respective networks.  Check for the old database and update it to the
 	// new path introduced with version 0.2.0 accordingly.
 	oldDbRoot := filepath.Join(oldHnsHomeDir(), "db")
-	upgradeDBPathNet(filepath.Join(oldDbRoot, "handshake-node.db"), "mainnet")
-	upgradeDBPathNet(filepath.Join(oldDbRoot, "handshake-node_testnet.db"), "testnet")
-	upgradeDBPathNet(filepath.Join(oldDbRoot, "handshake-node_regtest.db"), "regtest")
+	if !fileExists(oldDbRoot) {
+		return nil
+	}
+	if err := upgradeDBPathNet(filepath.Join(oldDbRoot, "handshake-node.db"), "mainnet"); err != nil {
+		return err
+	}
+	if err := upgradeDBPathNet(filepath.Join(oldDbRoot, "handshake-node_testnet.db"), "testnet"); err != nil {
+		return err
+	}
+	if err := upgradeDBPathNet(filepath.Join(oldDbRoot, "handshake-node_regtest.db"), "regtest"); err != nil {
+		return err
+	}
 
 	// Remove the old db directory.
 	return os.RemoveAll(oldDbRoot)

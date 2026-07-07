@@ -105,21 +105,8 @@ func TestCoinbaseClaimConjuredValueRejectsExpiredProof(t *testing.T) {
 }
 
 func TestCoinbaseAirdropConjuredValue(t *testing.T) {
-	addr := wire.Address{
-		Version: 0,
-		Hash:    testAddressHash(),
-	}
-	value := uint64(1000)
-	fee := uint64(7)
-	proof := testAirdropProof(t, addr, value, fee)
-
-	tx := wire.NewMsgTx(1)
-	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
-		wire.TxWitness{[]byte{0x02, 0x01}}))
-	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
-		wire.TxWitness{proof}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
-	tx.AddTxOut(wire.NewTxOut(int64(value-fee), addr, wire.Covenant{}))
+	proof := testHsdFaucetProof(t)
+	tx, value := testCoinbaseAirdropTxFromProof(t, proof)
 
 	got, err := coinbaseConjuredValue(hnsutil.NewTx(tx), 10, 0,
 		&chaincfg.MainNetParams)
@@ -131,22 +118,41 @@ func TestCoinbaseAirdropConjuredValue(t *testing.T) {
 	}
 }
 
-func TestCoinbaseAirdropConjuredValueRejectsMismatch(t *testing.T) {
-	addr := wire.Address{
-		Version: 0,
-		Hash:    testAddressHash(),
+func TestCoinbaseAirdropConjuredValueRejectsDuplicateProof(t *testing.T) {
+	proof := testHsdFaucetProof(t)
+	airdrop, err := parseAirdropProof(proof)
+	if err != nil {
+		t.Fatalf("parseAirdropProof: %v", err)
 	}
-	value := uint64(1000)
-	fee := uint64(7)
-	proof := testAirdropProof(t, addr, value, fee)
+	value := airdrop.value()
+	outputValue := value - airdrop.fee
+	addr := wire.Address{
+		Version: airdrop.version,
+		Hash:    append([]byte(nil), airdrop.address...),
+	}
 
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
 		wire.TxWitness{[]byte{0x02, 0x01}}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
 		wire.TxWitness{proof}))
+	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
+		wire.TxWitness{proof}))
 	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
-	tx.AddTxOut(wire.NewTxOut(int64(value-fee-1), addr, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(int64(outputValue), addr, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(int64(outputValue), addr, wire.Covenant{}))
+
+	if _, err := coinbaseConjuredValue(hnsutil.NewTx(tx), 10, 0,
+		&chaincfg.MainNetParams); err == nil {
+
+		t.Fatal("coinbaseConjuredValue: expected duplicate proof error")
+	}
+}
+
+func TestCoinbaseAirdropConjuredValueRejectsMismatch(t *testing.T) {
+	proof := testHsdFaucetProof(t)
+	tx, _ := testCoinbaseAirdropTxFromProof(t, proof)
+	tx.TxOut[1].Value--
 
 	if _, err := coinbaseConjuredValue(hnsutil.NewTx(tx), 10, 0,
 		&chaincfg.MainNetParams); err == nil {

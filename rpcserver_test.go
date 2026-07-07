@@ -1,17 +1,525 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/blinklabs-io/handshake-node/blockchain"
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/database"
+	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/mempool"
+	"github.com/blinklabs-io/handshake-node/mining"
+	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btclog"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHnsutilAddressToWireRejectsTaprootShapedAddress(t *testing.T) {
+	addr, err := hnsutil.NewAddress(1, make([]byte, 32),
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+
+	if _, err := hnsutilAddressToWire(addr); err == nil {
+		t.Fatal("hnsutilAddressToWire accepted taproot-shaped address")
+	}
+}
+
+type gbtTestTxSource struct {
+	updated time.Time
+}
+
+func (s *gbtTestTxSource) LastUpdated() time.Time { return s.updated }
+func (*gbtTestTxSource) MiningDescs() []*mining.TxDesc {
+	return nil
+}
+func (*gbtTestTxSource) HaveTransaction(*chainhash.Hash) bool {
+	return false
+}
+
+func newGBTTestRPCServer(t *testing.T, txSource *gbtTestTxSource) (
+	*rpcServer, *blockchain.BlockChain) {
+
+	t.Helper()
+
+	blockchain.DisableLog()
+	database.UseLogger(btclog.Disabled)
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	dbPath := filepath.Join(t.TempDir(), "ffldb")
+	db, err := database.Create("ffldb", dbPath, params.Net)
+	if err != nil {
+		t.Fatalf("database.Create: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+	})
+
+	timeSource := blockchain.NewMedianTime()
+	sigCache := txscript.NewSigCache(1000)
+	hashCache := txscript.NewHashCache(1000)
+	chain, err := blockchain.New(&blockchain.Config{
+		DB:          db,
+		ChainParams: &params,
+		TimeSource:  timeSource,
+		SigCache:    sigCache,
+	})
+	if err != nil {
+		t.Fatalf("blockchain.New: %v", err)
+	}
+
+	policy := mining.Policy{
+		BlockMaxWeight: blockchain.MaxBlockWeight,
+		BlockMaxSize:   blockchain.MaxBlockBaseSize,
+	}
+	generator := mining.NewBlkTmplGenerator(&policy, &params,
+		txSource, chain, timeSource, sigCache, hashCache)
+	server := &rpcServer{
+		cfg: rpcserverConfig{
+			TimeSource:  timeSource,
+			Chain:       chain,
+			ChainParams: &params,
+			Generator:   generator,
+		},
+		gbtWorkState: newGbtWorkState(timeSource),
+	}
+
+	return server, chain
+}
+
+func newGBTTestResult(t *testing.T, server *rpcServer,
+	useCoinbaseValue bool) (*hnsjson.GetBlockTemplateResult, *mining.BlockTemplate) {
+
+	t.Helper()
+
+	var payAddr hnsutil.Address
+	if !useCoinbaseValue {
+		var err error
+		payAddr, err = hnsutil.NewAddressPubKeyHash(make([]byte, 20),
+			server.cfg.ChainParams)
+		if err != nil {
+			t.Fatalf("NewAddressPubKeyHash: %v", err)
+		}
+	}
+
+	template, err := server.cfg.Generator.NewBlockTemplate(payAddr)
+	if err != nil {
+		t.Fatalf("NewBlockTemplate: %v", err)
+	}
+
+	state := server.gbtWorkState
+	state.Lock()
+	defer state.Unlock()
+
+	best := server.cfg.Chain.BestSnapshot()
+	prevHash := best.Hash
+	state.template = template
+	state.prevHash = &prevHash
+	state.lastGenerated = time.Now()
+	state.lastTxUpdate = server.cfg.Generator.TxSource().LastUpdated()
+	if state.lastTxUpdate.IsZero() {
+		state.lastTxUpdate = time.Now()
+	}
+	state.minTimestamp = mining.MinimumMedianTime(best)
+
+	result, err := state.blockTemplateResult(useCoinbaseValue, nil)
+	if err != nil {
+		t.Fatalf("blockTemplateResult: %v", err)
+	}
+
+	return result, template
+}
+
+func solveGBTTestBlock(t *testing.T, msgBlock *wire.MsgBlock) {
+	t.Helper()
+
+	targetDifficulty := blockchain.CompactToBig(msgBlock.Header.Bits)
+	for nonce := uint32(0); ; nonce++ {
+		msgBlock.Header.Nonce = nonce
+		hash := msgBlock.Header.BlockHash()
+		if blockchain.HashToBig(&hash).Cmp(targetDifficulty) <= 0 {
+			return
+		}
+		if nonce == ^uint32(0) {
+			break
+		}
+	}
+
+	t.Fatalf("unable to solve block at difficulty %08x",
+		msgBlock.Header.Bits)
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func requireMutableField(t *testing.T, fields []string, want string) {
+	t.Helper()
+	if !hasString(fields, want) {
+		t.Fatalf("mutable fields %v missing %q", fields, want)
+	}
+}
+
+func requireNoMutableField(t *testing.T, fields []string, unwanted string) {
+	t.Helper()
+	if hasString(fields, unwanted) {
+		t.Fatalf("mutable fields %v unexpectedly include %q", fields,
+			unwanted)
+	}
+}
+
+func requireGBTHandshakeHeaderFields(t *testing.T,
+	result *hnsjson.GetBlockTemplateResult, template *mining.BlockTemplate) {
+
+	t.Helper()
+
+	header := &template.Block.Header
+	if got, want := result.TreeRoot, header.NameRoot.String(); got != want {
+		t.Fatalf("treeroot = %q, want %q", got, want)
+	}
+	if got, want := result.ReservedRoot, header.ReservedRoot.String(); got != want {
+		t.Fatalf("reservedroot = %q, want %q", got, want)
+	}
+	if got, want := result.Mask, header.Mask.String(); got != want {
+		t.Fatalf("mask = %q, want %q", got, want)
+	}
+}
+
+func gbtTestAirdropWitness(t *testing.T, index uint32, version uint8,
+	address []byte, value, fee uint64) []byte {
+
+	t.Helper()
+
+	var buf bytes.Buffer
+	var scratch [8]byte
+	binary.LittleEndian.PutUint32(scratch[:4], index)
+	buf.Write(scratch[:4])
+	buf.WriteByte(0) // proof path count
+	buf.WriteByte(0) // subindex
+	buf.WriteByte(0) // subproof path count
+
+	var key bytes.Buffer
+	key.WriteByte(gbtAirdropKeyAddress)
+	key.WriteByte(version)
+	key.WriteByte(byte(len(address)))
+	key.Write(address)
+	binary.LittleEndian.PutUint64(scratch[:], value)
+	key.Write(scratch[:])
+	key.WriteByte(0)
+	if err := wire.WriteVarBytes(&buf, 0, key.Bytes()); err != nil {
+		t.Fatalf("WriteVarBytes key: %v", err)
+	}
+
+	buf.WriteByte(version)
+	buf.WriteByte(byte(len(address)))
+	buf.Write(address)
+	if err := wire.WriteVarInt(&buf, 0, fee); err != nil {
+		t.Fatalf("WriteVarInt fee: %v", err)
+	}
+	if err := wire.WriteVarBytes(&buf, 0, nil); err != nil {
+		t.Fatalf("WriteVarBytes signature: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+func TestBlockTemplateResultHandshakeFieldsForCoinbaseValue(t *testing.T) {
+	txSource := &gbtTestTxSource{updated: time.Now()}
+	server, _ := newGBTTestRPCServer(t, txSource)
+
+	result, template := newGBTTestResult(t, server, true)
+	requireGBTHandshakeHeaderFields(t, result, template)
+
+	if result.CoinbaseValue == nil {
+		t.Fatal("coinbasevalue missing")
+	}
+	if result.CoinbaseTxn != nil {
+		t.Fatal("coinbasetxn included for coinbasevalue template")
+	}
+	if result.MerkleRoot != "" {
+		t.Fatalf("merkleroot = %q, want empty for external coinbase",
+			result.MerkleRoot)
+	}
+	if result.WitnessRoot != "" {
+		t.Fatalf("witnessroot = %q, want empty for external coinbase",
+			result.WitnessRoot)
+	}
+
+	requireMutableField(t, result.Mutable, "time")
+	requireMutableField(t, result.Mutable, "transactions")
+	requireMutableField(t, result.Mutable, "prevblock")
+	requireNoMutableField(t, result.Mutable, "transactions/add")
+	requireNoMutableField(t, result.Mutable, "coinbase")
+	requireNoMutableField(t, result.Mutable, "coinbase/append")
+	requireNoMutableField(t, result.Mutable, "generation")
+}
+
+func TestBlockTemplateResultHandshakeFieldsForCoinbaseTxn(t *testing.T) {
+	txSource := &gbtTestTxSource{updated: time.Now()}
+	server, _ := newGBTTestRPCServer(t, txSource)
+
+	result, template := newGBTTestResult(t, server, false)
+	requireGBTHandshakeHeaderFields(t, result, template)
+
+	if result.CoinbaseTxn == nil {
+		t.Fatal("coinbasetxn missing")
+	}
+	if result.CoinbaseValue != nil {
+		t.Fatal("coinbasevalue included for coinbasetxn template")
+	}
+
+	header := &template.Block.Header
+	if got, want := result.MerkleRoot, header.MerkleRoot.String(); got != want {
+		t.Fatalf("merkleroot = %q, want %q", got, want)
+	}
+	if got, want := result.WitnessRoot, header.WitnessRoot.String(); got != want {
+		t.Fatalf("witnessroot = %q, want %q", got, want)
+	}
+
+	requireMutableField(t, result.Mutable, "time")
+	requireMutableField(t, result.Mutable, "transactions")
+	requireMutableField(t, result.Mutable, "prevblock")
+	requireMutableField(t, result.Mutable, "coinbase")
+	requireMutableField(t, result.Mutable, "coinbase/append")
+	requireMutableField(t, result.Mutable, "generation")
+	requireNoMutableField(t, result.Mutable, "transactions/add")
+}
+
+func TestBlockTemplateResultIncludesCoinbaseProofMetadata(t *testing.T) {
+	txSource := &gbtTestTxSource{updated: time.Now()}
+	server, _ := newGBTTestRPCServer(t, txSource)
+
+	_, template := newGBTTestResult(t, server, true)
+
+	nameHash := bytes.Repeat([]byte{0x11}, chainhash.HashSize)
+	commitHash := bytes.Repeat([]byte{0x22}, chainhash.HashSize)
+	claimHeight := make([]byte, 4)
+	commitHeight := make([]byte, 4)
+	binary.LittleEndian.PutUint32(claimHeight, uint32(template.Height))
+	binary.LittleEndian.PutUint32(commitHeight, 2)
+	claimAddrHash := bytes.Repeat([]byte{0x33}, 20)
+	claimProof := mining.CoinbaseProof{
+		Witness: []byte{0xaa, 0xbb, 0xcc},
+		Output: wire.NewTxOut(4_900, wire.Address{
+			Version: 0,
+			Hash:    claimAddrHash,
+		}, wire.Covenant{
+			Type: wire.CovenantClaim,
+			Items: [][]byte{
+				nameHash,
+				claimHeight,
+				[]byte("com"),
+				[]byte{0x01},
+				commitHash,
+				commitHeight,
+			},
+		}),
+		Fee: 100,
+	}
+
+	airdropAddrHash := bytes.Repeat([]byte{0x44}, 20)
+	airdropWitness := gbtTestAirdropWitness(t, 7, 0,
+		airdropAddrHash, 7_000, 200)
+	airdropProof := mining.CoinbaseProof{
+		Witness: airdropWitness,
+		Output: wire.NewTxOut(6_800, wire.Address{
+			Version: 0,
+			Hash:    airdropAddrHash,
+		}, wire.Covenant{}),
+		Fee: 200,
+	}
+
+	template.CoinbaseProofs = []mining.CoinbaseProof{
+		claimProof,
+		airdropProof,
+	}
+	template.NameDeflationHeight = uint32(template.Height)
+
+	state := server.gbtWorkState
+	state.Lock()
+	result, err := state.blockTemplateResult(true, nil)
+	state.Unlock()
+	if err != nil {
+		t.Fatalf("blockTemplateResult: %v", err)
+	}
+
+	if len(result.Claims) != 1 {
+		t.Fatalf("claims count = %d, want 1", len(result.Claims))
+	}
+	claim := result.Claims[0]
+	if claim.Data != hex.EncodeToString(claimProof.Witness) {
+		t.Fatalf("claim data = %q, want %q", claim.Data,
+			hex.EncodeToString(claimProof.Witness))
+	}
+	if claim.Name != "com" {
+		t.Fatalf("claim name = %q, want com", claim.Name)
+	}
+	if claim.NameHash != hex.EncodeToString(nameHash) {
+		t.Fatalf("claim namehash = %q, want %q", claim.NameHash,
+			hex.EncodeToString(nameHash))
+	}
+	if claim.Hash != hex.EncodeToString(claimAddrHash) {
+		t.Fatalf("claim hash = %q, want %q", claim.Hash,
+			hex.EncodeToString(claimAddrHash))
+	}
+	if claim.Value != claimProof.Output.Value || claim.Fee != 0 {
+		t.Fatalf("deflated claim value/fee = %d/%d, want %d/0",
+			claim.Value, claim.Fee, claimProof.Output.Value)
+	}
+	if !claim.Weak {
+		t.Fatal("claim weak = false, want true")
+	}
+	if claim.CommitHash != hex.EncodeToString(commitHash) {
+		t.Fatalf("claim commitHash = %q, want %q", claim.CommitHash,
+			hex.EncodeToString(commitHash))
+	}
+	if claim.CommitHeight != 2 {
+		t.Fatalf("claim commitHeight = %d, want 2", claim.CommitHeight)
+	}
+	wantClaimWeight := int64(1 +
+		wire.VarIntSerializeSize(uint64(len(claimProof.Witness))) +
+		len(claimProof.Witness) +
+		(1+8+claimProof.Output.Address.SerializeSize()+90+len("com"))*
+			blockchain.WitnessScaleFactor)
+	if claim.Weight != wantClaimWeight {
+		t.Fatalf("claim weight = %d, want %d", claim.Weight,
+			wantClaimWeight)
+	}
+
+	if len(result.Airdrops) != 1 {
+		t.Fatalf("airdrops count = %d, want 1", len(result.Airdrops))
+	}
+	airdrop := result.Airdrops[0]
+	if airdrop.Data != hex.EncodeToString(airdropWitness) {
+		t.Fatalf("airdrop data = %q, want %q", airdrop.Data,
+			hex.EncodeToString(airdropWitness))
+	}
+	if airdrop.Position != gbtAirdropLeaves+7 {
+		t.Fatalf("airdrop position = %d, want %d", airdrop.Position,
+			gbtAirdropLeaves+7)
+	}
+	if airdrop.Address != hex.EncodeToString(airdropAddrHash) {
+		t.Fatalf("airdrop address = %q, want %q", airdrop.Address,
+			hex.EncodeToString(airdropAddrHash))
+	}
+	if airdrop.Value != 7_000 || airdrop.Fee != 200 {
+		t.Fatalf("airdrop value/fee = %d/%d, want 7000/200",
+			airdrop.Value, airdrop.Fee)
+	}
+	wantRate := int64(200 * 1000 / ((len(airdropWitness) +
+		blockchain.WitnessScaleFactor - 1) /
+		blockchain.WitnessScaleFactor))
+	if airdrop.Rate != wantRate {
+		t.Fatalf("airdrop rate = %d, want %d", airdrop.Rate,
+			wantRate)
+	}
+	if airdrop.Weak {
+		t.Fatal("airdrop weak = true, want false")
+	}
+}
+
+func connectGBTTestTemplate(t *testing.T, chain *blockchain.BlockChain,
+	template *mining.BlockTemplate) {
+
+	t.Helper()
+
+	solveGBTTestBlock(t, template.Block)
+	block := hnsutil.NewBlock(template.Block)
+	block.SetHeight(template.Height)
+	isMainChain, isOrphan, err := chain.ProcessBlock(block, blockchain.BFNone)
+	if err != nil {
+		t.Fatalf("ProcessBlock height %d: %v", template.Height, err)
+	}
+	if !isMainChain || isOrphan {
+		t.Fatalf("ProcessBlock height %d main=%v orphan=%v, want main "+
+			"chain non-orphan", template.Height, isMainChain,
+			isOrphan)
+	}
+}
+
+func TestGBTWorkStateRegeneratesTemplateAfterTipChange(t *testing.T) {
+	txSource := &gbtTestTxSource{updated: time.Now()}
+	server, chain := newGBTTestRPCServer(t, txSource)
+	state := server.gbtWorkState
+
+	state.Lock()
+	if err := state.updateBlockTemplate(server, true); err != nil {
+		state.Unlock()
+		t.Fatalf("updateBlockTemplate first: %v", err)
+	}
+	firstTemplate := state.template
+	state.Unlock()
+
+	connectGBTTestTemplate(t, chain, firstTemplate)
+	connectedHash := firstTemplate.Block.BlockHash()
+
+	state.Lock()
+	defer state.Unlock()
+	if err := state.updateBlockTemplate(server, true); err != nil {
+		t.Fatalf("updateBlockTemplate second: %v", err)
+	}
+	if state.template == firstTemplate {
+		t.Fatal("template was reused after best chain tip changed")
+	}
+	if got, want := state.template.Height, firstTemplate.Height+1; got != want {
+		t.Fatalf("template height = %d, want %d", got, want)
+	}
+	if got := state.template.Block.Header.PrevBlock; !got.IsEqual(&connectedHash) {
+		t.Fatalf("template prev block = %v, want %v", got, connectedHash)
+	}
+}
+
+func TestGBTWorkStateRegeneratesTemplateAfterMempoolUpdateWindow(t *testing.T) {
+	firstUpdate := time.Now().Add(-2 * time.Minute)
+	txSource := &gbtTestTxSource{updated: firstUpdate}
+	server, _ := newGBTTestRPCServer(t, txSource)
+	state := server.gbtWorkState
+
+	state.Lock()
+	if err := state.updateBlockTemplate(server, true); err != nil {
+		state.Unlock()
+		t.Fatalf("updateBlockTemplate first: %v", err)
+	}
+	firstTemplate := state.template
+	state.lastGenerated = time.Now().Add(-(gbtRegenerateSeconds + 1) *
+		time.Second)
+	txSource.updated = time.Now()
+
+	if err := state.updateBlockTemplate(server, true); err != nil {
+		state.Unlock()
+		t.Fatalf("updateBlockTemplate second: %v", err)
+	}
+	defer state.Unlock()
+
+	if state.template == firstTemplate {
+		t.Fatal("template was reused after stale mempool update")
+	}
+	if !state.lastTxUpdate.Equal(txSource.updated) {
+		t.Fatalf("last tx update = %v, want %v", state.lastTxUpdate,
+			txSource.updated)
+	}
+	if got, want := state.template.Height, firstTemplate.Height; got != want {
+		t.Fatalf("template height = %d, want %d", got, want)
+	}
+}
 
 // TestHandleTestMempoolAcceptFailDecode checks that when invalid hex string is
 // used as the raw txns, the corresponding error is returned.

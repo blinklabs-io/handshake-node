@@ -11,7 +11,7 @@ import (
 
 const (
 	// maxAddressVersion is the maximum allowed Handshake wire address
-	// version.
+	// version. Version 31 is nulldata and is provably unspendable.
 	maxAddressVersion = 31
 
 	// maxWitnessProgramVersion is the highest address version that can be
@@ -31,7 +31,7 @@ const (
 // Address represents a Handshake output address consisting of a witness
 // program version and hash.  Version 0 addresses use 20-byte (P2WPKH) or
 // 32-byte (P2WSH) hashes.  Handshake wire addresses are valid for versions
-// 0 through 31.
+// 0 through 31.  Version 31 is nulldata and is provably unspendable.
 //
 // Wire format: version(1 byte) + hashLen(1 byte) + hash(N bytes)
 type Address struct {
@@ -130,7 +130,8 @@ func (a *Address) SerializeSize() int {
 // address.  For version 0, the result is [OP_0, len(hash), hash...].  For
 // versions 1 through 16, the result is [OP_N, len(hash), hash...].  Versions
 // 17 through 31 are valid Handshake wire addresses, but there is no small-int
-// opcode representation for them, so nil is returned.
+// opcode representation for them, so nil is returned.  Version 31 nulldata
+// outputs are not witness programs.
 func (a *Address) WitnessProgram() []byte {
 	if a.Version > maxWitnessProgramVersion {
 		return nil

@@ -7,8 +7,8 @@ package hdkeychain_test
 import (
 	"fmt"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil/hdkeychain"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsutil/hdkeychain"
 )
 
 // This example demonstrates how to generate a cryptographically random seed
@@ -134,8 +134,8 @@ func Example_defaultWalletLayout() {
 	fmt.Println("Account 0 Internal Address 0: ", acct0IntAddr)
 
 	// Output:
-	// Account 0 External Address 10: hs1qkn4kfrt57auztm30w9gm4ue3uklcyqff0tzdw0
-	// Account 0 Internal Address 0:  hs1qhdjn79g0f5yq7tl2snz937tc6jst753vxulxje
+	// Account 0 External Address 10: hs1qadu5wkkan5udwxetfl7ml855fh77w3huzwfutx
+	// Account 0 Internal Address 0:  hs1qrgv9yc5my6ljszc8t8saed0zqztmymnpj5ap27
 }
 
 // This example demonstrates the audits use case in BIP0032.

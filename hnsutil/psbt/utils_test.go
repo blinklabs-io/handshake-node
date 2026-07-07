@@ -98,18 +98,18 @@ func TestTxOutsEqual(t *testing.T) {
 		name: "one pk script set",
 		out1: &wire.TxOut{},
 		out2: &wire.TxOut{
-			PkScript: []byte("foo"),
+			Address: wire.Address{Version: 0, Hash: []byte("foo")},
 		},
 		expectEqual: false,
 	}, {
 		name: "both fully set",
 		out1: &wire.TxOut{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		},
 		out2: &wire.TxOut{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		},
 		expectEqual: true,
 	}}
@@ -151,18 +151,18 @@ func TestVerifyOutputsEqual(t *testing.T) {
 		name:  "one pk script set",
 		outs1: []*wire.TxOut{{}},
 		outs2: []*wire.TxOut{{
-			PkScript: []byte("foo"),
+			Address: wire.Address{Version: 0, Hash: []byte("foo")},
 		}},
 		expectErr: true,
 	}, {
 		name: "both fully set",
 		outs1: []*wire.TxOut{{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		}, {}},
 		outs2: []*wire.TxOut{{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		}, {}},
 		expectErr: false,
 	}}
@@ -331,13 +331,12 @@ func TestNewFromSignedTx(t *testing.T) {
 	orig := &wire.MsgTx{
 		TxIn: []*wire.TxIn{{
 			PreviousOutPoint: wire.OutPoint{},
-			SignatureScript:  []byte("script"),
 			Witness:          [][]byte{[]byte("witness")},
 			Sequence:         1234,
 		}},
 		TxOut: []*wire.TxOut{{
-			PkScript: []byte{77, 88},
-			Value:    99,
+			Address: wire.Address{Version: 0, Hash: []byte{77, 88}},
+			Value:   99,
 		}},
 	}
 
@@ -359,7 +358,7 @@ func TestNewFromSignedTx(t *testing.T) {
 		t.Fatalf("unexpected txout, got %#v wanted %#v",
 			tx.TxOut, orig.TxOut)
 	}
-	if len(scripts) != 1 || !bytes.Equal(scripts[0], []byte("script")) {
+	if len(scripts) != 1 || len(scripts[0]) != 0 {
 		t.Fatalf("script not extracted correctly")
 	}
 	if len(witnesses) != 1 ||

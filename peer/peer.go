@@ -1981,6 +1981,12 @@ func (p *Peer) readRemoteVersionMsg(readPartial bool) error {
 		return errors.New(reason)
 	}
 
+	return p.processRemoteVersionMsg(msg)
+}
+
+// processRemoteVersionMsg validates the remote version message and updates the
+// negotiated peer state.
+func (p *Peer) processRemoteVersionMsg(msg *wire.HnsMsgVersion) error {
 	// Detect self connections.
 	nonce := binary.LittleEndian.Uint64(msg.Nonce[:])
 	if !p.cfg.AllowSelfConns && sentNonces.Contains(nonce) {
@@ -2153,6 +2159,10 @@ func (p *Peer) writeSendAddrV2Msg(_ uint32) error {
 // skipped so peers can advertise packet types this migration has not wired to
 // the btcd-era listener API yet.
 func (p *Peer) waitToFinishNegotiation(_ uint32) error {
+	if p.VerAckReceived() {
+		return nil
+	}
+
 	for {
 		remoteMsg, _, err := p.readMessage(wire.LatestEncoding, false)
 		if err == wire.ErrUnknownMessage {
@@ -2170,6 +2180,33 @@ func (p *Peer) waitToFinishNegotiation(_ uint32) error {
 		default:
 			// This is triggered if the peer sends, for example, a
 			// GETDATA message during this negotiation.
+			return wire.ErrInvalidHandshake
+		}
+	}
+}
+
+// readRemoteVersionAllowingEarlyVerAck reads messages until the remote peer's
+// version is received. hsd sends verack immediately after accepting our version
+// on inbound connections, so outbound negotiation must allow verack to arrive
+// before the remote version packet.
+func (p *Peer) readRemoteVersionAllowingEarlyVerAck() error {
+	for {
+		remoteMsg, _, err := p.readMessage(wire.LatestEncoding, false)
+		if err == wire.ErrUnknownMessage {
+			continue
+		} else if err != nil {
+			return err
+		}
+
+		switch msg := remoteMsg.(type) {
+		case *wire.HnsMsgVersion:
+			return p.processRemoteVersionMsg(msg)
+		case *wire.HnsMsgVerack:
+			if p.VerAckReceived() {
+				return wire.ErrInvalidHandshake
+			}
+			p.processRemoteVerAckMsg(msg)
+		default:
 			return wire.ErrInvalidHandshake
 		}
 	}
@@ -2216,16 +2253,18 @@ func (p *Peer) negotiateInboundProtocol() error {
 // returned:
 //
 //  1. We send our version.
-//  2. Remote peer sends their version.
-//  3. We skip Bitcoin sendaddrv2 negotiation; Handshake has no sendaddrv2.
-//  4. We send our verack.
-//  5. We wait to receive verack, skipping unknown Handshake packet types.
+//  2. Remote peer may send verack before their version.
+//  3. Remote peer sends their version.
+//  4. We skip Bitcoin sendaddrv2 negotiation; Handshake has no sendaddrv2.
+//  5. We send our verack.
+//  6. We wait to receive verack if it was not already received, skipping
+//     unknown Handshake packet types.
 func (p *Peer) negotiateOutboundProtocol() error {
 	if err := p.writeLocalVersionMsg(); err != nil {
 		return err
 	}
 
-	if err := p.readRemoteVersionMsg(false); err != nil {
+	if err := p.readRemoteVersionAllowingEarlyVerAck(); err != nil {
 		return err
 	}
 

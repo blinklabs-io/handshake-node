@@ -6,24 +6,61 @@ package blockchain
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
+	"math/big"
 
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
+	"golang.org/x/crypto/blake2b"
 )
 
 const (
-	airdropReward     = uint64(4246994314)
-	maxAirdropProof   = 3400
-	airdropDepth      = 18
-	airdropSubDepth   = 3
-	airdropLeaves     = 216199
-	airdropSubLeaves  = 8
-	faucetDepth       = 11
-	faucetLeaves      = 1358
-	airdropKeyAddress = 4
+	airdropReward       = uint64(4246994314)
+	airdropSponsorFee   = uint64(500000000)
+	airdropRecipientFee = uint64(100000000)
+	maxAirdropProof     = 3400
+	airdropDepth        = 18
+	airdropSubDepth     = 3
+	airdropLeaves       = 216199
+	airdropSubLeaves    = 8
+	faucetDepth         = 11
+	faucetLeaves        = 1358
+	airdropTreeLeaves   = airdropLeaves + faucetLeaves
+	airdropKeyRSA       = 0
+	airdropKeyGoo       = 1
+	airdropKeyP256      = 2
+	airdropKeyED25519   = 3
+	airdropKeyAddress   = 4
+	airdropGooKeySize   = 256
+)
+
+var (
+	airdropRoot = [32]byte{
+		0x10, 0xd7, 0x48, 0xed, 0xa1, 0xb9, 0xc6, 0x7b,
+		0x94, 0xd3, 0x24, 0x4e, 0x02, 0x11, 0x67, 0x76,
+		0x18, 0xa9, 0xb4, 0xb3, 0x29, 0xe8, 0x96, 0xad,
+		0x90, 0x43, 0x1f, 0x9f, 0x48, 0x03, 0x4b, 0xad,
+	}
+	faucetRoot = [32]byte{
+		0xe2, 0xc0, 0x29, 0x9a, 0x1e, 0x46, 0x67, 0x73,
+		0x51, 0x66, 0x55, 0xf0, 0x9a, 0x64, 0xb1, 0xe1,
+		0x6b, 0x25, 0x79, 0x53, 0x0d, 0xe6, 0xc4, 0xa5,
+		0x9c, 0xe5, 0x65, 0x4d, 0xea, 0x45, 0x18, 0x0f,
+	}
+	airdropSignatureContext = [32]byte{
+		0x5b, 0x21, 0xff, 0x4a, 0x0f, 0xcf, 0x78, 0x12,
+		0x39, 0x15, 0xea, 0xa0, 0x00, 0x3d, 0x2a, 0x3e,
+		0x18, 0x55, 0xa9, 0xb1, 0x5e, 0x34, 0x41, 0xda,
+		0x2e, 0xf5, 0xa4, 0xc0, 0x1e, 0xaf, 0x4f, 0xf3,
+	}
 )
 
 type airdropProof struct {
@@ -41,6 +78,11 @@ type airdropProof struct {
 
 type airdropKey struct {
 	keyType uint8
+	n       []byte
+	e       []byte
+	c1      []byte
+	point   []byte
+	nonce   []byte
 	version uint8
 	address []byte
 	value   uint64
@@ -92,6 +134,12 @@ func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int) (uint64,
 	}
 	if !proof.isSane() {
 		return 0, badCovenant("airdrop proof is not sane")
+	}
+	if !proof.verifyMerkle() {
+		return 0, badCovenant("airdrop proof merkle root mismatch")
+	}
+	if !proof.verifySignature() {
+		return 0, badCovenant("airdrop proof signature invalid")
 	}
 
 	value := proof.value()
@@ -249,6 +297,101 @@ func (p *airdropProof) isAddress() bool {
 	return len(p.key) > 0 && p.key[0] == airdropKeyAddress
 }
 
+func (p *airdropProof) position() (uint32, error) {
+	index := p.index
+	if p.isAddress() {
+		if index >= faucetLeaves {
+			return 0, errors.New("airdrop faucet index is invalid")
+		}
+		index += airdropLeaves
+	} else if index >= airdropLeaves {
+		return 0, errors.New("airdrop index is invalid")
+	}
+	if index >= airdropTreeLeaves {
+		return 0, errors.New("airdrop position is invalid")
+	}
+	return index, nil
+}
+
+func (p *airdropProof) verifyMerkle() bool {
+	leaf := blake2b.Sum256(p.key)
+	if p.isAddress() {
+		root := deriveAirdropMerkleRoot(leaf, p.proof, p.index)
+		return bytes.Equal(root[:], faucetRoot[:])
+	}
+
+	subroot := deriveAirdropMerkleRoot(leaf, p.subproof,
+		uint32(p.subindex))
+	root := deriveAirdropMerkleRoot(subroot, p.proof, p.index)
+	return bytes.Equal(root[:], airdropRoot[:])
+}
+
+func (p *airdropProof) verifySignature() bool {
+	key, err := parseAirdropKey(p.key)
+	if err != nil {
+		return false
+	}
+
+	if key.keyType != airdropKeyAddress {
+		msg := p.signatureHash()
+		switch key.keyType {
+		case airdropKeyRSA:
+			return verifyAirdropRSASignature(key, msg[:],
+				p.signature)
+		case airdropKeyGoo:
+			return verifyAirdropGooSignature(key, msg[:],
+				p.signature)
+		case airdropKeyP256:
+			return verifyAirdropP256Signature(key, msg[:],
+				p.signature)
+		case airdropKeyED25519:
+			return verifyAirdropED25519Signature(key, msg[:],
+				p.signature)
+		default:
+			return false
+		}
+	}
+
+	fee := airdropRecipientFee
+	if key.sponsor {
+		fee = airdropSponsorFee
+	}
+
+	return p.version == key.version &&
+		p.fee == fee &&
+		len(p.signature) == 0 &&
+		bytes.Equal(p.address, key.address)
+}
+
+func (p *airdropProof) signatureHash() [32]byte {
+	return sha256.Sum256(p.signatureData())
+}
+
+func (p *airdropProof) signatureData() []byte {
+	var buf bytes.Buffer
+	buf.Write(airdropSignatureContext[:])
+	var raw [4]byte
+	binary.LittleEndian.PutUint32(raw[:], p.index)
+	buf.Write(raw[:])
+	buf.WriteByte(byte(len(p.proof)))
+	for _, hash := range p.proof {
+		buf.Write(hash[:])
+	}
+	buf.WriteByte(p.subindex)
+	buf.WriteByte(byte(len(p.subproof)))
+	for _, hash := range p.subproof {
+		buf.Write(hash[:])
+	}
+	writeAirdropVarBytes(&buf, p.key)
+	buf.WriteByte(p.version)
+	buf.WriteByte(byte(len(p.address)))
+	buf.Write(p.address)
+	if err := wire.WriteVarInt(&buf, 0, p.fee); err != nil {
+		panic("wire.WriteVarInt to bytes.Buffer failed")
+	}
+	return buf.Bytes()
+}
+
 func (p *airdropProof) value() uint64 {
 	if !p.isAddress() {
 		return airdropReward
@@ -274,6 +417,50 @@ func parseAirdropKey(serialized []byte) (*airdropKey, error) {
 
 	key := &airdropKey{keyType: keyType}
 	switch key.keyType {
+	case airdropKeyRSA:
+		size, err := readAirdropU16(r)
+		if err != nil {
+			return nil, err
+		}
+		key.n = make([]byte, size)
+		if _, err := io.ReadFull(r, key.n); err != nil {
+			return nil, err
+		}
+		expSize, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		key.e = make([]byte, expSize)
+		if _, err := io.ReadFull(r, key.e); err != nil {
+			return nil, err
+		}
+		key.nonce = make([]byte, 32)
+		if _, err := io.ReadFull(r, key.nonce); err != nil {
+			return nil, err
+		}
+	case airdropKeyGoo:
+		key.c1 = make([]byte, airdropGooKeySize)
+		if _, err := io.ReadFull(r, key.c1); err != nil {
+			return nil, err
+		}
+	case airdropKeyP256:
+		key.point = make([]byte, 33)
+		if _, err := io.ReadFull(r, key.point); err != nil {
+			return nil, err
+		}
+		key.nonce = make([]byte, 32)
+		if _, err := io.ReadFull(r, key.nonce); err != nil {
+			return nil, err
+		}
+	case airdropKeyED25519:
+		key.point = make([]byte, ed25519.PublicKeySize)
+		if _, err := io.ReadFull(r, key.point); err != nil {
+			return nil, err
+		}
+		key.nonce = make([]byte, 32)
+		if _, err := io.ReadFull(r, key.nonce); err != nil {
+			return nil, err
+		}
 	case airdropKeyAddress:
 		version, err := r.ReadByte()
 		if err != nil {
@@ -311,6 +498,59 @@ func parseAirdropKey(serialized []byte) (*airdropKey, error) {
 	return key, nil
 }
 
+func verifyAirdropRSASignature(key *airdropKey, msg, signature []byte) bool {
+	n := new(big.Int).SetBytes(key.n)
+	e := new(big.Int).SetBytes(key.e)
+	if n.Sign() <= 0 || n.BitLen() < 512 || n.BitLen() > 16384 ||
+		e.Sign() <= 0 || !e.IsInt64() {
+
+		return false
+	}
+
+	maxInt := int64(^uint(0) >> 1)
+	if e.Int64() > maxInt {
+		return false
+	}
+	pubKey := &rsa.PublicKey{
+		N: n,
+		E: int(e.Int64()),
+	}
+	return rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, msg,
+		signature) == nil
+}
+
+func verifyAirdropP256Signature(key *airdropKey, msg, signature []byte) bool {
+	if len(signature) != 64 {
+		return false
+	}
+	x, y := elliptic.UnmarshalCompressed(elliptic.P256(), key.point)
+	if x == nil || y == nil {
+		return false
+	}
+	r := new(big.Int).SetBytes(signature[:32])
+	s := new(big.Int).SetBytes(signature[32:])
+	if r.Sign() == 0 || s.Sign() == 0 {
+		return false
+	}
+	pubKey := &ecdsa.PublicKey{
+		Curve: elliptic.P256(),
+		X:     x,
+		Y:     y,
+	}
+	return ecdsa.Verify(pubKey, msg, r, s)
+}
+
+func verifyAirdropED25519Signature(key *airdropKey, msg,
+	signature []byte) bool {
+
+	if len(key.point) != ed25519.PublicKeySize ||
+		len(signature) != ed25519.SignatureSize {
+
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(key.point), msg, signature)
+}
+
 func readAirdropHashes(r *bytes.Reader, count int) ([][32]byte, error) {
 	hashes := make([][32]byte, count)
 	for i := range hashes {
@@ -337,6 +577,23 @@ func readAirdropVarBytes(r *bytes.Reader) ([]byte, error) {
 	return data, nil
 }
 
+func writeAirdropVarBytes(w io.Writer, data []byte) {
+	if err := wire.WriteVarInt(w, 0, uint64(len(data))); err != nil {
+		panic("wire.WriteVarInt to bytes.Buffer failed")
+	}
+	if _, err := w.Write(data); err != nil {
+		panic("bytes.Buffer Write failed")
+	}
+}
+
+func readAirdropU16(r *bytes.Reader) (uint16, error) {
+	var raw [2]byte
+	if _, err := io.ReadFull(r, raw[:]); err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint16(raw[:]), nil
+}
+
 func readAirdropU32(r *bytes.Reader) (uint32, error) {
 	var raw [4]byte
 	if _, err := io.ReadFull(r, raw[:]); err != nil {
@@ -351,4 +608,43 @@ func readAirdropU64(r *bytes.Reader) (uint64, error) {
 		return 0, err
 	}
 	return binary.LittleEndian.Uint64(raw[:]), nil
+}
+
+func deriveAirdropMerkleRoot(leaf [32]byte, path [][32]byte,
+	index uint32) [32]byte {
+
+	sentinel := blake2b.Sum256(nil)
+	root := airdropHashLeaf(leaf)
+
+	for _, hash := range path {
+		if index&1 == 1 && hash == sentinel {
+			return [32]byte{}
+		}
+		if index&1 == 1 {
+			root = airdropHashInternal(hash, root)
+		} else {
+			root = airdropHashInternal(root, hash)
+		}
+		index >>= 1
+	}
+
+	if index != 0 {
+		return [32]byte{}
+	}
+
+	return root
+}
+
+func airdropHashLeaf(data [32]byte) [32]byte {
+	var preimage [33]byte
+	copy(preimage[1:], data[:])
+	return blake2b.Sum256(preimage[:])
+}
+
+func airdropHashInternal(left, right [32]byte) [32]byte {
+	var preimage [65]byte
+	preimage[0] = 0x01
+	copy(preimage[1:33], left[:])
+	copy(preimage[33:], right[:])
+	return blake2b.Sum256(preimage[:])
 }

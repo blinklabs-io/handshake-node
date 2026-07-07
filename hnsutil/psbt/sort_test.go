@@ -86,14 +86,14 @@ func TestInPlaceSort(t *testing.T) {
 		packet: &Packet{
 			UnsignedTx: &wire.MsgTx{
 				TxOut: []*wire.TxOut{{
-					PkScript: []byte{99, 88},
-					Value:    7,
+					Address: wire.Address{Version: 0, Hash: []byte{99, 88}},
+					Value:   7,
 				}, {
-					PkScript: []byte{77, 88},
-					Value:    12,
+					Address: wire.Address{Version: 0, Hash: []byte{77, 88}},
+					Value:   12,
 				}, {
-					PkScript: []byte{77, 88},
-					Value:    7,
+					Address: wire.Address{Version: 0, Hash: []byte{77, 88}},
+					Value:   7,
 				}},
 			},
 			// Abuse the RedeemScript as an index to make sure the
@@ -108,14 +108,14 @@ func TestInPlaceSort(t *testing.T) {
 			}},
 		},
 		expectedTxOut: []*wire.TxOut{{
-			PkScript: []byte{77, 88},
-			Value:    7,
+			Address: wire.Address{Version: 0, Hash: []byte{77, 88}},
+			Value:   7,
 		}, {
-			PkScript: []byte{99, 88},
-			Value:    7,
+			Address: wire.Address{Version: 0, Hash: []byte{99, 88}},
+			Value:   7,
 		}, {
-			PkScript: []byte{77, 88},
-			Value:    12,
+			Address: wire.Address{Version: 0, Hash: []byte{77, 88}},
+			Value:   12,
 		}},
 		expectedPOut: []POutput{{
 			RedeemScript: []byte{2},

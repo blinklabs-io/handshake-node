@@ -27,10 +27,22 @@ type namePrevOutput struct {
 type nameBlockView struct {
 	chain           *BlockChain
 	states          map[chainhash.Hash]*nameState
+	loaded          map[chainhash.Hash]struct{}
 	dirty           map[chainhash.Hash]struct{}
 	undo            []nameUndoEntry
 	seen            map[chainhash.Hash]struct{}
 	mainChainHeight func(chainhash.Hash) (int32, error)
+}
+
+// NameValidationView validates a sequence of transactions against a shared
+// snapshot of the committed name state.  It is intended for block-template
+// assembly and other ordered transaction views where earlier accepted
+// transactions can update the name state seen by later transactions.
+//
+// NameValidationView is not safe for concurrent use.
+type NameValidationView struct {
+	chain *BlockChain
+	view  *nameBlockView
 }
 
 func newNameBlockView(dbTx database.Tx, chain *BlockChain) (*nameBlockView, error) {
@@ -39,21 +51,166 @@ func newNameBlockView(dbTx database.Tx, chain *BlockChain) (*nameBlockView, erro
 		return nil, err
 	}
 
+	return newNameBlockViewFromStates(chain, states), nil
+}
+
+func newNameBlockViewFromStates(chain *BlockChain,
+	states map[chainhash.Hash]*nameState) *nameBlockView {
+
 	return &nameBlockView{
 		chain:  chain,
 		states: states,
 		dirty:  make(map[chainhash.Hash]struct{}),
 		seen:   make(map[chainhash.Hash]struct{}),
+	}
+}
+
+func newLazyNameBlockView(chain *BlockChain) *nameBlockView {
+	return &nameBlockView{
+		chain:  chain,
+		states: make(map[chainhash.Hash]*nameState),
+		loaded: make(map[chainhash.Hash]struct{}),
+		dirty:  make(map[chainhash.Hash]struct{}),
+		seen:   make(map[chainhash.Hash]struct{}),
+	}
+}
+
+// NewNameValidationView returns a stateful name validation view initialized
+// from the current committed name state.
+func (b *BlockChain) NewNameValidationView() (*NameValidationView, error) {
+	var view *nameBlockView
+	err := b.db.View(func(dbTx database.Tx) error {
+		var err error
+		view, err = newNameBlockView(dbTx, b)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &NameValidationView{
+		chain: b,
+		view:  view,
 	}, nil
 }
 
-func (v *nameBlockView) get(nameHash chainhash.Hash) *nameState {
+// ApplyTransaction validates the Handshake name covenant transitions in tx
+// against the view's current name state and advances the view when validation
+// succeeds.  If validation fails, the view is restored to its prior state.
+func (v *NameValidationView) ApplyTransaction(tx *hnsutil.Tx, height int32,
+	prevTime int64, utxoView *UtxoViewpoint) error {
+
+	snapshot := v.view.snapshot()
+	err := v.chain.db.View(func(dbTx database.Tx) error {
+		prevOutputs, err := prevOutputsFromView(tx, utxoView)
+		if err != nil {
+			return err
+		}
+		return v.view.applyTx(dbTx, tx, uint32(height), prevTime,
+			prevOutputs)
+	})
+	if err != nil {
+		v.view.restore(snapshot)
+		return err
+	}
+
+	return nil
+}
+
+type nameBlockViewSnapshot struct {
+	states map[chainhash.Hash]*nameState
+	loaded map[chainhash.Hash]struct{}
+	dirty  map[chainhash.Hash]struct{}
+	undo   []nameUndoEntry
+	seen   map[chainhash.Hash]struct{}
+}
+
+func (v *nameBlockView) snapshot() nameBlockViewSnapshot {
+	return nameBlockViewSnapshot{
+		states: cloneNameStateMap(v.states),
+		loaded: cloneHashSet(v.loaded),
+		dirty:  cloneHashSet(v.dirty),
+		undo:   cloneNameUndoEntries(v.undo),
+		seen:   cloneHashSet(v.seen),
+	}
+}
+
+func (v *nameBlockView) restore(snapshot nameBlockViewSnapshot) {
+	v.states = snapshot.states
+	v.loaded = snapshot.loaded
+	v.dirty = snapshot.dirty
+	v.undo = snapshot.undo
+	v.seen = snapshot.seen
+}
+
+func cloneNameStateMap(states map[chainhash.Hash]*nameState) map[chainhash.Hash]*nameState {
+	cloned := make(map[chainhash.Hash]*nameState, len(states))
+	for nameHash, ns := range states {
+		if ns != nil {
+			cloned[nameHash] = ns.clone()
+		}
+	}
+	return cloned
+}
+
+func cloneHashSet(set map[chainhash.Hash]struct{}) map[chainhash.Hash]struct{} {
+	if set == nil {
+		return nil
+	}
+
+	cloned := make(map[chainhash.Hash]struct{}, len(set))
+	for hash := range set {
+		cloned[hash] = struct{}{}
+	}
+	return cloned
+}
+
+func cloneNameUndoEntries(entries []nameUndoEntry) []nameUndoEntry {
+	if entries == nil {
+		return nil
+	}
+
+	cloned := make([]nameUndoEntry, len(entries))
+	for i, entry := range entries {
+		cloned[i] = entry
+		if entry.state != nil {
+			cloned[i].state = entry.state.clone()
+		}
+	}
+	return cloned
+}
+
+func (v *nameBlockView) needsDB() bool {
+	return v.loaded != nil
+}
+
+func (v *nameBlockView) get(dbTx database.Tx, nameHash chainhash.Hash) (
+	*nameState, error) {
+
 	ns := v.states[nameHash]
 	if ns == nil {
-		ns = newNameState(nameHash)
+		if v.needsDB() {
+			if dbTx == nil {
+				return nil, AssertError("lazy name block view requires " +
+					"a database transaction")
+			}
+
+			var err error
+			var found bool
+			ns, found, err = dbFetchNameState(dbTx, nameHash)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				ns = newNameState(nameHash)
+			}
+			v.loaded[nameHash] = struct{}{}
+		} else {
+			ns = newNameState(nameHash)
+		}
 		v.states[nameHash] = ns
 	}
-	return ns
+	return ns, nil
 }
 
 func (v *nameBlockView) recordChange(before, after *nameState) error {
@@ -157,6 +314,40 @@ func (v *nameBlockView) applyTx(dbTx database.Tx, tx *hnsutil.Tx,
 	return nil
 }
 
+func txHasNameCovenantOutput(tx *hnsutil.Tx) bool {
+	for _, txOut := range tx.MsgTx().TxOut {
+		if isNameCovenant(txOut.Covenant.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *BlockChain) applyTxToNameView(view *nameBlockView, tx *hnsutil.Tx,
+	height uint32, prevTime int64, prevOutputs []namePrevOutput) error {
+
+	if view.needsDB() && txHasNameCovenantOutput(tx) {
+		return b.db.View(func(dbTx database.Tx) error {
+			return view.applyTx(dbTx, tx, height, prevTime,
+				prevOutputs)
+		})
+	}
+
+	return view.applyTx(nil, tx, height, prevTime, prevOutputs)
+}
+
+// CheckTransactionNames validates the Handshake name covenant transitions in a
+// standalone transaction against the current committed name state.
+func (b *BlockChain) CheckTransactionNames(tx *hnsutil.Tx, height int32,
+	prevTime int64, view *UtxoViewpoint) error {
+
+	nameView, err := b.NewNameValidationView()
+	if err != nil {
+		return err
+	}
+	return nameView.ApplyTransaction(tx, height, prevTime, view)
+}
+
 func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 	outputIndex int, txOut *wire.TxOut, height uint32,
 	prevTime int64, prevOutputs []namePrevOutput) error {
@@ -167,7 +358,10 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		return badCovenant("missing covenant name hash")
 	}
 
-	ns := v.get(nameHash)
+	ns, err := v.get(dbTx, nameHash)
+	if err != nil {
+		return err
+	}
 	before := ns.clone()
 
 	if ns.isNull() {
@@ -254,12 +448,12 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		}
 	case wire.CovenantUpdate:
 		if err := v.applyUpdate(ns, covenant, tx, outputIndex, height,
-			state); err != nil {
+			state, prevOutputs); err != nil {
 			return err
 		}
 	case wire.CovenantRenew:
 		if err := v.applyRenew(dbTx, ns, covenant, tx, outputIndex,
-			height, state); err != nil {
+			height, state, prevOutputs); err != nil {
 			return err
 		}
 	case wire.CovenantTransfer:
@@ -272,11 +466,16 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		if ns.transfer != 0 {
 			return badCovenant("name is already transferring")
 		}
+		if err := requireCurrentNameOwner(prevOutputs, outputIndex,
+			ns, "TRANSFER"); err != nil {
+
+			return err
+		}
 		ns.owner = txOutpoint(tx, outputIndex)
 		ns.transfer = height
 	case wire.CovenantFinalize:
 		if err := v.applyFinalize(dbTx, ns, covenant, tx, outputIndex,
-			height, state); err != nil {
+			height, state, prevOutputs); err != nil {
 			return err
 		}
 	case wire.CovenantRevoke:
@@ -288,6 +487,11 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		}
 		if ns.revoked != 0 {
 			return badCovenant("name is already revoked")
+		}
+		if err := requireCurrentNameOwner(prevOutputs, outputIndex,
+			ns, "REVOKE"); err != nil {
+
+			return err
 		}
 		ns.revoked = height
 		ns.transfer = 0
@@ -394,9 +598,7 @@ func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 	ns.registered = true
 	ns.owner = txOutpoint(tx, outputIndex)
 	data := covenantItem(covenant, 2)
-	if len(data) == 0 {
-		ns.data = nil
-	} else {
+	if len(data) > 0 {
 		ns.data = append(ns.data[:0], data...)
 	}
 	ns.renewal = height
@@ -405,7 +607,7 @@ func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 
 func (v *nameBlockView) applyUpdate(ns *nameState, covenant wire.Covenant,
 	tx *hnsutil.Tx, outputIndex int, height uint32,
-	state nameStateKind) error {
+	state nameStateKind, prevOutputs []namePrevOutput) error {
 
 	start, _ := covenantU32(covenant, 1)
 	if start != ns.height {
@@ -414,12 +616,15 @@ func (v *nameBlockView) applyUpdate(ns *nameState, covenant wire.Covenant,
 	if state != nameStateClosed {
 		return badCovenant("UPDATE covenant before close")
 	}
+	if err := requireCurrentNameOwner(prevOutputs, outputIndex, ns,
+		"UPDATE"); err != nil {
+
+		return err
+	}
 
 	ns.owner = txOutpoint(tx, outputIndex)
 	data := covenantItem(covenant, 2)
-	if len(data) == 0 {
-		ns.data = nil
-	} else {
+	if len(data) > 0 {
 		ns.data = append(ns.data[:0], data...)
 	}
 	ns.transfer = 0
@@ -429,7 +634,8 @@ func (v *nameBlockView) applyUpdate(ns *nameState, covenant wire.Covenant,
 
 func (v *nameBlockView) applyRenew(dbTx database.Tx, ns *nameState,
 	covenant wire.Covenant, tx *hnsutil.Tx, outputIndex int,
-	height uint32, state nameStateKind) error {
+	height uint32, state nameStateKind,
+	prevOutputs []namePrevOutput) error {
 
 	start, _ := covenantU32(covenant, 1)
 	if start != ns.height {
@@ -450,6 +656,11 @@ func (v *nameBlockView) applyRenew(dbTx database.Tx, ns *nameState,
 	if !ok {
 		return badCovenant("RENEW covenant has invalid renewal hash")
 	}
+	if err := requireCurrentNameOwner(prevOutputs, outputIndex, ns,
+		"RENEW"); err != nil {
+
+		return err
+	}
 
 	ns.owner = txOutpoint(tx, outputIndex)
 	ns.transfer = 0
@@ -460,7 +671,8 @@ func (v *nameBlockView) applyRenew(dbTx database.Tx, ns *nameState,
 
 func (v *nameBlockView) applyFinalize(dbTx database.Tx, ns *nameState,
 	covenant wire.Covenant, tx *hnsutil.Tx, outputIndex int,
-	height uint32, state nameStateKind) error {
+	height uint32, state nameStateKind,
+	prevOutputs []namePrevOutput) error {
 
 	start, _ := covenantU32(covenant, 1)
 	if start != ns.height {
@@ -492,11 +704,30 @@ func (v *nameBlockView) applyFinalize(dbTx database.Tx, ns *nameState,
 	if !ok {
 		return badCovenant("FINALIZE covenant has invalid renewal hash")
 	}
+	if err := requireCurrentNameOwner(prevOutputs, outputIndex, ns,
+		"FINALIZE"); err != nil {
+
+		return err
+	}
 
 	ns.owner = txOutpoint(tx, outputIndex)
 	ns.transfer = 0
 	ns.renewal = height
 	ns.renewals++
+	return nil
+}
+
+func requireCurrentNameOwner(prevOutputs []namePrevOutput, outputIndex int,
+	ns *nameState, covenant string) error {
+
+	prevOutput, err := linkedPrevOutput(prevOutputs, outputIndex, covenant)
+	if err != nil {
+		return err
+	}
+	if prevOutput.outpoint != ns.owner {
+		return badCovenant(covenant +
+			" covenant does not spend current owner")
+	}
 	return nil
 }
 
@@ -739,21 +970,14 @@ func (b *BlockChain) checkNameBlockForBestChain(block *hnsutil.Block) (
 		return nil, nil
 	}
 
-	var view *nameBlockView
 	err := b.db.View(func(dbTx database.Tx) error {
-		if err := checkNameRoot(dbTx, block); err != nil {
-			return err
-		}
-
-		var err error
-		view, err = newNameBlockView(dbTx, b)
-		return err
+		return checkNameRoot(dbTx, block)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return view, nil
+	return newLazyNameBlockView(b), nil
 }
 
 // nameReorgView mirrors the name state, committed root, and active chain used
@@ -849,10 +1073,7 @@ func (b *BlockChain) connectNames(dbTx database.Tx, node *blockNode,
 		return err
 	}
 
-	view, err := newNameBlockView(dbTx, b)
-	if err != nil {
-		return err
-	}
+	view := newLazyNameBlockView(b)
 
 	stxoOffset := 0
 	for _, tx := range block.Transactions() {
@@ -880,10 +1101,16 @@ func (b *BlockChain) connectNames(dbTx database.Tx, node *blockNode,
 		return err
 	}
 
+	if b.nameRootCache != nil {
+		if err := b.nameRootCache.applyView(view); err != nil {
+			return err
+		}
+	}
+
 	if b.chainParams.NameTreeInterval != 0 &&
 		uint32(node.height)%b.chainParams.NameTreeInterval == 0 {
 
-		if _, err := dbStoreCurrentNameSnapshot(dbTx); err != nil {
+		if err := b.dbPutCachedNameRoot(dbTx); err != nil {
 			return err
 		}
 	}
@@ -919,10 +1146,16 @@ func (b *BlockChain) disconnectNames(dbTx database.Tx, node *blockNode,
 		return err
 	}
 
+	if b.nameRootCache != nil {
+		if err := b.nameRootCache.applyUndo(undo); err != nil {
+			return err
+		}
+	}
+
 	if b.chainParams.NameTreeInterval != 0 &&
 		uint32(node.height)%b.chainParams.NameTreeInterval == 0 {
 
-		leaves, root, err := dbCalcNameTree(dbTx)
+		root, err := b.cachedNameRoot(dbTx)
 		if err != nil {
 			return err
 		}
@@ -934,12 +1167,28 @@ func (b *BlockChain) disconnectNames(dbTx database.Tx, node *blockNode,
 		if err := dbPutNameRoot(dbTx, headerRoot); err != nil {
 			return err
 		}
-		if err := dbPutNameSnapshot(dbTx, headerRoot, leaves); err != nil {
-			return err
-		}
 	}
 
 	return nil
+}
+
+func (b *BlockChain) cachedNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
+	if b.nameRootCache == nil {
+		cache, err := newNameRootCache(dbTx)
+		if err != nil {
+			return chainhash.Hash{}, err
+		}
+		b.nameRootCache = cache
+	}
+	return b.nameRootCache.root(dbTx)
+}
+
+func (b *BlockChain) dbPutCachedNameRoot(dbTx database.Tx) error {
+	root, err := b.cachedNameRoot(dbTx)
+	if err != nil {
+		return err
+	}
+	return dbPutNameRoot(dbTx, root)
 }
 
 func (v *nameBlockView) mainChainHeightForHash(dbTx database.Tx,

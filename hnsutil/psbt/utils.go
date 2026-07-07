@@ -52,6 +52,25 @@ func writeWitness(stackElements ...[]byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func txOutPkScript(out *wire.TxOut) []byte {
+	if out == nil {
+		return nil
+	}
+	return out.Address.WitnessProgram()
+}
+
+func txOutSortKey(out *wire.TxOut) []byte {
+	if out == nil {
+		return nil
+	}
+	var buf bytes.Buffer
+	buf.Write(out.Address.OutputKey())
+	if err := out.Covenant.Encode(&buf); err != nil {
+		return buf.Bytes()
+	}
+	return buf.Bytes()
+}
+
 // checkIsMultisigScript is a utility function to check whether a given
 // redeemscript fits the standard multisig template used in all P2SH based
 // multisig, given a set of pubkeys for redemption.
@@ -287,8 +306,12 @@ func readTxOut(txout []byte) (*wire.TxOut, error) {
 
 	valueSer := binary.LittleEndian.Uint64(txout[:8])
 	scriptPubKey := txout[9:]
+	addr, err := txscript.AddressFromWitnessProgram(scriptPubKey)
+	if err != nil {
+		return nil, err
+	}
 
-	return wire.NewTxOut(int64(valueSer), scriptPubKey), nil
+	return wire.NewTxOut(int64(valueSer), addr, wire.Covenant{}), nil
 }
 
 // SumUtxoInputValues tries to extract the sum of all inputs specified in the
@@ -340,7 +363,10 @@ func TxOutsEqual(out1, out2 *wire.TxOut) bool {
 		return out1 == out2
 	}
 	return out1.Value == out2.Value &&
-		bytes.Equal(out1.PkScript, out2.PkScript)
+		bytes.Equal(out1.Address.OutputKey(), out2.Address.OutputKey()) &&
+		out1.Covenant.Type == out2.Covenant.Type &&
+		len(out1.Covenant.Items) == len(out2.Covenant.Items) &&
+		bytes.Equal(txOutSortKey(out1), txOutSortKey(out2))
 }
 
 // VerifyOutputsEqual verifies that the two slices of transaction outputs are
@@ -438,14 +464,11 @@ func InputsReadyToSign(packet *Packet) error {
 func NewFromSignedTx(tx *wire.MsgTx) (*Packet, [][]byte,
 	[]wire.TxWitness, error) {
 
-	scriptSigs := make([][]byte, 0, len(tx.TxIn))
 	witnesses := make([]wire.TxWitness, 0, len(tx.TxIn))
 	tx2 := tx.Copy()
 
 	// Blank out signature info in inputs
 	for i, tin := range tx2.TxIn {
-		tin.SignatureScript = nil
-		scriptSigs = append(scriptSigs, tx.TxIn[i].SignatureScript)
 		tin.Witness = nil
 		witnesses = append(witnesses, tx.TxIn[i].Witness)
 	}
@@ -456,7 +479,7 @@ func NewFromSignedTx(tx *wire.MsgTx) (*Packet, [][]byte,
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return unsignedPsbt, scriptSigs, witnesses, nil
+	return unsignedPsbt, make([][]byte, len(tx.TxIn)), witnesses, nil
 }
 
 // FindLeafScript attempts to locate the leaf script of a given target Tap Leaf

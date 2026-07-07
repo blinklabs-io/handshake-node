@@ -15,6 +15,7 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -36,8 +37,8 @@ const (
 	// used to calculate the median time used to validate block timestamps.
 	medianTimeBlocks = 11
 
-	// serializedHeightVersion is the block version which changed block
-	// coinbases to start with the serialized block height.
+	// serializedHeightVersion is the legacy Bitcoin block version which
+	// changed block coinbases to start with the serialized block height.
 	serializedHeightVersion = 2
 
 	// baseSubsidy is the starting subsidy amount for mined blocks.  This
@@ -135,6 +136,9 @@ func SequenceLockActive(sequenceLock *SequenceLock, blockHeight int32,
 // IsFinalizedTransaction determines whether or not a transaction is finalized.
 func IsFinalizedTransaction(tx *hnsutil.Tx, blockHeight int32, blockTime time.Time) bool {
 	msgTx := tx.MsgTx()
+	if IsCoinBaseTx(msgTx) {
+		return true
+	}
 
 	// Lock time of zero means the transaction is finalized.
 	lockTime := msgTx.LockTime
@@ -142,17 +146,17 @@ func IsFinalizedTransaction(tx *hnsutil.Tx, blockHeight int32, blockTime time.Ti
 		return true
 	}
 
-	// The lock time field of a transaction is either a block height at
-	// which the transaction is finalized or a timestamp depending on if the
-	// value is before the txscript.LockTimeThreshold.  When it is under the
-	// threshold it is a block height.
+	// Handshake locktimes use bit 31 to distinguish time locks from height
+	// locks. Time locks store seconds shifted by LockTimeGranularity.
 	blockTimeOrHeight := int64(0)
-	if lockTime < txscript.LockTimeThreshold {
-		blockTimeOrHeight = int64(blockHeight)
-	} else {
+	lockTimeValue := int64(lockTime & txscript.LockTimeMask)
+	if lockTime&txscript.LockTimeFlag != 0 {
 		blockTimeOrHeight = blockTime.Unix()
+		lockTimeValue *= txscript.LockTimeMultiplier
+	} else {
+		blockTimeOrHeight = int64(blockHeight)
 	}
-	if int64(lockTime) < blockTimeOrHeight {
+	if lockTimeValue < blockTimeOrHeight {
 		return true
 	}
 
@@ -292,10 +296,9 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 	}
 
 	// Coinbase script length must be between min and max length.
-	// In Handshake, the coinbase script is carried in the witness.  When
-	// the miner has already added a witness commitment, the 32-byte
-	// witness nonce will sit at Witness[0] and the coinbase script moves
-	// to Witness[1].
+	// In Handshake, the coinbase script is carried in the witness. Some
+	// compatibility fixtures may prepend a 32-byte witness nonce at
+	// Witness[0], in which case the coinbase script lives at Witness[1].
 	if isCoinbase {
 		for i, txIn := range msgTx.TxIn {
 			if !isNullOutpoint(&txIn.PreviousOutPoint) {
@@ -649,9 +652,9 @@ func CheckBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 }
 
 // coinbaseWitnessScript returns the coinbase script bytes from a coinbase
-// transaction's witness stack.  Miners may prepend a 32-byte witness nonce at
-// Witness[0] when adding a witness commitment, in which case the coinbase
-// script lives at Witness[1].
+// transaction's witness stack. Some compatibility fixtures may prepend a
+// 32-byte witness nonce at Witness[0], in which case the coinbase script lives
+// at Witness[1].
 func coinbaseWitnessScript(witness [][]byte) []byte {
 	if len(witness) == 0 {
 		return nil
@@ -725,6 +728,36 @@ func CheckSerializedHeight(coinbaseTx *hnsutil.Tx, wantHeight int32) error {
 		str := fmt.Sprintf("the coinbase signature script serialized "+
 			"block height is %d when %d was expected",
 			serializedHeight, wantHeight)
+		return ruleError(ErrBadCoinbaseHeight, str)
+	}
+	return nil
+}
+
+// CoinbaseBlockHeight returns the height encoded in a Handshake coinbase
+// transaction.  Handshake commits the coinbase height in the transaction
+// locktime rather than in a Bitcoin-style scriptSig prefix.
+func CoinbaseBlockHeight(coinbaseTx *hnsutil.Tx) (int32, error) {
+	lockTime := coinbaseTx.MsgTx().LockTime
+	if lockTime > math.MaxInt32 {
+		str := fmt.Sprintf("the coinbase transaction locktime %d "+
+			"exceeds max block height", lockTime)
+		return 0, ruleError(ErrBadCoinbaseHeight, str)
+	}
+	return int32(lockTime), nil
+}
+
+// CheckCoinbaseHeight checks if the passed coinbase transaction commits to the
+// expected block height.
+func CheckCoinbaseHeight(coinbaseTx *hnsutil.Tx, wantHeight int32) error {
+	coinbaseHeight, err := CoinbaseBlockHeight(coinbaseTx)
+	if err != nil {
+		return err
+	}
+
+	if coinbaseHeight != wantHeight {
+		str := fmt.Sprintf("the coinbase transaction locktime "+
+			"height is %d when %d was expected",
+			coinbaseHeight, wantHeight)
 		return ruleError(ErrBadCoinbaseHeight, str)
 	}
 	return nil
@@ -921,18 +954,13 @@ func (b *BlockChain) checkBlockContext(block *hnsutil.Block, prevNode *blockNode
 			}
 		}
 
-		// Ensure coinbase starts with serialized block heights for
-		// blocks whose version is the serializedHeightVersion or newer
-		// once a majority of the network has upgraded.  This is part of
-		// BIP0034.
-		if ShouldHaveSerializedBlockHeight(header) &&
-			blockHeight >= b.chainParams.BIP0034Height {
-
-			coinbaseTx := block.Transactions()[0]
-			err := CheckSerializedHeight(coinbaseTx, blockHeight)
-			if err != nil {
-				return err
-			}
+		// Handshake commits the coinbase height in tx.LockTime.  Do not
+		// enforce Bitcoin's BIP0034 scriptSig prefix rule here: historical
+		// mainnet coinbases use arbitrary witness data.
+		coinbaseTx := block.Transactions()[0]
+		err = CheckCoinbaseHeight(coinbaseTx, blockHeight)
+		if err != nil {
+			return err
 		}
 
 	}
@@ -1107,7 +1135,8 @@ func CheckTransactionInputs(tx *hnsutil.Tx, txHeight int32, utxoView *UtxoViewpo
 //
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, view *UtxoViewpoint, stxos *[]SpentTxOut) error {
-	return b.checkConnectBlockWithNameView(node, block, view, stxos, nil, false)
+	return b.checkConnectBlockWithNameView(node, block, view, stxos, nil,
+		false, nil)
 }
 
 // checkConnectBlockWithNameView is the implementation for checkConnectBlock
@@ -1115,7 +1144,8 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 // validate against a simulated attach-chain name state.
 func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 	block *hnsutil.Block, view *UtxoViewpoint, stxos *[]SpentTxOut,
-	nameView *nameBlockView, nameViewReady bool) error {
+	nameView *nameBlockView, nameViewReady bool,
+	airdropView *airdropSpentField) error {
 
 	// If the side chain blocks end up in the database, a call to
 	// CheckBlockSanity should be done here in case a previous version
@@ -1243,7 +1273,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 			if err != nil {
 				return err
 			}
-			err = nameView.applyTx(nil, tx, uint32(node.height),
+			err = b.applyTxToNameView(nameView, tx, uint32(node.height),
 				node.parent.timestamp, prevOutputs)
 			if err != nil {
 				return err
@@ -1296,14 +1326,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 		return ruleError(ErrBadCoinbaseValue, str)
 	}
 
-	// Don't run scripts if this node is before the latest known good
-	// checkpoint since the validity is verified via the checkpoints (all
-	// transactions are included in the merkle root hash and any changes
-	// will therefore be detected by the next checkpoint).  This is a huge
-	// optimization because running the scripts is the most time consuming
-	// portion of block handling.
-	checkpoint := b.LatestCheckpoint()
-	runScripts := checkpoint == nil || node.height > checkpoint.Height
+	runScripts := b.shouldValidateScripts(node)
 
 	// Blocks created after the BIP0016 activation time need to have the
 	// pay-to-script-hash checks enabled.
@@ -1383,11 +1406,74 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 		}
 	}
 
+	if airdropView != nil {
+		if err := airdropView.spendBlock(block); err != nil {
+			return err
+		}
+	} else {
+		err := b.db.View(func(dbTx database.Tx) error {
+			return checkCoinbaseAirdropsAvailable(dbTx, block)
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	// Update the best hash for view to include this block since all of its
 	// transactions have been connected.
 	view.SetBestHash(&node.hash)
 
 	return nil
+}
+
+// shouldValidateScripts returns whether the expensive script validation pass
+// should be performed for the provided block node.  It only skips scripts when
+// a later checkpoint or explicitly configured assumevalid block proves the node
+// is on a trusted path.  All non-script consensus checks are still run by the
+// caller before this decision is consulted.
+func (b *BlockChain) shouldValidateScripts(node *blockNode) bool {
+	if node == nil {
+		return true
+	}
+
+	// Don't run scripts if this node is before the latest known good
+	// checkpoint since the validity is verified via the checkpoints (all
+	// transactions are included in the merkle root hash and any changes
+	// will therefore be detected by the next checkpoint).  This is a huge
+	// optimization because running the scripts is the most time consuming
+	// portion of block handling.
+	checkpoint := b.LatestCheckpoint()
+	if checkpoint != nil && node.height <= checkpoint.Height {
+		return false
+	}
+
+	return !b.isAssumeValidAncestor(node)
+}
+
+// isAssumeValidAncestor returns whether node is at or below the configured
+// assumevalid block on that block's ancestor path.
+func (b *BlockChain) isAssumeValidAncestor(node *blockNode) bool {
+	if b.assumeValid == nil || node == nil {
+		return false
+	}
+
+	assumeValidNode := b.assumeValidNode
+	if assumeValidNode == nil {
+		assumeValidNode = b.index.LookupNode(b.assumeValid)
+		if assumeValidNode == nil {
+			return false
+		}
+		b.assumeValidNode = assumeValidNode
+	}
+	if b.index.NodeStatus(assumeValidNode).KnownInvalid() {
+		return false
+	}
+	if node.height > assumeValidNode.height {
+		return false
+	}
+
+	ancestor := assumeValidNode.Ancestor(node.height)
+	return ancestor != nil && ancestor.Equals(node)
 }
 
 // CheckConnectBlockTemplate fully validates that connecting the passed block to

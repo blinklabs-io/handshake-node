@@ -36,7 +36,7 @@ type urkelLeaf struct {
 
 type urkelBits struct {
 	size int
-	data []byte
+	data chainhash.Hash
 }
 
 type urkelNode interface {
@@ -44,14 +44,16 @@ type urkelNode interface {
 }
 
 type urkelLeafNode struct {
-	key   chainhash.Hash
-	value []byte
+	key       chainhash.Hash
+	value     []byte
+	hashValue chainhash.Hash
 }
 
 type urkelInternalNode struct {
-	prefix urkelBits
-	left   urkelNode
-	right  urkelNode
+	prefix    urkelBits
+	left      urkelNode
+	right     urkelNode
+	hashValue chainhash.Hash
 }
 
 type urkelProofNode struct {
@@ -74,6 +76,14 @@ type UrkelProof struct {
 }
 
 func buildUrkelTree(leaves []urkelLeaf) urkelNode {
+	return buildUrkelTreeWithValues(leaves, true)
+}
+
+func buildUrkelRootTree(leaves []urkelLeaf) urkelNode {
+	return buildUrkelTreeWithValues(leaves, false)
+}
+
+func buildUrkelTreeWithValues(leaves []urkelLeaf, keepValues bool) urkelNode {
 	if len(leaves) == 0 {
 		return nil
 	}
@@ -86,7 +96,7 @@ func buildUrkelTree(leaves []urkelLeaf) urkelNode {
 
 	var root urkelNode
 	for _, leaf := range ordered {
-		root = insertUrkel(root, leaf.key, leaf.value, 0)
+		root = insertUrkelWithValues(root, leaf.key, leaf.value, 0, keepValues)
 	}
 	return root
 }
@@ -100,11 +110,16 @@ func calcUrkelRoot(leaves []urkelLeaf) chainhash.Hash {
 }
 
 func insertUrkel(node urkelNode, key chainhash.Hash, value []byte, depth int) urkelNode {
+	return insertUrkelWithValues(node, key, value, depth, true)
+}
+
+func insertUrkelRoot(node urkelNode, key chainhash.Hash, value []byte, depth int) urkelNode {
+	return insertUrkelWithValues(node, key, value, depth, false)
+}
+
+func insertUrkelWithValues(node urkelNode, key chainhash.Hash, value []byte, depth int, keepValue bool) urkelNode {
 	if node == nil {
-		return &urkelLeafNode{
-			key:   key,
-			value: append([]byte(nil), value...),
-		}
+		return newUrkelLeaf(key, value, keepValue)
 	}
 
 	switch n := node.(type) {
@@ -114,46 +129,28 @@ func insertUrkel(node urkelNode, key chainhash.Hash, value []byte, depth int) ur
 		bit := urkelHasBit(key[:], nextDepth)
 
 		if bits != n.prefix.size {
-			leaf := &urkelLeafNode{
-				key:   key,
-				value: append([]byte(nil), value...),
-			}
+			leaf := newUrkelLeaf(key, value, keepValue)
 			front, back := n.prefix.split(bits)
-			child := &urkelInternalNode{
-				prefix: back,
-				left:   n.left,
-				right:  n.right,
-			}
+			child := newUrkelInternalDirect(back, n.left, n.right)
 			return newUrkelInternal(front, leaf, child, bit)
 		}
 
 		if bit == 0 {
-			return &urkelInternalNode{
-				prefix: n.prefix,
-				left:   insertUrkel(n.left, key, value, nextDepth+1),
-				right:  n.right,
-			}
+			return newUrkelInternalDirect(n.prefix,
+				insertUrkelWithValues(n.left, key, value, nextDepth+1, keepValue),
+				n.right)
 		}
-		return &urkelInternalNode{
-			prefix: n.prefix,
-			left:   n.left,
-			right:  insertUrkel(n.right, key, value, nextDepth+1),
-		}
+		return newUrkelInternalDirect(n.prefix, n.left,
+			insertUrkelWithValues(n.right, key, value, nextDepth+1, keepValue))
 
 	case *urkelLeafNode:
 		if n.key == key {
-			return &urkelLeafNode{
-				key:   key,
-				value: append([]byte(nil), value...),
-			}
+			return newUrkelLeaf(key, value, keepValue)
 		}
 
 		prefix := urkelBitsFromKey(n.key).collide(key[:], depth)
 		nextDepth := depth + prefix.size
-		leaf := &urkelLeafNode{
-			key:   key,
-			value: append([]byte(nil), value...),
-		}
+		leaf := newUrkelLeaf(key, value, keepValue)
 		bit := urkelHasBit(key[:], nextDepth)
 		return newUrkelInternal(prefix, leaf, n, bit)
 
@@ -162,16 +159,32 @@ func insertUrkel(node urkelNode, key chainhash.Hash, value []byte, depth int) ur
 	}
 }
 
-func newUrkelInternal(prefix urkelBits, x, y urkelNode, bit int) *urkelInternalNode {
-	node := &urkelInternalNode{prefix: prefix}
-	if bit == 0 {
-		node.left = x
-		node.right = y
-	} else {
-		node.left = y
-		node.right = x
+func newUrkelLeaf(key chainhash.Hash, value []byte, keepValue bool) *urkelLeafNode {
+	var valueCopy []byte
+	if keepValue {
+		valueCopy = append([]byte(nil), value...)
 	}
-	return node
+	return &urkelLeafNode{
+		key:       key,
+		value:     valueCopy,
+		hashValue: hashUrkelValue(key, value),
+	}
+}
+
+func newUrkelInternalDirect(prefix urkelBits, left, right urkelNode) *urkelInternalNode {
+	return &urkelInternalNode{
+		prefix:    prefix,
+		left:      left,
+		right:     right,
+		hashValue: hashUrkelInternal(prefix, left.hash(), right.hash()),
+	}
+}
+
+func newUrkelInternal(prefix urkelBits, x, y urkelNode, bit int) *urkelInternalNode {
+	if bit == 0 {
+		return newUrkelInternalDirect(prefix, x, y)
+	}
+	return newUrkelInternalDirect(prefix, y, x)
 }
 
 func (n *urkelInternalNode) child(bit int) urkelNode {
@@ -189,7 +202,7 @@ func (n *urkelInternalNode) sibling(bit int) urkelNode {
 }
 
 func (n *urkelLeafNode) hash() chainhash.Hash {
-	return hashUrkelValue(n.key, n.value)
+	return n.hashValue
 }
 
 func hashUrkelValue(key chainhash.Hash, value []byte) chainhash.Hash {
@@ -206,9 +219,7 @@ func hashUrkelLeaf(key, valueHash chainhash.Hash) chainhash.Hash {
 }
 
 func (n *urkelInternalNode) hash() chainhash.Hash {
-	left := n.left.hash()
-	right := n.right.hash()
-	return hashUrkelInternal(n.prefix, left, right)
+	return n.hashValue
 }
 
 func hashUrkelInternal(prefix urkelBits, left, right chainhash.Hash) chainhash.Hash {
@@ -220,11 +231,12 @@ func hashUrkelInternal(prefix urkelBits, left, right chainhash.Hash) chainhash.H
 		return chainhash.Hash(blake2b.Sum256(preimage))
 	}
 
-	preimage := make([]byte, 1+2+len(prefix.data)+chainhash.HashSize*2)
+	prefixBytes := prefix.byteSize()
+	preimage := make([]byte, 1+2+prefixBytes+chainhash.HashSize*2)
 	preimage[0] = 0x02
 	binary.LittleEndian.PutUint16(preimage[1:3], uint16(prefix.size))
-	copy(preimage[3:], prefix.data)
-	offset := 3 + len(prefix.data)
+	copy(preimage[3:], prefix.data[:prefixBytes])
+	offset := 3 + prefixBytes
 	copy(preimage[offset:], left[:])
 	copy(preimage[offset+chainhash.HashSize:], right[:])
 	return chainhash.Hash(blake2b.Sum256(preimage))
@@ -233,23 +245,20 @@ func hashUrkelInternal(prefix urkelBits, left, right chainhash.Hash) chainhash.H
 func urkelBitsFromKey(key chainhash.Hash) urkelBits {
 	return urkelBits{
 		size: urkelKeyBits,
-		data: append([]byte(nil), key[:]...),
+		data: key,
 	}
 }
 
 func (b urkelBits) get(index int) int {
-	return urkelHasBit(b.data, index)
+	return urkelHasBit(b.data[:], index)
 }
 
 func (b urkelBits) clone() urkelBits {
-	if b.size == 0 {
-		return urkelBits{}
-	}
+	return b
+}
 
-	return urkelBits{
-		size: b.size,
-		data: append([]byte(nil), b.data...),
-	}
+func (b urkelBits) byteSize() int {
+	return (b.size + 7) / 8
 }
 
 func (b urkelBits) has(key []byte, depth int) bool {
@@ -309,11 +318,10 @@ func (b urkelBits) slice(start, end int) urkelBits {
 
 	out := urkelBits{
 		size: size,
-		data: make([]byte, (size+7)/8),
 	}
 	for i := 0; i < size; i++ {
 		if b.get(start+i) != 0 {
-			urkelSetBit(out.data, i)
+			urkelSetBit(out.data[:], i)
 		}
 	}
 	return out
@@ -511,10 +519,8 @@ func readUrkelProofBits(serialized []byte, offset *int) (urkelBits, error) {
 		return urkelBits{}, errors.New("urkel prefix data is truncated")
 	}
 
-	bits := urkelBits{
-		size: size,
-		data: append([]byte(nil), serialized[*offset:*offset+byteSize]...),
-	}
+	bits := urkelBits{size: size}
+	copy(bits.data[:], serialized[*offset:*offset+byteSize])
 	*offset += byteSize
 	return bits, nil
 }
@@ -604,12 +610,13 @@ func appendUrkelProofBits(out []byte, offset int, bits urkelBits) int {
 	}
 	out[offset] = byte(bits.size)
 	offset++
-	copy(out[offset:], bits.data)
-	return offset + len(bits.data)
+	byteSize := bits.byteSize()
+	copy(out[offset:], bits.data[:byteSize])
+	return offset + byteSize
 }
 
 func urkelProofBitsSize(bits urkelBits) int {
-	size := 1 + len(bits.data)
+	size := 1 + bits.byteSize()
 	if bits.size >= 0x80 {
 		size++
 	}
@@ -623,8 +630,7 @@ func (p *UrkelProof) isSane() bool {
 		return false
 	}
 	for _, node := range p.nodes {
-		if node.prefix.size < 0 || node.prefix.size > urkelKeyBits ||
-			len(node.prefix.data) != (node.prefix.size+7)/8 {
+		if node.prefix.size < 0 || node.prefix.size > urkelKeyBits {
 
 			return false
 		}
@@ -635,8 +641,7 @@ func (p *UrkelProof) isSane() bool {
 		return true
 	case urkelProofTypeShort:
 		return p.prefix.size > 0 &&
-			p.prefix.size <= urkelKeyBits &&
-			len(p.prefix.data) == (p.prefix.size+7)/8
+			p.prefix.size <= urkelKeyBits
 	case urkelProofTypeCollision:
 		return true
 	case urkelProofTypeExists:

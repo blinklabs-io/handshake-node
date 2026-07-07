@@ -91,12 +91,12 @@ func (s *sortableInputs) Less(i, j int) bool {
 }
 
 // Less is the output comparison function. First sort based on amount (smallest
-// first), then PkScript.
+// first), then the Handshake output key.
 func (s *sortableOutputs) Less(i, j int) bool {
 	outs := s.p.UnsignedTx.TxOut
 
 	if outs[i].Value == outs[j].Value {
-		return bytes.Compare(outs[i].PkScript, outs[j].PkScript) < 0
+		return bytes.Compare(txOutSortKey(outs[i]), txOutSortKey(outs[j])) < 0
 	}
 	return outs[i].Value < outs[j].Value
 }

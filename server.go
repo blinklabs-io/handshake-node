@@ -532,6 +532,7 @@ func (sp *serverPeer) OnVersion(_ *peer.Peer, msg *wire.HnsMsgVersion) *wire.Hns
 // OnVerAck is invoked when a peer receives a verack message and is used
 // to kick start communication with them.
 func (sp *serverPeer) OnVerAck(_ *peer.Peer, _ *wire.HnsMsgVerack) {
+	sp.QueueMessage(&wire.HnsMsgSendHeaders{}, nil)
 	sp.server.AddPeer(sp)
 }
 
@@ -1253,6 +1254,13 @@ func (s *server) TransactionConfirmed(tx *hnsutil.Tx) {
 // connected peer.  An error is returned if the transaction hash is not known.
 func (s *server) pushTxMsg(sp *serverPeer, hash *chainhash.Hash,
 	doneChan chan<- struct{}, encoding wire.MessageEncoding) error {
+
+	if s.txMemPool == nil {
+		if doneChan != nil {
+			doneChan <- struct{}{}
+		}
+		return fmt.Errorf("transaction memory pool is not configured")
+	}
 
 	// Attempt to fetch the requested transaction from the pool.  A
 	// call could be made to check for existence first, but simply trying
@@ -2688,6 +2696,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		HashCache:        s.hashCache,
 		Prune:            cfg.Prune * 1024 * 1024,
 		UtxoCacheMaxSize: uint64(cfg.UtxoCacheMaxSizeMiB) * 1024 * 1024,
+		AssumeValid:      cfg.assumeValid,
 	})
 	if err != nil {
 		return nil, err
@@ -2741,6 +2750,10 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		MedianTimePast: func() time.Time { return s.chain.BestSnapshot().MedianTime },
 		CalcSequenceLock: func(tx *hnsutil.Tx, view *blockchain.UtxoViewpoint) (*blockchain.SequenceLock, error) {
 			return s.chain.CalcSequenceLock(tx, view, true)
+		},
+		CheckTransactionNames: s.chain.CheckTransactionNames,
+		NewNameValidationView: func() (mempool.NameValidationView, error) {
+			return s.chain.NewNameValidationView()
 		},
 		IsDeploymentActive: s.chain.IsDeploymentActive,
 		SigCache:           s.sigCache,

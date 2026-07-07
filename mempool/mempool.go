@@ -5,7 +5,9 @@
 package mempool
 
 import (
+	"bytes"
 	"container/list"
+	"encoding/binary"
 	"fmt"
 	"maps"
 	"math"
@@ -15,10 +17,10 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
-	"github.com/blinklabs-io/handshake-node/hnsjson"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -88,6 +90,16 @@ type Config struct {
 	// the current sequence lock for the given transaction using the passed
 	// utxo view.
 	CalcSequenceLock func(*hnsutil.Tx, *blockchain.UtxoViewpoint) (*blockchain.SequenceLock, error)
+
+	// CheckTransactionNames validates Handshake name covenant transitions
+	// against the current chain name state and the provided UTXO view.
+	CheckTransactionNames func(*hnsutil.Tx, int32, int64, *blockchain.UtxoViewpoint) error
+
+	// NewNameValidationView returns a stateful Handshake name-validation
+	// view initialized from the current chain state.  When provided, the
+	// mempool uses it to replay existing unconfirmed name transactions in
+	// dependency order before validating a new transaction.
+	NewNameValidationView func() (NameValidationView, error)
 
 	// IsDeploymentActive returns true if the target deploymentID is
 	// active, and false otherwise. The mempool uses this function to gauge
@@ -166,6 +178,17 @@ type TxDesc struct {
 	StartingPriority float64
 }
 
+// NameValidationView validates ordered Handshake name covenant transitions
+// against a shared chain+mempool state view.
+type NameValidationView interface {
+	ApplyTransaction(*hnsutil.Tx, int32, int64, *blockchain.UtxoViewpoint) error
+}
+
+type coinbaseProofEntry struct {
+	hash  chainhash.Hash
+	proof mining.CoinbaseProof
+}
+
 // orphanTx is normal transaction that references an ancestor transaction
 // that is not yet available.  It also contains additional information related
 // to it such as an expiration time to help prevent caching the orphan forever.
@@ -182,14 +205,16 @@ type TxPool struct {
 	// The following variables must only be used atomically.
 	lastUpdated int64 // last time pool was updated
 
-	mtx           sync.RWMutex
-	cfg           Config
-	pool          map[chainhash.Hash]*TxDesc
-	orphans       map[chainhash.Hash]*orphanTx
-	orphansByPrev map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx
-	outpoints     map[wire.OutPoint]*hnsutil.Tx
-	pennyTotal    float64 // exponentially decaying total for penny spends.
-	lastPennyUnix int64   // unix time of last ``penny spend''
+	mtx            sync.RWMutex
+	cfg            Config
+	pool           map[chainhash.Hash]*TxDesc
+	orphans        map[chainhash.Hash]*orphanTx
+	orphansByPrev  map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx
+	outpoints      map[wire.OutPoint]*hnsutil.Tx
+	nameActions    map[chainhash.Hash]*hnsutil.Tx
+	coinbaseProofs []coinbaseProofEntry
+	pennyTotal     float64 // exponentially decaying total for penny spends.
+	lastPennyUnix  int64   // unix time of last ``penny spend''
 
 	// nextExpireScan is the time after which the orphan pool will be
 	// scanned in order to evict orphans.  This is NOT a hard deadline as
@@ -200,6 +225,10 @@ type TxPool struct {
 
 // Ensure the TxPool type implements the mining.TxSource interface.
 var _ mining.TxSource = (*TxPool)(nil)
+
+// Ensure the TxPool type implements the optional mining.CoinbaseProofSource
+// interface.
+var _ mining.CoinbaseProofSource = (*TxPool)(nil)
 
 // Ensure the TxPool type implements the TxMemPool interface.
 var _ TxMempool = (*TxPool)(nil)
@@ -500,6 +529,7 @@ func (mp *TxPool) removeTransaction(tx *hnsutil.Tx, removeRedeemers bool) {
 			delete(mp.outpoints, txIn.PreviousOutPoint)
 		}
 		delete(mp.pool, *txHash)
+		mp.removeNameOperationIndexes(txDesc.Tx)
 		atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 	}
 }
@@ -537,6 +567,28 @@ func (mp *TxPool) RemoveDoubleSpends(tx *hnsutil.Tx) {
 	mp.mtx.Unlock()
 }
 
+// RemoveNameConflicts removes transactions from the mempool which mutate the
+// same Handshake name as the passed transaction. This is necessary when a block
+// is connected to the main chain because name operations such as OPEN do not
+// necessarily conflict by input outpoint.
+func (mp *TxPool) RemoveNameConflicts(tx *hnsutil.Tx) {
+	txHash := tx.Hash()
+
+	// Protect concurrent access.
+	mp.mtx.Lock()
+	for _, nameHash := range mutableNameActions(tx) {
+		conflict, ok := mp.nameActions[nameHash]
+		if !ok || conflict.Hash().IsEqual(txHash) {
+			continue
+		}
+		if txSpendsTransaction(conflict, tx) {
+			continue
+		}
+		mp.removeTransaction(conflict, true)
+	}
+	mp.mtx.Unlock()
+}
+
 // addTransaction adds the passed transaction to the memory pool.  It should
 // not be called directly as it doesn't perform any validation.  This is a
 // helper for maybeAcceptTransaction.
@@ -560,6 +612,7 @@ func (mp *TxPool) addTransaction(utxoView *blockchain.UtxoViewpoint, tx *hnsutil
 	for _, txIn := range tx.MsgTx().TxIn {
 		mp.outpoints[txIn.PreviousOutPoint] = tx
 	}
+	mp.addNameOperationIndexes(tx)
 	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 
 	// Add unconfirmed address index entries associated with the transaction
@@ -574,6 +627,586 @@ func (mp *TxPool) addTransaction(utxoView *blockchain.UtxoViewpoint, tx *hnsutil
 	}
 
 	return txD
+}
+
+// AddCoinbaseProof adds or replaces a linked claim or airdrop proof for future
+// block templates. The proof is cloned before it is stored.
+func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
+	chainhash.Hash, error) {
+
+	hash, err := coinbaseProofHash(proof)
+	if err != nil {
+		return chainhash.Hash{}, err
+	}
+	cloned := cloneCoinbaseProof(proof)
+	witnessHash := coinbaseProofWitnessHash(proof)
+
+	mp.mtx.Lock()
+	defer mp.mtx.Unlock()
+
+	for i := range mp.coinbaseProofs {
+		if mp.coinbaseProofs[i].hash == hash {
+			if mp.coinbaseProofs[i].proof.Fee != proof.Fee {
+				return chainhash.Hash{}, fmt.Errorf("coinbase "+
+					"proof fee metadata changed for %v; "+
+					"remove the old proof first", hash)
+			}
+			mp.coinbaseProofs[i].proof = cloned
+			atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+			return hash, nil
+		}
+		if coinbaseProofWitnessHash(mp.coinbaseProofs[i].proof) ==
+			witnessHash {
+
+			return chainhash.Hash{}, fmt.Errorf("coinbase proof " +
+				"witness already exists in pool")
+		}
+	}
+
+	mp.coinbaseProofs = append(mp.coinbaseProofs, coinbaseProofEntry{
+		hash:  hash,
+		proof: cloned,
+	})
+	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+	return hash, nil
+}
+
+// RemoveCoinbaseProof removes the proof with the provided proof hash from the
+// pool. It returns whether a proof was removed.
+func (mp *TxPool) RemoveCoinbaseProof(hash chainhash.Hash) bool {
+	mp.mtx.Lock()
+	defer mp.mtx.Unlock()
+
+	return mp.removeCoinbaseProof(hash)
+}
+
+func (mp *TxPool) removeCoinbaseProof(hash chainhash.Hash) bool {
+	for i := range mp.coinbaseProofs {
+		if mp.coinbaseProofs[i].hash != hash {
+			continue
+		}
+
+		copy(mp.coinbaseProofs[i:], mp.coinbaseProofs[i+1:])
+		mp.coinbaseProofs[len(mp.coinbaseProofs)-1] =
+			coinbaseProofEntry{}
+		mp.coinbaseProofs = mp.coinbaseProofs[:len(mp.coinbaseProofs)-1]
+		atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+		return true
+	}
+	return false
+}
+
+// RemoveCoinbaseProofs removes claim and airdrop proofs consumed by the passed
+// coinbase transaction. It returns the number of stored proofs removed.
+func (mp *TxPool) RemoveCoinbaseProofs(coinbaseTx *hnsutil.Tx) int {
+	if coinbaseTx == nil || !blockchain.IsCoinBase(coinbaseTx) {
+		return 0
+	}
+
+	msgTx := coinbaseTx.MsgTx()
+	remove := make(map[chainhash.Hash]struct{})
+	for i := 1; i < len(msgTx.TxIn) && i < len(msgTx.TxOut); i++ {
+		txIn := msgTx.TxIn[i]
+		if len(txIn.Witness) != 1 {
+			continue
+		}
+
+		hash, err := coinbaseProofHash(mining.CoinbaseProof{
+			Witness: txIn.Witness[0],
+			Output:  msgTx.TxOut[i],
+		})
+		if err != nil {
+			continue
+		}
+		remove[hash] = struct{}{}
+	}
+	if len(remove) == 0 {
+		return 0
+	}
+
+	mp.mtx.Lock()
+	defer mp.mtx.Unlock()
+
+	removed := 0
+	for hash := range remove {
+		if mp.removeCoinbaseProof(hash) {
+			removed++
+		}
+	}
+	return removed
+}
+
+// CoinbaseProofs returns claim and airdrop proofs to include in a block
+// template at the provided height. Claim proofs are height-bound by their CLAIM
+// covenant height; airdrop proofs are available until removed.
+func (mp *TxPool) CoinbaseProofs(nextBlockHeight int32) (
+	[]mining.CoinbaseProof, error) {
+
+	mp.mtx.RLock()
+	defer mp.mtx.RUnlock()
+
+	proofs := make([]mining.CoinbaseProof, 0, len(mp.coinbaseProofs))
+	for _, entry := range mp.coinbaseProofs {
+		if !coinbaseProofMatchesHeight(entry.proof, nextBlockHeight) {
+			continue
+		}
+		proofs = append(proofs, cloneCoinbaseProof(entry.proof))
+	}
+	return proofs, nil
+}
+
+func coinbaseProofHash(proof mining.CoinbaseProof) (chainhash.Hash, error) {
+	if err := validateCoinbaseProofShape(proof); err != nil {
+		return chainhash.Hash{}, err
+	}
+
+	var buf bytes.Buffer
+	if err := wire.WriteVarBytes(&buf, 0, proof.Witness); err != nil {
+		return chainhash.Hash{}, err
+	}
+	if err := wire.WriteTxOut(&buf, 0, wire.TxVersion, proof.Output); err != nil {
+		return chainhash.Hash{}, err
+	}
+	return chainhash.HashH(buf.Bytes()), nil
+}
+
+func validateCoinbaseProofShape(proof mining.CoinbaseProof) error {
+	if proof.Output == nil {
+		return fmt.Errorf("coinbase proof missing output")
+	}
+	if proof.Output.Value < 0 {
+		return fmt.Errorf("coinbase proof has negative output value")
+	}
+	if proof.Fee < 0 {
+		return fmt.Errorf("coinbase proof has negative fee")
+	}
+
+	covenant := proof.Output.Covenant
+	switch covenant.Type {
+	case wire.CovenantNone:
+		if len(covenant.Items) != 0 {
+			return fmt.Errorf("coinbase proof NONE covenant has items")
+		}
+	case wire.CovenantClaim:
+		if len(covenant.Items) < 2 || len(covenant.Items[1]) != 4 {
+			return fmt.Errorf("coinbase proof CLAIM covenant " +
+				"missing height")
+		}
+	default:
+		return fmt.Errorf("coinbase proof has unsupported covenant type %d",
+			covenant.Type)
+	}
+
+	return nil
+}
+
+func coinbaseProofWitnessHash(proof mining.CoinbaseProof) chainhash.Hash {
+	return chainhash.HashH(proof.Witness)
+}
+
+func cloneCoinbaseProof(proof mining.CoinbaseProof) mining.CoinbaseProof {
+	return mining.CoinbaseProof{
+		Witness: append([]byte(nil), proof.Witness...),
+		Output:  cloneCoinbaseProofOutput(proof.Output),
+		Fee:     proof.Fee,
+	}
+}
+
+func cloneCoinbaseProofOutput(output *wire.TxOut) *wire.TxOut {
+	if output == nil {
+		return nil
+	}
+
+	return wire.NewTxOut(output.Value,
+		wire.Address{
+			Version: output.Address.Version,
+			Hash:    append([]byte(nil), output.Address.Hash...),
+		},
+		cloneCoinbaseProofCovenant(output.Covenant),
+	)
+}
+
+func cloneCoinbaseProofCovenant(covenant wire.Covenant) wire.Covenant {
+	items := make([][]byte, len(covenant.Items))
+	for i, item := range covenant.Items {
+		items[i] = append([]byte(nil), item...)
+	}
+	return wire.Covenant{
+		Type:  covenant.Type,
+		Items: items,
+	}
+}
+
+func coinbaseProofMatchesHeight(proof mining.CoinbaseProof,
+	nextBlockHeight int32) bool {
+
+	if proof.Output == nil || proof.Output.Covenant.Type != wire.CovenantClaim {
+		return true
+	}
+	if nextBlockHeight < 0 || len(proof.Output.Covenant.Items) < 2 ||
+		len(proof.Output.Covenant.Items[1]) != 4 {
+
+		return false
+	}
+
+	height := binary.LittleEndian.Uint32(proof.Output.Covenant.Items[1])
+	return height == uint32(nextBlockHeight)
+}
+
+func isMempoolMutableNameCovenant(covenantType uint8) bool {
+	switch covenantType {
+	case wire.CovenantClaim, wire.CovenantOpen, wire.CovenantRegister,
+		wire.CovenantUpdate, wire.CovenantRenew, wire.CovenantTransfer,
+		wire.CovenantFinalize, wire.CovenantRevoke:
+
+		return true
+	default:
+		return false
+	}
+}
+
+func covenantNameHash(covenant wire.Covenant) (chainhash.Hash, bool) {
+	if len(covenant.Items) == 0 ||
+		len(covenant.Items[0]) != chainhash.HashSize {
+
+		return chainhash.Hash{}, false
+	}
+
+	var nameHash chainhash.Hash
+	copy(nameHash[:], covenant.Items[0])
+	return nameHash, true
+}
+
+func mutableNameActions(tx *hnsutil.Tx) []chainhash.Hash {
+	var actions []chainhash.Hash
+	for _, txOut := range tx.MsgTx().TxOut {
+		covenant := txOut.Covenant
+		if !isMempoolMutableNameCovenant(covenant.Type) {
+			continue
+		}
+
+		nameHash, ok := covenantNameHash(covenant)
+		if !ok {
+			continue
+		}
+		actions = append(actions, nameHash)
+	}
+
+	return actions
+}
+
+func hasNameCovenant(tx *hnsutil.Tx) bool {
+	for _, txOut := range tx.MsgTx().TxOut {
+		if txOut.Covenant.Type != wire.CovenantNone {
+			return true
+		}
+	}
+	return false
+}
+
+func (mp *TxPool) addNameOperationIndexes(tx *hnsutil.Tx) {
+	actions := mutableNameActions(tx)
+	if len(actions) == 0 {
+		return
+	}
+
+	if mp.nameActions == nil {
+		mp.nameActions = make(map[chainhash.Hash]*hnsutil.Tx)
+	}
+	for _, nameHash := range actions {
+		mp.nameActions[nameHash] = tx
+	}
+}
+
+func (mp *TxPool) removeNameOperationIndexes(tx *hnsutil.Tx) {
+	if len(mp.nameActions) == 0 {
+		return
+	}
+
+	txHash := tx.Hash()
+	for _, nameHash := range mutableNameActions(tx) {
+		indexedTx, ok := mp.nameActions[nameHash]
+		if !ok || !indexedTx.Hash().IsEqual(txHash) {
+			continue
+		}
+		delete(mp.nameActions, nameHash)
+		mp.rebuildNameOperationIndex(nameHash)
+	}
+}
+
+func (mp *TxPool) rebuildNameOperationIndex(nameHash chainhash.Hash) {
+	var tip *hnsutil.Tx
+	for _, txDesc := range mp.pool {
+		tx := txDesc.Tx
+		if !txMutatesName(tx, nameHash) ||
+			hasSpentMutableNameOutput(mp, tx, nameHash) {
+
+			continue
+		}
+		tip = tx
+		break
+	}
+
+	if tip != nil {
+		mp.nameActions[nameHash] = tip
+	}
+}
+
+func txMutatesName(tx *hnsutil.Tx, nameHash chainhash.Hash) bool {
+	for _, txOut := range tx.MsgTx().TxOut {
+		covenant := txOut.Covenant
+		if !isMempoolMutableNameCovenant(covenant.Type) {
+			continue
+		}
+		outputNameHash, ok := covenantNameHash(covenant)
+		if ok && outputNameHash == nameHash {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSpentMutableNameOutput(mp *TxPool, tx *hnsutil.Tx,
+	nameHash chainhash.Hash) bool {
+
+	txHash := tx.Hash()
+	for outputIndex, txOut := range tx.MsgTx().TxOut {
+		covenant := txOut.Covenant
+		if !isMempoolMutableNameCovenant(covenant.Type) {
+			continue
+		}
+		outputNameHash, ok := covenantNameHash(covenant)
+		if !ok || outputNameHash != nameHash {
+			continue
+		}
+		prevOut := wire.OutPoint{
+			Hash:  *txHash,
+			Index: uint32(outputIndex),
+		}
+		if _, spent := mp.outpoints[prevOut]; spent {
+			return true
+		}
+	}
+	return false
+}
+
+func txSpendsTransaction(spender, spent *hnsutil.Tx) bool {
+	spentHash := spent.Hash()
+	for _, txIn := range spender.MsgTx().TxIn {
+		if txIn.PreviousOutPoint.Hash == *spentHash {
+			return true
+		}
+	}
+	return false
+}
+
+func (mp *TxPool) checkNameOperationConflicts(tx *hnsutil.Tx,
+	replacementConflicts map[chainhash.Hash]*hnsutil.Tx) error {
+
+	txHash := tx.Hash()
+	txActions := make(map[chainhash.Hash]struct{})
+	for _, nameHash := range mutableNameActions(tx) {
+		if _, exists := txActions[nameHash]; exists {
+			str := fmt.Sprintf("transaction %v has duplicate name "+
+				"covenant action for %v", txHash, nameHash)
+			return txRuleError(wire.RejectInvalid, str)
+		}
+		txActions[nameHash] = struct{}{}
+
+		conflict, exists := mp.nameActions[nameHash]
+		if !exists || conflict.Hash().IsEqual(txHash) {
+			continue
+		}
+		if _, replaced := replacementConflicts[*conflict.Hash()]; replaced {
+			continue
+		}
+		if txSpendsTransaction(tx, conflict) {
+			continue
+		}
+
+		str := fmt.Sprintf("name covenant action for %v already "+
+			"exists in mempool as transaction %v", nameHash,
+			conflict.Hash())
+		return txRuleError(wire.RejectDuplicate, str)
+	}
+
+	return nil
+}
+
+// PruneInvalidNameTransactions removes mempool transactions whose Handshake
+// covenant transitions are no longer valid against the current chain state.
+func (mp *TxPool) PruneInvalidNameTransactions() []*TxDesc {
+	if mp.cfg.CheckTransactionNames == nil &&
+		mp.cfg.NewNameValidationView == nil {
+
+		return nil
+	}
+
+	mp.mtx.Lock()
+	defer mp.mtx.Unlock()
+
+	var removed []*TxDesc
+	nextBlockHeight := mp.cfg.BestHeight() + 1
+	prevTime := mp.cfg.MedianTimePast().Unix()
+	if mp.cfg.NewNameValidationView != nil {
+		for {
+			_, invalid, err := mp.nameValidationViewForMempool(
+				nextBlockHeight, prevTime, nil,
+			)
+			if err == nil || invalid == nil {
+				return removed
+			}
+
+			removed = append(removed, invalid)
+			mp.removeTransaction(invalid.Tx, true)
+		}
+	}
+
+	for _, txDesc := range mp.pool {
+		tx := txDesc.Tx
+		if !hasNameCovenant(tx) {
+			continue
+		}
+
+		utxoView, err := mp.fetchInputUtxos(tx)
+		if err == nil {
+			err = mp.cfg.CheckTransactionNames(tx, nextBlockHeight,
+				prevTime, utxoView)
+		}
+		if err == nil {
+			continue
+		}
+
+		removed = append(removed, txDesc)
+		mp.removeTransaction(tx, true)
+	}
+
+	return removed
+}
+
+func (mp *TxPool) checkTransactionNames(tx *hnsutil.Tx,
+	nextBlockHeight int32, prevTime int64,
+	utxoView *blockchain.UtxoViewpoint,
+	excluded map[chainhash.Hash]*hnsutil.Tx) error {
+
+	if !hasNameCovenant(tx) {
+		if mp.cfg.NewNameValidationView == nil &&
+			mp.cfg.CheckTransactionNames != nil {
+
+			return mp.cfg.CheckTransactionNames(tx,
+				nextBlockHeight, prevTime, utxoView)
+		}
+		return nil
+	}
+
+	if mp.cfg.NewNameValidationView != nil {
+		nameView, invalid, err := mp.nameValidationViewForMempool(
+			nextBlockHeight, prevTime, excluded,
+		)
+		if err != nil {
+			if invalid != nil {
+				return fmt.Errorf("mempool name transaction %v "+
+					"is invalid: %w", invalid.Tx.Hash(), err)
+			}
+			return err
+		}
+		return nameView.ApplyTransaction(tx, nextBlockHeight,
+			prevTime, utxoView)
+	}
+
+	if mp.cfg.CheckTransactionNames == nil {
+		return nil
+	}
+
+	return mp.cfg.CheckTransactionNames(tx, nextBlockHeight, prevTime,
+		utxoView)
+}
+
+func (mp *TxPool) nameValidationViewForMempool(nextBlockHeight int32,
+	prevTime int64, excluded map[chainhash.Hash]*hnsutil.Tx) (
+	NameValidationView, *TxDesc, error) {
+
+	nameView, err := mp.cfg.NewNameValidationView()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	invalid, err := mp.applyMempoolNameTransactions(
+		nameView, nextBlockHeight, prevTime, excluded,
+	)
+	if err != nil {
+		return nil, invalid, err
+	}
+
+	return nameView, nil, nil
+}
+
+func (mp *TxPool) applyMempoolNameTransactions(nameView NameValidationView,
+	nextBlockHeight int32, prevTime int64,
+	excluded map[chainhash.Hash]*hnsutil.Tx) (*TxDesc, error) {
+
+	visited := make(map[chainhash.Hash]struct{}, len(mp.pool))
+	visiting := make(map[chainhash.Hash]struct{}, len(mp.pool))
+
+	var visit func(chainhash.Hash) (*TxDesc, error)
+	visit = func(txHash chainhash.Hash) (*TxDesc, error) {
+		if _, done := visited[txHash]; done {
+			return nil, nil
+		}
+		if _, skip := excluded[txHash]; skip {
+			visited[txHash] = struct{}{}
+			return nil, nil
+		}
+
+		txDesc, exists := mp.pool[txHash]
+		if !exists {
+			visited[txHash] = struct{}{}
+			return nil, nil
+		}
+		if _, cycle := visiting[txHash]; cycle {
+			return txDesc, fmt.Errorf("mempool transaction "+
+				"dependency cycle involving %v", txHash)
+		}
+
+		visiting[txHash] = struct{}{}
+		for _, txIn := range txDesc.Tx.MsgTx().TxIn {
+			parentHash := txIn.PreviousOutPoint.Hash
+			if _, exists := mp.pool[parentHash]; !exists {
+				continue
+			}
+			invalid, err := visit(parentHash)
+			if err != nil {
+				return invalid, err
+			}
+		}
+		delete(visiting, txHash)
+		visited[txHash] = struct{}{}
+
+		if !hasNameCovenant(txDesc.Tx) {
+			return nil, nil
+		}
+
+		utxoView, err := mp.fetchInputUtxos(txDesc.Tx)
+		if err != nil {
+			return txDesc, err
+		}
+		if err := nameView.ApplyTransaction(txDesc.Tx,
+			nextBlockHeight, prevTime, utxoView); err != nil {
+
+			return txDesc, err
+		}
+
+		return nil, nil
+	}
+
+	for txHash := range mp.pool {
+		invalid, err := visit(txHash)
+		if err != nil {
+			return invalid, err
+		}
+	}
+
+	return nil, nil
 }
 
 // checkPoolDoubleSpend checks whether or not the passed transaction is
@@ -1476,6 +2109,29 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 		return nil, err
 	}
 
+	// If the transaction has any conflicts, then we're processing a
+	// potential replacement.  Determine the full replacement set before
+	// name validation so replaced transactions are not replayed into the
+	// speculative mempool name state.
+	var conflicts map[chainhash.Hash]*hnsutil.Tx
+	if isReplacement {
+		conflicts, err = mp.validateReplacement(tx, txFee)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := mp.checkNameOperationConflicts(tx, conflicts); err != nil {
+		return nil, err
+	}
+	err = mp.checkTransactionNames(tx, nextBlockHeight,
+		medianTimePast.Unix(), utxoView, conflicts)
+	if err != nil {
+		if cerr, ok := err.(blockchain.RuleError); ok {
+			return nil, chainRuleError(cerr)
+		}
+		return nil, err
+	}
+
 	// Don't allow non-standard transactions or non-standard inputs if the
 	// network parameters forbid their acceptance.
 	err = mp.validateStandardness(
@@ -1520,16 +2176,6 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	// If the transaction has any conflicts, and we've made it this far,
-	// then we're processing a potential replacement.
-	var conflicts map[chainhash.Hash]*hnsutil.Tx
-	if isReplacement {
-		conflicts, err = mp.validateReplacement(tx, txFee)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	// Verify crypto signatures for each input and reject the transaction
@@ -1738,5 +2384,6 @@ func New(cfg *Config) *TxPool {
 		orphansByPrev:  make(map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx),
 		nextExpireScan: time.Now().Add(orphanExpireScanInterval),
 		outpoints:      make(map[wire.OutPoint]*hnsutil.Tx),
+		nameActions:    make(map[chainhash.Hash]*hnsutil.Tx),
 	}
 }
