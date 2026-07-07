@@ -92,7 +92,7 @@ func (s sortableOutputSlice) Less(i, j int) bool {
 		return s[i].Value < s[j].Value
 	}
 
-	addrCmp := bytes.Compare(s[i].Address.WitnessProgram(), s[j].Address.WitnessProgram())
+	addrCmp := bytes.Compare(s[i].Address.OutputKey(), s[j].Address.OutputKey())
 	if addrCmp != 0 {
 		return addrCmp < 0
 	}

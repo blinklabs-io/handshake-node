@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -161,6 +163,28 @@ func (b *addrIndexBucket) sanityCheck(addrKey [addrKeySize]byte, expectedTotal i
 	}
 
 	return nil
+}
+
+func TestAddrIndexIndexesHighVersionWireAddress(t *testing.T) {
+	idx := NewAddrIndex(nil, &chaincfg.MainNetParams)
+	addr := wire.Address{Version: 17, Hash: []byte{0xaa, 0xbb}}
+	data := writeIndexData{}
+
+	idx.indexAddress(data, addr, 3)
+
+	hnsAddr, err := hnsutil.NewAddress(addr.Version, addr.Hash,
+		&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+	addrKey, err := addrToKey(hnsAddr)
+	if err != nil {
+		t.Fatalf("addrToKey: %v", err)
+	}
+	got := data[addrKey]
+	if len(got) != 1 || got[0] != 3 {
+		t.Fatalf("indexed txs = %v, want [3]", got)
+	}
 }
 
 // TestAddrIndexLevels ensures that adding and deleting entries to the address

@@ -10,9 +10,16 @@ import (
 )
 
 const (
-	// maxAddressVersion is the maximum allowed wire address version while
-	// WitnessProgram consumers still require Bitcoin small-int opcodes.
-	maxAddressVersion = 16
+	// maxAddressVersion is the maximum allowed Handshake wire address
+	// version.
+	maxAddressVersion = 31
+
+	// maxWitnessProgramVersion is the highest address version that can be
+	// represented as a legacy Bitcoin-style witness program script using
+	// OP_0 through OP_16. Handshake wire addresses allow versions beyond
+	// this range even though the compatibility script view cannot express
+	// them.
+	maxWitnessProgramVersion = 16
 
 	// minAddressHashLen is the minimum hash length for an address.
 	minAddressHashLen = 2
@@ -23,9 +30,8 @@ const (
 
 // Address represents a Handshake output address consisting of a witness
 // program version and hash.  Version 0 addresses use 20-byte (P2WPKH) or
-// 32-byte (P2WSH) hashes.  Wire addresses are currently limited to versions
-// 0 through 16 because callers expose them as Bitcoin-style witness program
-// scripts with OP_0 through OP_16.
+// 32-byte (P2WSH) hashes.  Handshake wire addresses are valid for versions
+// 0 through 31.
 //
 // Wire format: version(1 byte) + hashLen(1 byte) + hash(N bytes)
 type Address struct {
@@ -122,8 +128,14 @@ func (a *Address) SerializeSize() int {
 
 // WitnessProgram returns the legacy Bitcoin-style script view for this
 // address.  For version 0, the result is [OP_0, len(hash), hash...].  For
-// versions 1 through 16, the result is [OP_N, len(hash), hash...].
+// versions 1 through 16, the result is [OP_N, len(hash), hash...].  Versions
+// 17 through 31 are valid Handshake wire addresses, but there is no small-int
+// opcode representation for them, so nil is returned.
 func (a *Address) WitnessProgram() []byte {
+	if a.Version > maxWitnessProgramVersion {
+		return nil
+	}
+
 	program := make([]byte, 2+len(a.Hash))
 
 	if a.Version == 0 {
@@ -135,6 +147,26 @@ func (a *Address) WitnessProgram() []byte {
 	copy(program[2:], a.Hash)
 
 	return program
+}
+
+// OutputKey returns bytes suitable for identifying this address in output
+// indexes, compact filters, and deterministic sorting.  It returns the legacy
+// witness-program script view when the address version can be represented as
+// OP_0 through OP_16.  For versions 17 through 31, it falls back to the native
+// Handshake address encoding: version || hashLen || hash.
+//
+// The fallback form is not a script and must not be passed to script
+// execution or script-classification APIs.
+func (a *Address) OutputKey() []byte {
+	if program := a.WitnessProgram(); program != nil {
+		return program
+	}
+
+	key := make([]byte, 2+len(a.Hash))
+	key[0] = a.Version
+	key[1] = byte(len(a.Hash))
+	copy(key[2:], a.Hash)
+	return key
 }
 
 // NewAddress creates a new Address with validation.  It returns an error if

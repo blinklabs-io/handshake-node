@@ -8,12 +8,12 @@ import (
 	"errors"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/hnsutil/gcs"
-	"github.com/blinklabs-io/handshake-node/hnsutil/gcs/builder"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/hnsutil/gcs"
+	"github.com/blinklabs-io/handshake-node/hnsutil/gcs/builder"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -212,12 +212,16 @@ func storeFilter(dbTx database.Tx, block *hnsutil.Block, f *gcs.Filter,
 func (idx *CfIndex) ConnectBlock(dbTx database.Tx, block *hnsutil.Block,
 	stxos []blockchain.SpentTxOut) error {
 
-	prevScripts := make([][]byte, len(stxos))
+	prevKeys := make([][]byte, len(stxos))
 	for i, stxo := range stxos {
-		prevScripts[i] = stxo.PkScript
+		if len(stxo.Address.Hash) > 0 {
+			prevKeys[i] = stxo.Address.OutputKey()
+			continue
+		}
+		prevKeys[i] = stxo.PkScript
 	}
 
-	f, err := builder.BuildBasicFilter(block.MsgBlock(), prevScripts)
+	f, err := builder.BuildBasicFilter(block.MsgBlock(), prevKeys)
 	if err != nil {
 		return err
 	}

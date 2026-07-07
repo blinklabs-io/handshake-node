@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsjson"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/websocket"
@@ -581,13 +581,8 @@ func (m *wsNotificationManager) subscribedClients(tx *hnsutil.Tx,
 	}
 
 	for i, output := range msgTx.TxOut {
-		_, addrs, _, err := txscript.ExtractPkScriptAddrs(
-			output.Address.WitnessProgram(), m.server.cfg.ChainParams)
-		if err != nil {
-			// Clients are not able to subscribe to
-			// nonstandard or non-address outputs.
-			continue
-		}
+		_, addrs, _ := extractTxOutAddresses(output,
+			m.server.cfg.ChainParams)
 		for quitChan, wsc := range clients {
 			wsc.Lock()
 			filter := wsc.filterData
@@ -924,11 +919,8 @@ func (m *wsNotificationManager) notifyForTxOuts(ops map[wire.OutPoint]map[chan s
 	txHex := ""
 	wscNotified := make(map[chan struct{}]struct{})
 	for i, txOut := range tx.MsgTx().TxOut {
-		_, txAddrs, _, err := txscript.ExtractPkScriptAddrs(
-			txOut.Address.WitnessProgram(), m.server.cfg.ChainParams)
-		if err != nil {
-			continue
-		}
+		_, txAddrs, _ := extractTxOutAddresses(txOut,
+			m.server.cfg.ChainParams)
 
 		for _, txAddr := range txAddrs {
 			cmap, ok := addrs[txAddr.EncodeAddress()]
@@ -2310,8 +2302,8 @@ func rescanBlock(wsc *wsClient, lookups *rescanKeys, blk *hnsutil.Block) {
 		}
 
 		for txOutIdx, txout := range tx.MsgTx().TxOut {
-			_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
-				txout.Address.WitnessProgram(), wsc.server.cfg.ChainParams)
+			_, addrs, _ := extractTxOutAddresses(txout,
+				wsc.server.cfg.ChainParams)
 
 			for _, addr := range addrs {
 				if _, ok := lookups.addrs[addr.String()]; !ok {
@@ -2385,11 +2377,7 @@ func rescanBlockFilter(filter *wsClientFilter, block *hnsutil.Block, params *cha
 
 		// Scan outputs.
 		for i, output := range msgTx.TxOut {
-			_, addrs, _, err := txscript.ExtractPkScriptAddrs(
-				output.Address.WitnessProgram(), params)
-			if err != nil {
-				continue
-			}
+			_, addrs, _ := extractTxOutAddresses(output, params)
 			for _, a := range addrs {
 				if !filter.existsAddress(a) {
 					continue

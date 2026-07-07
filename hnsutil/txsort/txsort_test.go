@@ -15,6 +15,42 @@ import (
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
+func TestSortHighVersionAddressOutputs(t *testing.T) {
+	lowAddr := wire.Address{Version: 17, Hash: []byte{0x01, 0x01}}
+	highAddr := wire.Address{Version: 17, Hash: []byte{0x02, 0x02}}
+
+	tx := wire.MsgTx{
+		Version: 1,
+		TxOut: []*wire.TxOut{
+			wire.NewTxOut(1000, highAddr, wire.Covenant{}),
+			wire.NewTxOut(1000, lowAddr, wire.Covenant{}),
+		},
+	}
+
+	if txsort.IsSorted(&tx) {
+		t.Fatal("IsSorted returned true for reverse v17 address order")
+	}
+
+	sortedTx := txsort.Sort(&tx)
+	if !bytes.Equal(sortedTx.TxOut[0].Address.Hash, lowAddr.Hash) {
+		t.Fatalf("Sort first output hash = %x, want %x",
+			sortedTx.TxOut[0].Address.Hash, lowAddr.Hash)
+	}
+	if !bytes.Equal(tx.TxOut[0].Address.Hash, highAddr.Hash) {
+		t.Fatalf("Sort mutated original first output hash to %x",
+			tx.TxOut[0].Address.Hash)
+	}
+
+	txsort.InPlaceSort(&tx)
+	if !txsort.IsSorted(&tx) {
+		t.Fatal("InPlaceSort did not sort v17 address outputs")
+	}
+	if !bytes.Equal(tx.TxOut[0].Address.Hash, lowAddr.Hash) {
+		t.Fatalf("InPlaceSort first output hash = %x, want %x",
+			tx.TxOut[0].Address.Hash, lowAddr.Hash)
+	}
+}
+
 // TestSort ensures the transaction sorting works according to the BIP.
 func TestSort(t *testing.T) {
 	t.Skip("Skipping: BIP69 Bitcoin transaction vectors need Handshake transaction fixtures")
