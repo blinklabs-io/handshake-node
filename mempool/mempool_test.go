@@ -5,7 +5,9 @@
 package mempool
 
 import (
+	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -50,13 +53,21 @@ func (s *fakeChain) FetchUtxoView(tx *hnsutil.Tx) (*blockchain.UtxoViewpoint, er
 	for txOutIdx := range tx.MsgTx().TxOut {
 		prevOut.Index = uint32(txOutIdx)
 		entry := s.utxos.LookupEntry(prevOut)
-		viewpoint.Entries()[prevOut] = entry.Clone()
+		if entry != nil {
+			viewpoint.Entries()[prevOut] = entry.Clone()
+		} else {
+			viewpoint.Entries()[prevOut] = nil
+		}
 	}
 
 	// Add entries for all of the inputs to the tx to the new view.
 	for _, txIn := range tx.MsgTx().TxIn {
 		entry := s.utxos.LookupEntry(txIn.PreviousOutPoint)
-		viewpoint.Entries()[txIn.PreviousOutPoint] = entry.Clone()
+		if entry != nil {
+			viewpoint.Entries()[txIn.PreviousOutPoint] = entry.Clone()
+		} else {
+			viewpoint.Entries()[txIn.PreviousOutPoint] = nil
+		}
 	}
 
 	return viewpoint, nil
@@ -157,6 +168,7 @@ func (p *poolHarness) CreateCoinbaseTx(blockHeight int32, numOutputs uint32) (*h
 	}
 
 	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.LockTime = uint32(blockHeight)
 	tx.AddTxIn(&wire.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
@@ -251,6 +263,41 @@ func (p *poolHarness) CreateSignedTx(inputs []spendableOutput,
 	return hnsutil.NewTx(tx), nil
 }
 
+func (p *poolHarness) CreateSignedTxWithCovenant(input spendableOutput,
+	fee hnsutil.Amount, covenant wire.Covenant,
+	signalsReplacement bool) (*hnsutil.Tx, error) {
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	sequence := wire.MaxTxInSequenceNum
+	if signalsReplacement {
+		sequence = MaxRBFSequence
+	}
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: input.outPoint,
+		Sequence:         sequence,
+	})
+	tx.AddTxOut(&wire.TxOut{
+		Address:  p.payWireAddr,
+		Value:    int64(input.amount - fee),
+		Covenant: covenant,
+	})
+
+	sigHashes := txscript.NewTxSigHashes(tx,
+		txscript.NewCannedPrevOutputFetcher(
+			p.payWireAddr, int64(input.amount),
+		),
+	)
+	witness, err := txscript.WitnessSignature(tx, sigHashes, 0,
+		int64(input.amount), p.payScript, txscript.SigHashAll,
+		p.signKey, true)
+	if err != nil {
+		return nil, err
+	}
+	tx.TxIn[0].Witness = witness
+
+	return hnsutil.NewTx(tx), nil
+}
+
 // CreateTxChain creates a chain of zero-fee transactions (each subsequent
 // transaction spends the entire amount from the previous one) with the first
 // one spending the provided outpoint.  Each transaction spends the entire
@@ -315,7 +362,7 @@ func newPoolHarness(chainParams *chaincfg.Params) (*poolHarness, []spendableOutp
 	// hash the compressed pubkey down to 20 bytes directly.
 	pubKeyBytes := signPub.SerializeCompressed()
 	payAddr, err := hnsutil.NewAddressPubKeyHash(
-		hnsutil.Hash160(pubKeyBytes), chainParams,
+		hnsutil.Blake160(pubKeyBytes), chainParams,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -476,6 +523,990 @@ func testPoolMembership(tc *testContext, tx *hnsutil.Tx, inOrphanPool, inTxPool 
 		tc.t.Fatalf("HaveTransaction: want %v, got %v", wantHaveTx,
 			gotHaveTx)
 	}
+}
+
+func TestMempoolAcceptanceRunsValidationPipeline(t *testing.T) {
+	t.Parallel()
+
+	harness, outputs, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	fetchUtxoView := harness.txPool.cfg.FetchUtxoView
+	calcSequenceLock := harness.txPool.cfg.CalcSequenceLock
+	var fetchCalls, sequenceCalls, nameCalls int
+
+	harness.txPool.cfg.FetchUtxoView = func(tx *hnsutil.Tx) (
+		*blockchain.UtxoViewpoint, error) {
+
+		fetchCalls++
+		return fetchUtxoView(tx)
+	}
+	harness.txPool.cfg.CalcSequenceLock = func(tx *hnsutil.Tx,
+		view *blockchain.UtxoViewpoint) (*blockchain.SequenceLock, error) {
+
+		sequenceCalls++
+		if entry := view.LookupEntry(outputs[0].outPoint); entry == nil ||
+			entry.IsSpent() {
+
+			t.Fatalf("CalcSequenceLock saw missing input view entry")
+		}
+		return calcSequenceLock(tx, view)
+	}
+	harness.txPool.cfg.CheckTransactionNames = func(tx *hnsutil.Tx,
+		height int32, prevTime int64,
+		view *blockchain.UtxoViewpoint) error {
+
+		nameCalls++
+		if height != harness.chain.BestHeight()+1 {
+			t.Fatalf("CheckTransactionNames height = %d, want %d",
+				height, harness.chain.BestHeight()+1)
+		}
+		if prevTime != harness.chain.MedianTimePast().Unix() {
+			t.Fatalf("CheckTransactionNames prevTime = %d, want %d",
+				prevTime, harness.chain.MedianTimePast().Unix())
+		}
+		if entry := view.LookupEntry(outputs[0].outPoint); entry == nil ||
+			entry.IsSpent() {
+
+			t.Fatalf("CheckTransactionNames saw missing input view entry")
+		}
+		return nil
+	}
+
+	tx, err := harness.CreateSignedTx(outputs, 1, 1000, false)
+	if err != nil {
+		t.Fatalf("unable to create transaction: %v", err)
+	}
+	acceptedTxns, err := harness.txPool.ProcessTransaction(tx, true,
+		false, 0)
+	if err != nil {
+		t.Fatalf("ProcessTransaction: %v", err)
+	}
+	if len(acceptedTxns) != 1 {
+		t.Fatalf("accepted transactions = %d, want 1", len(acceptedTxns))
+	}
+	if fetchCalls != 1 {
+		t.Fatalf("FetchUtxoView calls = %d, want 1", fetchCalls)
+	}
+	if sequenceCalls != 1 {
+		t.Fatalf("CalcSequenceLock calls = %d, want 1", sequenceCalls)
+	}
+	if nameCalls != 1 {
+		t.Fatalf("CheckTransactionNames calls = %d, want 1", nameCalls)
+	}
+	testPoolMembership(tc, tx, false, true)
+}
+
+func TestMempoolAcceptanceRejectsContextFreeSanityFailure(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+
+	fetchUtxoView := harness.txPool.cfg.FetchUtxoView
+	var fetchCalls int
+	harness.txPool.cfg.FetchUtxoView = func(tx *hnsutil.Tx) (
+		*blockchain.UtxoViewpoint, error) {
+
+		fetchCalls++
+		return fetchUtxoView(tx)
+	}
+
+	msgTx := wire.NewMsgTx(wire.TxVersion)
+	for i := 0; i < 3; i++ {
+		msgTx.AddTxOut(&wire.TxOut{
+			Value:   1000,
+			Address: harness.payWireAddr,
+		})
+	}
+	tx := hnsutil.NewTx(msgTx)
+
+	_, err = harness.txPool.CheckMempoolAcceptance(tx)
+	if err == nil {
+		t.Fatal("CheckMempoolAcceptance: expected no-input rejection")
+	}
+	if code, ok := extractRejectCode(err); !ok || code != wire.RejectInvalid {
+		t.Fatalf("reject code = %v, %v; want %v", code, ok,
+			wire.RejectInvalid)
+	}
+	if !strings.Contains(err.Error(), "no inputs") {
+		t.Fatalf("error = %q, want no-input sanity error", err)
+	}
+	if fetchCalls != 0 {
+		t.Fatalf("FetchUtxoView calls = %d, want 0", fetchCalls)
+	}
+	testPoolMembership(&testContext{t, harness}, tx, false, false)
+}
+
+func TestMempoolAcceptanceRejectsImmatureCoinbaseSpend(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	coinbaseHeight := harness.chain.BestHeight() + 1
+	coinbase, err := harness.CreateCoinbaseTx(coinbaseHeight, 1)
+	if err != nil {
+		t.Fatalf("unable to create coinbase: %v", err)
+	}
+	harness.chain.utxos.AddTxOuts(coinbase, coinbaseHeight)
+	harness.chain.SetHeight(coinbaseHeight)
+	harness.chain.SetMedianTimePast(time.Now())
+
+	tx, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(coinbase, 0)},
+		1, 1000, false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create transaction: %v", err)
+	}
+
+	if _, err := harness.txPool.ProcessTransaction(
+		tx, true, false, 0,
+	); err == nil {
+
+		t.Fatal("ProcessTransaction immature coinbase: expected rejection")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectInvalid {
+
+		t.Fatalf("reject code = %v, %v; want %v", code, ok,
+			wire.RejectInvalid)
+	}
+	testPoolMembership(tc, tx, false, false)
+}
+
+func TestMempoolAcceptanceRejectsNonstandardWeight(t *testing.T) {
+	t.Parallel()
+
+	harness, outputs, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	const numOutputs = 4000
+	tx, err := harness.CreateSignedTx(outputs, numOutputs, 1000, false)
+	if err != nil {
+		t.Fatalf("unable to create transaction: %v", err)
+	}
+	if weight := blockchain.GetTransactionWeight(tx); weight <= maxStandardTxWeight {
+		t.Fatalf("test tx weight = %d, want > %d", weight,
+			maxStandardTxWeight)
+	}
+
+	if _, err := harness.txPool.ProcessTransaction(
+		tx, true, false, 0,
+	); err == nil {
+
+		t.Fatal("ProcessTransaction oversized tx: expected rejection")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectNonstandard {
+
+		t.Fatalf("reject code = %v, %v; want %v", code, ok,
+			wire.RejectNonstandard)
+	}
+	testPoolMembership(tc, tx, false, false)
+}
+
+func TestMempoolAcceptanceRejectsInvalidWitnessScript(t *testing.T) {
+	t.Parallel()
+
+	harness, outputs, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	tx, err := harness.CreateSignedTx(outputs, 1, 1000, false)
+	if err != nil {
+		t.Fatalf("unable to create transaction: %v", err)
+	}
+	witness := tx.MsgTx().TxIn[0].Witness
+	if len(witness) == 0 || len(witness[0]) == 0 {
+		t.Fatal("test transaction has no witness signature to corrupt")
+	}
+	witness[0][len(witness[0])-1] ^= 0x01
+
+	if _, err := harness.txPool.ProcessTransaction(
+		tx, true, false, 0,
+	); err == nil {
+
+		t.Fatal("ProcessTransaction invalid witness: expected rejection")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectInvalid {
+
+		t.Fatalf("reject code = %v, %v; want %v", code, ok,
+			wire.RejectInvalid)
+	}
+	testPoolMembership(tc, tx, false, false)
+}
+
+func TestNameOperationMempoolConflicts(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	fundingTx := tc.addCoinbaseTx(2)
+	inputA := txOutToSpendableOut(fundingTx, 0)
+	inputB := txOutToSpendableOut(fundingTx, 1)
+
+	openA, err := harness.CreateSignedTxWithCovenant(
+		inputA, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create first OPEN transaction: %v", err)
+	}
+	acceptedTxns, err := harness.txPool.ProcessTransaction(
+		openA, true, false, 0,
+	)
+	if err != nil {
+		t.Fatalf("ProcessTransaction first OPEN: %v", err)
+	}
+	if len(acceptedTxns) != 1 {
+		t.Fatalf("accepted transactions = %d, want 1", len(acceptedTxns))
+	}
+	testPoolMembership(tc, openA, false, true)
+
+	openB, err := harness.CreateSignedTxWithCovenant(
+		inputB, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create second OPEN transaction: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		openB, true, false, 0,
+	); err == nil {
+		t.Fatal("ProcessTransaction second OPEN: expected conflict")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectDuplicate {
+
+		t.Fatalf("second OPEN reject code = %v, %v; want %v",
+			code, ok, wire.RejectDuplicate)
+	}
+	testPoolMembership(tc, openB, false, false)
+
+	harness.txPool.RemoveTransaction(openA, true)
+	acceptedTxns, err = harness.txPool.ProcessTransaction(
+		openB, true, false, 0,
+	)
+	if err != nil {
+		t.Fatalf("ProcessTransaction after removing conflict: %v", err)
+	}
+	if len(acceptedTxns) != 1 {
+		t.Fatalf("accepted transactions = %d, want 1", len(acceptedTxns))
+	}
+	testPoolMembership(tc, openB, false, true)
+}
+
+func TestRemoveNameConflicts(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	fundingTx := tc.addCoinbaseTx(3)
+	inputA := txOutToSpendableOut(fundingTx, 0)
+	inputB := txOutToSpendableOut(fundingTx, 1)
+	inputC := txOutToSpendableOut(fundingTx, 2)
+
+	openA, err := harness.CreateSignedTxWithCovenant(
+		inputA, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create mempool OPEN transaction: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		openA, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction mempool OPEN: %v", err)
+	}
+	testPoolMembership(tc, openA, false, true)
+
+	staleOpen, err := harness.CreateSignedTxWithCovenant(
+		inputB, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create second stale OPEN transaction: %v", err)
+	}
+	harness.txPool.mtx.Lock()
+	harness.txPool.addTransaction(blockchain.NewUtxoViewpoint(),
+		staleOpen, 0, 0)
+	harness.txPool.mtx.Unlock()
+	testPoolMembership(tc, staleOpen, false, true)
+
+	minedOpen, err := harness.CreateSignedTxWithCovenant(
+		inputC, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create mined OPEN transaction: %v", err)
+	}
+
+	harness.txPool.RemoveNameConflicts(minedOpen)
+	testPoolMembership(tc, openA, false, false)
+	testPoolMembership(tc, staleOpen, false, false)
+	testPoolMembership(tc, minedOpen, false, false)
+
+	nameHash := blockchain.HashName([]byte("phasefive"))
+	harness.txPool.mtx.RLock()
+	_, indexed := harness.txPool.nameActions[nameHash]
+	harness.txPool.mtx.RUnlock()
+	if indexed {
+		t.Fatal("RemoveNameConflicts left stale name action index")
+	}
+}
+
+func TestNameConflictReorgReinsertOlderTransaction(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	fundingTx := tc.addCoinbaseTx(2)
+	inputA := txOutToSpendableOut(fundingTx, 0)
+	inputB := txOutToSpendableOut(fundingTx, 1)
+
+	disconnectedOpen, err := harness.CreateSignedTxWithCovenant(
+		inputA, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create disconnected OPEN: %v", err)
+	}
+	newerOpen, err := harness.CreateSignedTxWithCovenant(
+		inputB, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create newer OPEN: %v", err)
+	}
+
+	if _, err := harness.txPool.ProcessTransaction(
+		newerOpen, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction newer OPEN: %v", err)
+	}
+	testPoolMembership(tc, newerOpen, false, true)
+
+	harness.txPool.RemoveNameConflicts(disconnectedOpen)
+	_, txDesc, err := harness.txPool.MaybeAcceptTransaction(
+		disconnectedOpen, false, false,
+	)
+	if err != nil {
+		t.Fatalf("MaybeAcceptTransaction disconnected OPEN: %v", err)
+	}
+	if txDesc == nil {
+		t.Fatal("MaybeAcceptTransaction disconnected OPEN returned nil descriptor")
+	}
+
+	testPoolMembership(tc, newerOpen, false, false)
+	testPoolMembership(tc, disconnectedOpen, false, true)
+}
+
+func TestNameValidationUsesUnconfirmedMempoolState(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	harness.txPool.cfg.NewNameValidationView = func() (NameValidationView, error) {
+		return &orderedNameValidationView{}, nil
+	}
+	tc := &testContext{t, harness}
+
+	fundingTx := tc.addCoinbaseTx(2)
+	inputA := txOutToSpendableOut(fundingTx, 0)
+	inputB := txOutToSpendableOut(fundingTx, 1)
+
+	updateTx, err := harness.CreateSignedTxWithCovenant(
+		inputA, 1000, mempoolUpdateCovenant("phasefive", 1), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create UPDATE transaction: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		updateTx, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction UPDATE: %v", err)
+	}
+
+	transferTx, err := harness.CreateSignedTxWithCovenant(
+		txOutToSpendableOut(updateTx, 0), 1000,
+		mempoolTransferCovenant("phasefive", 1,
+			harness.payWireAddr), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create dependent TRANSFER: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		transferTx, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction dependent TRANSFER: %v", err)
+	}
+	testPoolMembership(tc, updateTx, false, true)
+	testPoolMembership(tc, transferTx, false, true)
+
+	nameHash := blockchain.HashName([]byte("phasefive"))
+	harness.txPool.mtx.RLock()
+	indexed := harness.txPool.nameActions[nameHash]
+	harness.txPool.mtx.RUnlock()
+	if indexed == nil || !indexed.Hash().IsEqual(transferTx.Hash()) {
+		t.Fatalf("name action index = %v, want dependent TRANSFER",
+			indexed)
+	}
+
+	harness.txPool.RemoveTransaction(transferTx, false)
+	testPoolMembership(tc, transferTx, false, false)
+	harness.txPool.mtx.RLock()
+	indexed = harness.txPool.nameActions[nameHash]
+	harness.txPool.mtx.RUnlock()
+	if indexed == nil || !indexed.Hash().IsEqual(updateTx.Hash()) {
+		t.Fatalf("name action index after removal = %v, want UPDATE",
+			indexed)
+	}
+
+	unrelatedTransfer, err := harness.CreateSignedTxWithCovenant(
+		inputB, 1000, mempoolTransferCovenant("phasefive", 1,
+			harness.payWireAddr), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create unrelated TRANSFER: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		unrelatedTransfer, true, false, 0,
+	); err == nil {
+		t.Fatal("ProcessTransaction unrelated TRANSFER: expected conflict")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectDuplicate {
+
+		t.Fatalf("unrelated TRANSFER reject code = %v, %v; want %v",
+			code, ok, wire.RejectDuplicate)
+	}
+}
+
+type orderedNameValidationView struct {
+	seenUpdate     bool
+	rejectTransfer *bool
+}
+
+func (v *orderedNameValidationView) ApplyTransaction(tx *hnsutil.Tx,
+	height int32, prevTime int64, view *blockchain.UtxoViewpoint) error {
+
+	_ = height
+	_ = prevTime
+	_ = view
+
+	for _, txOut := range tx.MsgTx().TxOut {
+		switch txOut.Covenant.Type {
+		case wire.CovenantUpdate:
+			v.seenUpdate = true
+		case wire.CovenantTransfer:
+			if v.rejectTransfer != nil && *v.rejectTransfer {
+				return errors.New("stale transfer")
+			}
+			if !v.seenUpdate {
+				return errors.New("TRANSFER before UPDATE")
+			}
+		}
+	}
+	return nil
+}
+
+func TestPruneInvalidNameTransactions(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	rejectNames := false
+	harness.txPool.cfg.CheckTransactionNames = func(tx *hnsutil.Tx,
+		height int32, prevTime int64,
+		view *blockchain.UtxoViewpoint) error {
+
+		if rejectNames {
+			return errors.New("stale name transition")
+		}
+		return nil
+	}
+
+	fundingTx := tc.addCoinbaseTx(3)
+	nameInput := txOutToSpendableOut(fundingTx, 0)
+	normalInput := txOutToSpendableOut(fundingTx, 1)
+
+	openTx, err := harness.CreateSignedTxWithCovenant(
+		nameInput, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create OPEN transaction: %v", err)
+	}
+	normalTx, err := harness.CreateSignedTx(
+		[]spendableOutput{normalInput}, 1, 1000, false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create normal transaction: %v", err)
+	}
+
+	if _, err := harness.txPool.ProcessTransaction(
+		openTx, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction OPEN: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		normalTx, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction normal: %v", err)
+	}
+	testPoolMembership(tc, openTx, false, true)
+	testPoolMembership(tc, normalTx, false, true)
+
+	rejectNames = true
+	removed := harness.txPool.PruneInvalidNameTransactions()
+	if len(removed) != 1 {
+		t.Fatalf("removed transactions = %d, want 1", len(removed))
+	}
+	if !removed[0].Tx.Hash().IsEqual(openTx.Hash()) {
+		t.Fatalf("removed tx = %v, want %v", removed[0].Tx.Hash(),
+			openTx.Hash())
+	}
+
+	testPoolMembership(tc, openTx, false, false)
+	testPoolMembership(tc, normalTx, false, true)
+}
+
+func TestPruneInvalidNameTransactionsUsesStatefulView(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	tc := &testContext{t, harness}
+
+	rejectTransfer := false
+	harness.txPool.cfg.NewNameValidationView = func() (NameValidationView, error) {
+		return &orderedNameValidationView{
+			rejectTransfer: &rejectTransfer,
+		}, nil
+	}
+
+	fundingTx := tc.addCoinbaseTx(1)
+	input := txOutToSpendableOut(fundingTx, 0)
+	updateTx, err := harness.CreateSignedTxWithCovenant(
+		input, 1000, mempoolUpdateCovenant("phasefive", 1), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create UPDATE transaction: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		updateTx, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction UPDATE: %v", err)
+	}
+
+	transferTx, err := harness.CreateSignedTxWithCovenant(
+		txOutToSpendableOut(updateTx, 0), 1000,
+		mempoolTransferCovenant("phasefive", 1,
+			harness.payWireAddr), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create TRANSFER transaction: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(
+		transferTx, true, false, 0,
+	); err != nil {
+
+		t.Fatalf("ProcessTransaction TRANSFER: %v", err)
+	}
+	testPoolMembership(tc, updateTx, false, true)
+	testPoolMembership(tc, transferTx, false, true)
+
+	rejectTransfer = true
+	removed := harness.txPool.PruneInvalidNameTransactions()
+	if len(removed) != 1 {
+		t.Fatalf("removed transactions = %d, want 1", len(removed))
+	}
+	if !removed[0].Tx.Hash().IsEqual(transferTx.Hash()) {
+		t.Fatalf("removed tx = %v, want %v", removed[0].Tx.Hash(),
+			transferTx.Hash())
+	}
+
+	testPoolMembership(tc, updateTx, false, true)
+	testPoolMembership(tc, transferTx, false, false)
+
+	nameHash := blockchain.HashName([]byte("phasefive"))
+	harness.txPool.mtx.RLock()
+	indexed := harness.txPool.nameActions[nameHash]
+	harness.txPool.mtx.RUnlock()
+	if indexed == nil || !indexed.Hash().IsEqual(updateTx.Hash()) {
+		t.Fatalf("name action index after prune = %v, want UPDATE",
+			indexed)
+	}
+}
+
+func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
+	t.Parallel()
+
+	mp := New(&Config{})
+	addrHash := make([]byte, 20)
+	addrHash[0] = 0x01
+	addrHash[1] = 0x02
+	addr := wire.Address{Version: 0, Hash: addrHash}
+	airdropOutput := wire.NewTxOut(90, addr, wire.Covenant{})
+	airdropProof := mining.CoinbaseProof{
+		Witness: []byte{0x01, 0x02, 0x03},
+		Output:  airdropOutput,
+		Fee:     10,
+	}
+
+	airdropHash, err := mp.AddCoinbaseProof(airdropProof)
+	if err != nil {
+		t.Fatalf("AddCoinbaseProof airdrop: %v", err)
+	}
+	if mp.LastUpdated().Unix() == 0 {
+		t.Fatal("AddCoinbaseProof did not update LastUpdated")
+	}
+
+	// Mutate the caller-owned proof after adding it.  The source must keep
+	// its own copy.
+	airdropProof.Witness[0] = 0xff
+	airdropProof.Output.Value = 1
+	airdropProof.Output.Address.Hash[0] = 0xff
+
+	proofs, err := mp.CoinbaseProofs(10)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs: %v", err)
+	}
+	if len(proofs) != 1 {
+		t.Fatalf("proof count = %d, want 1", len(proofs))
+	}
+	if proofs[0].Witness[0] != 0x01 ||
+		proofs[0].Output.Value != 90 ||
+		proofs[0].Output.Address.Hash[0] != 0x01 ||
+		proofs[0].Fee != 10 {
+
+		t.Fatalf("stored proof was mutated: %+v", proofs[0])
+	}
+
+	// Mutate the returned proof.  Future calls must still return a clean
+	// clone.
+	proofs[0].Witness[0] = 0xee
+	proofs[0].Output.Value = 2
+	proofs, err = mp.CoinbaseProofs(10)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs after returned mutation: %v", err)
+	}
+	if proofs[0].Witness[0] != 0x01 || proofs[0].Output.Value != 90 {
+		t.Fatalf("returned proof was not cloned: %+v", proofs[0])
+	}
+
+	replacementHashBytes := make([]byte, 20)
+	replacementHashBytes[0] = 0x01
+	replacementHashBytes[1] = 0x02
+	replacementAddr := wire.Address{
+		Version: 0,
+		Hash:    replacementHashBytes,
+	}
+	replacement := mining.CoinbaseProof{
+		Witness: []byte{0x01, 0x02, 0x03},
+		Output:  wire.NewTxOut(90, replacementAddr, wire.Covenant{}),
+		Fee:     10,
+	}
+	replacementHash, err := mp.AddCoinbaseProof(replacement)
+	if err != nil {
+		t.Fatalf("AddCoinbaseProof replacement: %v", err)
+	}
+	if replacementHash != airdropHash {
+		t.Fatalf("replacement hash = %v, want %v",
+			replacementHash, airdropHash)
+	}
+	proofs, err = mp.CoinbaseProofs(10)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs replacement: %v", err)
+	}
+	if len(proofs) != 1 || proofs[0].Fee != 10 {
+		t.Fatalf("replacement proofs = %+v, want one proof with fee 10",
+			proofs)
+	}
+
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x01, 0x02, 0x03},
+		Output:  wire.NewTxOut(90, replacementAddr, wire.Covenant{}),
+		Fee:     11,
+	}); err == nil {
+
+		t.Fatal("AddCoinbaseProof fee mutation: expected error")
+	}
+	duplicateOutput := wire.NewTxOut(91, replacementAddr, wire.Covenant{})
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x01, 0x02, 0x03},
+		Output:  duplicateOutput,
+		Fee:     10,
+	}); err == nil {
+
+		t.Fatal("AddCoinbaseProof duplicate witness: expected error")
+	}
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x05},
+		Output: wire.NewTxOut(1, replacementAddr, wire.Covenant{
+			Type: wire.CovenantOpen,
+		}),
+	}); err == nil {
+
+		t.Fatal("AddCoinbaseProof unsupported covenant: expected error")
+	}
+
+	claimOutput := wire.NewTxOut(50, addr, mempoolClaimCovenant(11))
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x04},
+		Output:  claimOutput,
+		Fee:     5,
+	}); err != nil {
+
+		t.Fatalf("AddCoinbaseProof claim: %v", err)
+	}
+
+	malformedClaim := wire.NewTxOut(50, addr, wire.Covenant{
+		Type: wire.CovenantClaim,
+		Items: [][]byte{
+			mempoolHashItem("phasefive"),
+			mempoolU32Item(11),
+		},
+	})
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x06},
+		Output:  malformedClaim,
+		Fee:     5,
+	}); err == nil {
+
+		t.Fatal("AddCoinbaseProof malformed claim: expected error")
+	}
+
+	proofs, err = mp.CoinbaseProofs(10)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs height 10: %v", err)
+	}
+	if len(proofs) != 1 {
+		t.Fatalf("height 10 proof count = %d, want only airdrop",
+			len(proofs))
+	}
+	proofs, err = mp.CoinbaseProofs(11)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs height 11: %v", err)
+	}
+	if len(proofs) != 2 {
+		t.Fatalf("height 11 proof count = %d, want airdrop and claim",
+			len(proofs))
+	}
+
+	if !mp.RemoveCoinbaseProof(airdropHash) {
+		t.Fatal("RemoveCoinbaseProof returned false")
+	}
+	proofs, err = mp.CoinbaseProofs(11)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs after remove: %v", err)
+	}
+	if len(proofs) != 1 ||
+		proofs[0].Output.Covenant.Type != wire.CovenantClaim {
+
+		t.Fatalf("proofs after remove = %+v, want only claim", proofs)
+	}
+}
+
+func TestRemoveCoinbaseProofsRemovesMinedProofs(t *testing.T) {
+	t.Parallel()
+
+	mp := New(&Config{})
+	addrHash := make([]byte, 20)
+	addrHash[0] = 0x01
+	addrHash[1] = 0x02
+	addr := wire.Address{Version: 0, Hash: addrHash}
+	proof := mining.CoinbaseProof{
+		Witness: []byte{0xaa, 0xbb},
+		Output:  wire.NewTxOut(100, addr, wire.Covenant{}),
+		Fee:     7,
+	}
+	if _, err := mp.AddCoinbaseProof(proof); err != nil {
+		t.Fatalf("AddCoinbaseProof: %v", err)
+	}
+
+	coinbase := wire.NewMsgTx(wire.TxVersion)
+	coinbase.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: wire.MaxPrevOutIndex,
+		},
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  wire.TxWitness{[]byte{0x01}},
+	})
+	coinbase.AddTxOut(wire.NewTxOut(1, addr, wire.Covenant{}))
+	coinbase.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: wire.MaxPrevOutIndex,
+		},
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness:  wire.TxWitness{proof.Witness},
+	})
+	coinbase.AddTxOut(proof.Output)
+
+	removed := mp.RemoveCoinbaseProofs(hnsutil.NewTx(coinbase))
+	if removed != 1 {
+		t.Fatalf("removed proofs = %d, want 1", removed)
+	}
+	proofs, err := mp.CoinbaseProofs(1)
+	if err != nil {
+		t.Fatalf("CoinbaseProofs: %v", err)
+	}
+	if len(proofs) != 0 {
+		t.Fatalf("proof count after mined remove = %d, want 0",
+			len(proofs))
+	}
+}
+
+func TestNameOperationIndexAllowsAuctionFanout(t *testing.T) {
+	t.Parallel()
+
+	mp := New(&Config{})
+	bidA := mempoolCovenantTx(1, mempoolBidCovenant("phasefive", 1))
+	bidB := mempoolCovenantTx(2, mempoolBidCovenant("phasefive", 1))
+	mp.addNameOperationIndexes(bidA)
+	if err := mp.checkNameOperationConflicts(bidB, nil); err != nil {
+		t.Fatalf("BID conflict check: %v", err)
+	}
+
+	updateA := mempoolCovenantTx(3,
+		mempoolUpdateCovenant("phasefive", 1))
+	updateB := mempoolCovenantTx(4,
+		mempoolUpdateCovenant("phasefive", 1))
+	mp.addNameOperationIndexes(updateA)
+	if err := mp.checkNameOperationConflicts(updateB, nil); err == nil {
+		t.Fatal("UPDATE conflict check: expected duplicate name action")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectDuplicate {
+
+		t.Fatalf("UPDATE reject code = %v, %v; want %v",
+			code, ok, wire.RejectDuplicate)
+	}
+
+	mp.removeNameOperationIndexes(updateA)
+	if err := mp.checkNameOperationConflicts(updateB, nil); err != nil {
+		t.Fatalf("UPDATE after removal: %v", err)
+	}
+}
+
+func mempoolCovenantTx(tag uint32, covenant wire.Covenant) *hnsutil.Tx {
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{byte(tag)},
+			Index: tag,
+		},
+		Sequence: wire.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, covenant))
+	return hnsutil.NewTx(tx)
+}
+
+func mempoolOpenCovenant(name string) wire.Covenant {
+	return wire.Covenant{
+		Type: wire.CovenantOpen,
+		Items: [][]byte{
+			mempoolHashItem(name),
+			mempoolU32Item(0),
+			[]byte(name),
+		},
+	}
+}
+
+func mempoolBidCovenant(name string, height uint32) wire.Covenant {
+	return wire.Covenant{
+		Type: wire.CovenantBid,
+		Items: [][]byte{
+			mempoolHashItem(name),
+			mempoolU32Item(height),
+			[]byte(name),
+			mempoolHashBytes(chainhash.Hash{0x01}),
+		},
+	}
+}
+
+func mempoolClaimCovenant(height uint32) wire.Covenant {
+	return wire.Covenant{
+		Type: wire.CovenantClaim,
+		Items: [][]byte{
+			mempoolHashItem("phasefive"),
+			mempoolU32Item(height),
+			[]byte("phasefive"),
+			{0},
+			mempoolHashBytes(chainhash.Hash{0x01}),
+			mempoolU32Item(1),
+		},
+	}
+}
+
+func mempoolUpdateCovenant(name string, height uint32) wire.Covenant {
+	return wire.Covenant{
+		Type: wire.CovenantUpdate,
+		Items: [][]byte{
+			mempoolHashItem(name),
+			mempoolU32Item(height),
+			nil,
+		},
+	}
+}
+
+func mempoolTransferCovenant(name string, height uint32,
+	addr wire.Address) wire.Covenant {
+
+	return wire.Covenant{
+		Type: wire.CovenantTransfer,
+		Items: [][]byte{
+			mempoolHashItem(name),
+			mempoolU32Item(height),
+			{addr.Version},
+			append([]byte(nil), addr.Hash...),
+		},
+	}
+}
+
+func mempoolHashItem(name string) []byte {
+	return mempoolHashBytes(blockchain.HashName([]byte(name)))
+}
+
+func mempoolHashBytes(hash chainhash.Hash) []byte {
+	item := make([]byte, chainhash.HashSize)
+	copy(item, hash[:])
+	return item
+}
+
+func mempoolU32Item(value uint32) []byte {
+	var item [4]byte
+	binary.LittleEndian.PutUint32(item[:], value)
+	return item[:]
 }
 
 // TestSimpleOrphanChain ensures that a simple chain of orphans is handled
@@ -959,6 +1990,38 @@ func TestCheckSpend(t *testing.T) {
 	}
 }
 
+func TestTxPoolObservesAcceptedTransactionsForFeeEstimation(t *testing.T) {
+	t.Parallel()
+
+	harness, outputs, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+
+	feeEstimator := NewFeeEstimator(DefaultEstimateFeeMaxRollback, 0)
+	feeEstimator.lastKnownHeight = harness.chain.BestHeight()
+	harness.txPool.cfg.FeeEstimator = feeEstimator
+
+	tx, err := harness.CreateSignedTx(outputs[:1], 1, 1000, false)
+	if err != nil {
+		t.Fatalf("unable to create signed tx: %v", err)
+	}
+	if _, err := harness.txPool.ProcessTransaction(tx, true, false, 0); err != nil {
+		t.Fatalf("ProcessTransaction: %v", err)
+	}
+
+	txHash := *tx.Hash()
+	feeEstimator.mtx.RLock()
+	observed := feeEstimator.observed[txHash]
+	feeEstimator.mtx.RUnlock()
+	if observed == nil {
+		t.Fatalf("fee estimator did not observe accepted tx %v", tx.Hash())
+	}
+	if observed.feeRate <= 0 {
+		t.Fatalf("observed fee rate = %v, want positive", observed.feeRate)
+	}
+}
+
 // TestSignalsReplacement tests that transactions properly signal they can be
 // replaced using RBF.
 func TestSignalsReplacement(t *testing.T) {
@@ -1080,7 +2143,6 @@ func TestSignalsReplacement(t *testing.T) {
 // unconfirmed double spends in the case of replacement and non-replacement
 // transactions.
 func TestCheckPoolDoubleSpend(t *testing.T) {
-	t.Skip("Skipping: Bitcoin-era mempool double-spend vectors need Handshake transaction fixtures")
 	t.Parallel()
 
 	testCases := []struct {
@@ -1257,7 +2319,6 @@ func TestCheckPoolDoubleSpend(t *testing.T) {
 // TestConflicts ensures that the mempool can properly detect conflicts when
 // processing new incoming transactions.
 func TestConflicts(t *testing.T) {
-	t.Skip("Skipping: Bitcoin-era mempool conflict vectors need Handshake transaction fixtures")
 	t.Parallel()
 
 	testCases := []struct {
@@ -1485,7 +2546,6 @@ func TestAncestorsDescendants(t *testing.T) {
 // TestRBF tests the different cases required for a transaction to properly
 // replace its conflicts given that they all signal replacement.
 func TestRBF(t *testing.T) {
-	t.Skip("Skipping: Bitcoin-era RBF vectors need Handshake transaction fixtures")
 	t.Parallel()
 
 	const defaultFee = hnsutil.DooPerHNS

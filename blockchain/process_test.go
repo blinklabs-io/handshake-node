@@ -1,14 +1,14 @@
 package blockchain
 
 import (
-	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
@@ -20,8 +20,9 @@ func chainedHeaders(parent *wire.BlockHeader, chainParams *chaincfg.Params,
 	headers := make([]*wire.BlockHeader, 0, numHeaders)
 	tip := parent
 
-	blockHeight := parentHeight
-	for range numHeaders {
+	for i := 0; i < numHeaders; i++ {
+		blockHeight := parentHeight + int32(i) + 1
+
 		// Use a timestamp that is one second after the previous block unless
 		// this is the first block in which case the current time is used.
 		var ts time.Time
@@ -31,17 +32,32 @@ func chainedHeaders(parent *wire.BlockHeader, chainParams *chaincfg.Params,
 			ts = tip.Timestamp.Add(time.Second)
 		}
 
-		var randBytes [4]byte
-		rand.Read(randBytes[:])
-		merkle := chainhash.HashH(randBytes[:])
+		coinbase := testhelper.CreateCoinbaseTx(
+			blockHeight, CalcBlockSubsidy(blockHeight, chainParams),
+		)
+		extraNonce := uint64(parentHeight)<<32 | uint64(i)
+		coinbaseScript, err := testhelper.StandardCoinbaseScript(
+			blockHeight, extraNonce,
+		)
+		if err != nil {
+			panic(fmt.Sprintf("Unable to create coinbase script at height %d: %v",
+				blockHeight, err))
+		}
+		coinbase.TxIn[0].Witness = wire.TxWitness{coinbaseScript}
+		uniquePayload := make([]byte, 8)
+		binary.LittleEndian.PutUint64(uniquePayload, extraNonce)
+		coinbase.AddTxOut(wire.NewTxOut(0,
+			wire.Address{Version: 1, Hash: uniquePayload}, wire.Covenant{}))
+		txs := []*hnsutil.Tx{hnsutil.NewTx(coinbase)}
 
 		header := wire.BlockHeader{
-			Version:    1,
-			PrevBlock:  tip.BlockHash(),
-			MerkleRoot: merkle,
-			Bits:       chainParams.PowLimitBits,
-			Timestamp:  ts,
-			Nonce:      0,
+			Version:     2,
+			PrevBlock:   tip.BlockHash(),
+			MerkleRoot:  CalcMerkleRoot(txs, false),
+			WitnessRoot: CalcMerkleRoot(txs, true),
+			Bits:        chainParams.PowLimitBits,
+			Timestamp:   ts,
+			Nonce:       0,
 		}
 		if !testhelper.SolveBlock(&header) {
 			panic(fmt.Sprintf("Unable to solve block at height %d",
@@ -55,12 +71,6 @@ func chainedHeaders(parent *wire.BlockHeader, chainParams *chaincfg.Params,
 }
 
 func TestProcessBlockHeader(t *testing.T) {
-	// TODO(handshake): test helpers create blocks with Version 1, but
-	// regtest activates BIP0034/BIP0065/BIP0066 at height 0, so headers
-	// fail validation with ErrBlockVersionTooOld.  Adapt block versioning
-	// for Handshake (genesis uses Version 0) before re-enabling.
-	t.Skip("regtest block version validation rejects test-generated blocks")
-
 	chain, params, tearDown := utxoCacheTestChain("TestProcessBlockHeader")
 	defer tearDown()
 
@@ -185,4 +195,55 @@ func TestProcessBlockHeader(t *testing.T) {
 	// Check that the tip didn't change.
 	tipNode = chain.bestHeader.Tip()
 	require.Equal(t, lastSidechainHeaderHash, tipNode.hash)
+}
+
+func TestAssumeValidScriptValidationPath(t *testing.T) {
+	chain, params, tearDown := utxoCacheTestChain(
+		"TestAssumeValidScriptValidationPath")
+	defer tearDown()
+
+	headers := chainedHeaders(&params.GenesisBlock.Header, params, 0, 3)
+	firstHash := headers[0].BlockHash()
+	assumeValidHash := headers[1].BlockHash()
+
+	chain.assumeValid = &assumeValidHash
+
+	_, err := chain.ProcessBlockHeader(headers[0], BFNone, false)
+	require.NoError(t, err)
+	firstNode := chain.index.LookupNode(&firstHash)
+	require.NotNil(t, firstNode)
+
+	// The trusted block hash is not known yet, so even an ancestor height
+	// must still run scripts.
+	require.True(t, chain.shouldValidateScripts(firstNode))
+
+	_, err = chain.ProcessBlockHeader(headers[1], BFNone, false)
+	require.NoError(t, err)
+	assumeValidNode := chain.index.LookupNode(&assumeValidHash)
+	require.NotNil(t, assumeValidNode)
+	require.False(t, chain.shouldValidateScripts(firstNode))
+	require.False(t, chain.shouldValidateScripts(assumeValidNode))
+
+	_, err = chain.ProcessBlockHeader(headers[2], BFNone, false)
+	require.NoError(t, err)
+	thirdHash := headers[2].BlockHash()
+	thirdNode := chain.index.LookupNode(&thirdHash)
+	require.NotNil(t, thirdNode)
+	require.True(t, chain.shouldValidateScripts(thirdNode))
+
+	sideHeader := *headers[1]
+	sideHeader.Timestamp = sideHeader.Timestamp.Add(time.Second)
+	sideHeader.Nonce = 0
+	require.True(t, testhelper.SolveBlock(&sideHeader))
+	sideHash := sideHeader.BlockHash()
+	require.NotEqual(t, assumeValidHash, sideHash)
+	_, err = chain.ProcessBlockHeader(&sideHeader, BFNone, false)
+	require.NoError(t, err)
+	sideNode := chain.index.LookupNode(&sideHash)
+	require.NotNil(t, sideNode)
+	require.True(t, chain.shouldValidateScripts(sideNode))
+
+	chain.index.SetStatusFlags(assumeValidNode, statusValidateFailed)
+	require.True(t, chain.shouldValidateScripts(firstNode))
+	require.True(t, chain.shouldValidateScripts(assumeValidNode))
 }

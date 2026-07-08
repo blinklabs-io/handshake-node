@@ -230,22 +230,40 @@ func TestTxOutPkScript(t *testing.T) {
 			gotWitnessProgram, wantWitnessProgram)
 	}
 
-	rawNullDataScript, err := txscript.NullDataScript(bytes.Repeat([]byte{1}, 18))
-	if err != nil {
-		t.Fatalf("unable to build nulldata script: %v", err)
+	opReturnLikeHash := append([]byte{txscript.OP_RETURN}, bytes.Repeat([]byte{1}, 19)...)
+	opReturnLikeTxOut := &wire.TxOut{
+		Address: wire.Address{Version: 0, Hash: opReturnLikeHash},
 	}
-	rawScriptTxOut := &wire.TxOut{
-		Address: wire.Address{Version: 0, Hash: rawNullDataScript},
+	wantOpReturnLikeProgram := append([]byte{
+		txscript.OP_0,
+		byte(len(opReturnLikeHash)),
+	}, opReturnLikeHash...)
+	gotOpReturnLikeProgram := txOutPkScript(opReturnLikeTxOut)
+	if !bytes.Equal(gotOpReturnLikeProgram, wantOpReturnLikeProgram) {
+		t.Fatalf("unexpected OP_RETURN-like witness program: got %x want %x",
+			gotOpReturnLikeProgram, wantOpReturnLikeProgram)
 	}
-	gotRawScript := txOutPkScript(rawScriptTxOut)
-	if !bytes.Equal(gotRawScript, rawNullDataScript) {
-		t.Fatalf("unexpected raw script: got %x want %x",
-			gotRawScript, rawNullDataScript)
+	if txOutIsUnspendable(opReturnLikeTxOut) {
+		t.Fatal("OP_RETURN-like witness program was treated as unspendable")
 	}
 
-	gotRawScript[0] = 0
-	if rawNullDataScript[0] != txscript.OP_RETURN {
-		t.Fatal("txOutPkScript returned aliased raw script bytes")
+	nullDataTxOut := &wire.TxOut{
+		Address: wire.Address{Version: 31, Hash: bytes.Repeat([]byte{1}, 18)},
+	}
+	gotNullDataScript := txOutPkScript(nullDataTxOut)
+	if gotNullDataScript[0] != txscript.OP_RETURN {
+		t.Fatalf("nulldata script: got %x", gotNullDataScript)
+	}
+	if !txOutIsUnspendable(nullDataTxOut) {
+		t.Fatal("version 31 txout should be unspendable")
+	}
+
+	revokeTxOut := &wire.TxOut{
+		Address:  wire.Address{Version: 0, Hash: witnessHash},
+		Covenant: wire.Covenant{Type: wire.CovenantRevoke},
+	}
+	if !txOutIsUnspendable(revokeTxOut) {
+		t.Fatal("REVOKE covenant txout should be unspendable")
 	}
 }
 

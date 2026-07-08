@@ -625,5 +625,5 @@ func p2wpkhScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
 // version 0 (P2WPKH-equivalent) address.
 func keyToAddr(key *btcec.PrivateKey, net *chaincfg.Params) (hnsutil.Address, error) {
 	serializedKey := key.PubKey().SerializeCompressed()
-	return hnsutil.NewAddressPubKeyHash(hnsutil.Hash160(serializedKey), net)
+	return hnsutil.NewAddressPubKeyHash(hnsutil.Blake160(serializedKey), net)
 }

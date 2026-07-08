@@ -7,7 +7,7 @@ package txscript
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/sha3"
 	"fmt"
 	"strings"
 
@@ -576,7 +576,7 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 
 			// Ensure that the serialized pkScript at the end of
 			// the witness stack matches the witness program.
-			witnessHash := sha256.Sum256(witnessScript)
+			witnessHash := sha3.Sum256(witnessScript)
 			if !bytes.Equal(witnessHash[:], vm.witnessProgram) {
 				return scriptError(ErrWitnessProgramMismatch,
 					"witness program hash mismatch")

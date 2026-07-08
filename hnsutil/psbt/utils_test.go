@@ -2,10 +2,12 @@ package psbt
 
 import (
 	"bytes"
+	"encoding/hex"
 	"reflect"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -73,6 +75,87 @@ func TestSumUtxoInputValues(t *testing.T) {
 	}
 }
 
+func TestReadTxOutHandshakeRoundTrip(t *testing.T) {
+	original := &wire.TxOut{
+		Value: 123456789,
+		Address: wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x42}, 20),
+		},
+		Covenant: wire.Covenant{
+			Type: wire.CovenantUpdate,
+			Items: [][]byte{
+				bytes.Repeat([]byte{0x01}, 32),
+				[]byte("resource-data"),
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := wire.WriteTxOut(&buf, 0, 0, original); err != nil {
+		t.Fatalf("WriteTxOut: %v", err)
+	}
+
+	decoded, err := readTxOut(buf.Bytes())
+	if err != nil {
+		t.Fatalf("readTxOut: %v", err)
+	}
+	if !TxOutsEqual(original, decoded) {
+		t.Fatalf("decoded txout mismatch: got %#v want %#v",
+			decoded, original)
+	}
+
+	withTrailingByte := append(buf.Bytes(), 0x00)
+	if _, err := readTxOut(withTrailingByte); err == nil {
+		t.Fatalf("expected trailing bytes to be rejected")
+	}
+}
+
+func TestAddPartialSignatureRejectsOutOfRangeNonWitnessOutput(t *testing.T) {
+	prevTx := wire.NewMsgTx(2)
+	prevTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{},
+		wire.MaxTxInSequenceNum, nil))
+	prevTx.AddTxOut(&wire.TxOut{
+		Value: 1,
+		Address: wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x24}, 20),
+		},
+		Covenant: wire.Covenant{Type: wire.CovenantNone},
+	})
+	prevHash := prevTx.TxHash()
+
+	unsignedTx := wire.NewMsgTx(2)
+	unsignedTx.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&prevHash, 1),
+		wire.MaxTxInSequenceNum, nil))
+	packet, err := NewFromUnsignedTx(unsignedTx)
+	if err != nil {
+		t.Fatalf("NewFromUnsignedTx: %v", err)
+	}
+	packet.Inputs[0].NonWitnessUtxo = prevTx
+	packet.Inputs[0].RedeemScript = []byte{txscript.OP_TRUE}
+
+	updater, err := NewUpdater(packet)
+	if err != nil {
+		t.Fatalf("NewUpdater: %v", err)
+	}
+
+	sig, err := hex.DecodeString("30440220027605ee8015970baf02a72652967a543e1b29a6882d799738ed1baee508822702203818a2f1b9770c46a473f47ad7ae90bcc129a5d047f00fae354c80197a7cf50601")
+	if err != nil {
+		t.Fatalf("DecodeString sig: %v", err)
+	}
+	pub, err := hex.DecodeString("03235fc1f9dc8bbf6fa3df35dfeb0dd486f2d488f139579885eb684510f004f6c1")
+	if err != nil {
+		t.Fatalf("DecodeString pub: %v", err)
+	}
+
+	err = updater.addPartialSignature(0, sig, pub)
+	if err != ErrInvalidPrevOutNonWitnessTransaction {
+		t.Fatalf("expected ErrInvalidPrevOutNonWitnessTransaction, got %v",
+			err)
+	}
+}
+
 func TestTxOutsEqual(t *testing.T) {
 	testCases := []struct {
 		name        string
@@ -98,18 +181,18 @@ func TestTxOutsEqual(t *testing.T) {
 		name: "one pk script set",
 		out1: &wire.TxOut{},
 		out2: &wire.TxOut{
-			PkScript: []byte("foo"),
+			Address: wire.Address{Version: 0, Hash: []byte("foo")},
 		},
 		expectEqual: false,
 	}, {
 		name: "both fully set",
 		out1: &wire.TxOut{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		},
 		out2: &wire.TxOut{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		},
 		expectEqual: true,
 	}}
@@ -151,18 +234,18 @@ func TestVerifyOutputsEqual(t *testing.T) {
 		name:  "one pk script set",
 		outs1: []*wire.TxOut{{}},
 		outs2: []*wire.TxOut{{
-			PkScript: []byte("foo"),
+			Address: wire.Address{Version: 0, Hash: []byte("foo")},
 		}},
 		expectErr: true,
 	}, {
 		name: "both fully set",
 		outs1: []*wire.TxOut{{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		}, {}},
 		outs2: []*wire.TxOut{{
-			Value:    1234,
-			PkScript: []byte("bar"),
+			Value:   1234,
+			Address: wire.Address{Version: 0, Hash: []byte("bar")},
 		}, {}},
 		expectErr: false,
 	}}
@@ -331,13 +414,12 @@ func TestNewFromSignedTx(t *testing.T) {
 	orig := &wire.MsgTx{
 		TxIn: []*wire.TxIn{{
 			PreviousOutPoint: wire.OutPoint{},
-			SignatureScript:  []byte("script"),
 			Witness:          [][]byte{[]byte("witness")},
 			Sequence:         1234,
 		}},
 		TxOut: []*wire.TxOut{{
-			PkScript: []byte{77, 88},
-			Value:    99,
+			Address: wire.Address{Version: 0, Hash: []byte{77, 88}},
+			Value:   99,
 		}},
 	}
 
@@ -359,7 +441,7 @@ func TestNewFromSignedTx(t *testing.T) {
 		t.Fatalf("unexpected txout, got %#v wanted %#v",
 			tx.TxOut, orig.TxOut)
 	}
-	if len(scripts) != 1 || !bytes.Equal(scripts[0], []byte("script")) {
+	if len(scripts) != 1 || len(scripts[0]) != 0 {
 		t.Fatalf("script not extracted correctly")
 	}
 	if len(witnesses) != 1 ||

@@ -14,9 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -137,6 +138,15 @@ func testTearDownAll(t *testing.T) {
 			t.Errorf("created test datadir was not deleted.")
 		}
 	}
+}
+
+func expectedCoinbaseBalance(net *chaincfg.Params, numOutputs int32) hnsutil.Amount {
+	var balance hnsutil.Amount
+	for height := int32(1); height <= numOutputs; height++ {
+		subsidy := blockchain.CalcBlockSubsidy(height, net)
+		balance += hnsutil.Amount(subsidy)
+	}
+	return balance
 }
 
 func testActiveHarnesses(r *Harness, t *testing.T) {
@@ -449,8 +459,8 @@ func testMemWalletReorg(r *Harness, t *testing.T) {
 	}
 	defer harness.TearDown()
 
-	// The internal wallet of this harness should now have 250 BTC.
-	expectedBalance := hnsutil.Amount(250 * hnsutil.DooPerHNS)
+	// The internal wallet should now have five mature coinbase outputs.
+	expectedBalance := expectedCoinbaseBalance(harness.ActiveNet, 5)
 	walletBalance := harness.ConfirmedBalance()
 	if expectedBalance != walletBalance {
 		t.Fatalf("wallet balance incorrect: expected %v, got %v",
@@ -528,10 +538,6 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	// Skip integration tests until the CPU miner is updated for Handshake PoW.
-	fmt.Println("Skipping rpctest integration tests: CPU miner not yet updated for Handshake PoW")
-	os.Exit(0)
-
 	var err error
 	mainHarness, err = New(&chaincfg.RegressionNetParams, nil, nil, "")
 	if err != nil {
@@ -568,10 +574,9 @@ func TestMain(m *testing.M) {
 }
 
 func TestHarness(t *testing.T) {
-	t.Skip("Skipping: integration test requires running node with Handshake PoW; CPU miner not yet updated")
-	// We should have (numMatureOutputs * 50 BTC) of mature unspendable
-	// outputs.
-	expectedBalance := hnsutil.Amount(numMatureOutputs * 50 * hnsutil.DooPerHNS)
+	// We should have numMatureOutputs mature coinbase outputs available.
+	expectedBalance := expectedCoinbaseBalance(mainHarness.ActiveNet,
+		numMatureOutputs)
 	harnessBalance := mainHarness.ConfirmedBalance()
 	if harnessBalance != expectedBalance {
 		t.Fatalf("expected wallet balance of %v instead have %v",

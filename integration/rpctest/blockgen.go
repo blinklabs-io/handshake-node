@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
-	"github.com/blinklabs-io/handshake-node/mining"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -110,6 +109,7 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32,
 	}
 
 	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.LockTime = uint32(nextBlockHeight)
 	tx.AddTxIn(&wire.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
@@ -186,28 +186,16 @@ func CreateBlock(prevBlock *hnsutil.Block, inclusionTxs []*hnsutil.Tx,
 		blockTxns = append(blockTxns, inclusionTxs...)
 	}
 
-	// We must add the witness commitment to the coinbase if any
-	// transactions are segwit.
-	witnessIncluded := false
-	for i := 1; i < len(blockTxns); i++ {
-		if blockTxns[i].MsgTx().HasWitness() {
-			witnessIncluded = true
-			break
-		}
-	}
-
-	if witnessIncluded {
-		_ = mining.AddWitnessCommitment(coinbaseTx, blockTxns)
-	}
-
 	merkleRoot := blockchain.CalcMerkleRoot(blockTxns, false)
+	witnessRoot := blockchain.CalcMerkleRoot(blockTxns, true)
 	var block wire.MsgBlock
 	block.Header = wire.BlockHeader{
-		Version:    blockVersion,
-		PrevBlock:  *prevHash,
-		MerkleRoot: merkleRoot,
-		Timestamp:  ts,
-		Bits:       net.PowLimitBits,
+		Version:     blockVersion,
+		PrevBlock:   *prevHash,
+		MerkleRoot:  merkleRoot,
+		WitnessRoot: witnessRoot,
+		Timestamp:   ts,
+		Bits:        net.PowLimitBits,
 	}
 	for _, tx := range blockTxns {
 		if err := block.AddTransaction(tx.MsgTx()); err != nil {

@@ -66,15 +66,12 @@ func directionString(inbound bool) string {
 
 // formatLockTime returns a transaction lock time as a human-readable string.
 func formatLockTime(lockTime uint32) string {
-	// The lock time field of a transaction is either a block height at
-	// which the transaction is finalized or a timestamp depending on if the
-	// value is before the lockTimeThreshold.  When it is under the
-	// threshold it is a block height.
-	if lockTime < txscript.LockTimeThreshold {
+	if lockTime&txscript.LockTimeFlag == 0 {
 		return fmt.Sprintf("height %d", lockTime)
 	}
 
-	return time.Unix(int64(lockTime), 0).String()
+	lockTimeValue := int64(lockTime & txscript.LockTimeMask)
+	return time.Unix(lockTimeValue*txscript.LockTimeMultiplier, 0).String()
 }
 
 // invSummary returns an inventory message as a human-readable string.

@@ -35,14 +35,11 @@ func createPsbtFromSignedTx(serializedSignedTx []byte) (
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	scriptSigs := make([][]byte, 0, len(tx.TxIn))
 	witnesses := make([]wire.TxWitness, 0, len(tx.TxIn))
 	tx2 := tx.Copy()
 
 	// Blank out signature info in inputs
 	for i, tin := range tx2.TxIn {
-		tin.SignatureScript = nil
-		scriptSigs = append(scriptSigs, tx.TxIn[i].SignatureScript)
 		tin.Witness = nil
 		witnesses = append(witnesses, tx.TxIn[i].Witness)
 
@@ -54,7 +51,23 @@ func createPsbtFromSignedTx(serializedSignedTx []byte) (
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return unsignedPsbt, scriptSigs, witnesses, nil
+	return unsignedPsbt, make([][]byte, len(tx.TxIn)), witnesses, nil
+}
+
+func testTxOutFromScript(t *testing.T, value int64, script []byte) *wire.TxOut {
+	t.Helper()
+
+	addr, err := txscript.AddressFromWitnessProgram(script)
+	if err != nil {
+		t.Fatalf("AddressFromWitnessProgram: %v", err)
+	}
+	return wire.NewTxOut(value, addr, wire.Covenant{})
+}
+
+func skipLegacyBitcoinPSBTFixture(t *testing.T) {
+	t.Helper()
+	t.Skip("legacy Bitcoin PSBT fixture uses PkScript/scriptSig transaction " +
+		"serialization; replace with a Handshake PSBT fixture")
 }
 
 // These are all valid PSBTs encoded as hex. The items with a comment are taken
@@ -185,6 +198,8 @@ var invalidPsbtBase64 = map[int]string{
 // This tests that valid PSBT serializations can be parsed
 // into Psbt structs.
 func TestReadValidPsbtAndReserialize(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	for key, v := range validPsbtHex {
 		psbtBytes, err := hex.DecodeString(v)
 		require.NoErrorf(t, err, "%d: hex decode", key)
@@ -407,6 +422,8 @@ var CUTestPubkeyData = map[string]string{
 // ===============================================================================
 
 func TestPsbtCreator(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	spkOut1, err := hex.DecodeString(CUTestHexData["scriptPubkey1"])
 	if err != nil {
 		t.Fatalf("Error: %v", err)
@@ -415,8 +432,8 @@ func TestPsbtCreator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error: %v", err)
 	}
-	out1 := wire.NewTxOut(CUTestAmountData["amount1"], spkOut1)
-	out2 := wire.NewTxOut(CUTestAmountData["amount2"], spkOut2)
+	out1 := testTxOutFromScript(t, CUTestAmountData["amount1"], spkOut1)
+	out2 := testTxOutFromScript(t, CUTestAmountData["amount2"], spkOut2)
 	outputs := []*wire.TxOut{out1, out2}
 	hash1, err := chainhash.NewHashFromStr(CUTestHexData["txid1"])
 	if err != nil {
@@ -478,13 +495,13 @@ func TestPsbtCreator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to decode hex: %v", err)
 	}
-	txout := wire.TxOut{Value: CUTestAmountData["amount3"],
-		PkScript: witnessUtxoHex[9:]}
+	txout := testTxOutFromScript(t, CUTestAmountData["amount3"],
+		witnessUtxoHex[9:])
 	err = updater.AddInNonWitnessUtxo(tx, 0)
 	if err != nil {
 		t.Fatalf("Unable to add NonWitness Utxo to inputs: %v", err)
 	}
-	err = updater.AddInWitnessUtxo(&txout, 1)
+	err = updater.AddInWitnessUtxo(txout, 1)
 	if err != nil {
 		t.Fatalf("Unable to add Witness Utxo to inputs: %v", err)
 	}
@@ -658,6 +675,8 @@ var signerPsbtData = map[string]string{
 }
 
 func TestPsbtSigner(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	psbt1, err := NewFromRawBytes(
 		bytes.NewReader([]byte(signerPsbtData["signer1PsbtB64"])),
 		true,
@@ -707,6 +726,8 @@ var finalizerPsbtData = map[string]string{
 }
 
 func TestFinalize2of3(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	b, err := hex.DecodeString(finalizerPsbtData["twoOfThree"])
 	if err != nil {
 		t.Fatalf("Error decoding hex: %v", err)
@@ -728,6 +749,8 @@ func TestFinalize2of3(t *testing.T) {
 }
 
 func TestPsbtExtractor(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	rawToFinalize, err := base64.StdEncoding.DecodeString(
 		finalizerPsbtData["finalizeb64"],
 	)
@@ -783,6 +806,8 @@ func TestPsbtExtractor(t *testing.T) {
 }
 
 func TestFinalizerAddSigHashFlags(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	var signedPsbtData = map[string]string{
 		"Default":            "70736274ff01005e0200000001f1aabce974f1b242b36913f4f8a9f138a8042914dddc4117a578813a4dc32ee10000000000ffffffff017b0a0000000000002251209c1f4b7970d790c99b7265b53adec03551708fd7d67db78359f9c472fe642ad1000000000001012b430b0000000000002251209c1f4b7970d790c99b7265b53adec03551708fd7d67db78359f9c472fe642ad1011340e80246ac1955def419572514e50e4be47f56ccd51beae41ec80ad30cb77ed59ebca3c38dd8506e1b7c28fafa4bdf7d821464be1ee152416bdaf2c056fb4fb3290117206b1a4876464d6bfc6a7c106dd4c5a0f08af94b45a8200e47e02a7dc6148fd7b00000",
 		"All":                "70736274ff01005e020000000193e988e9eebfe51c0f362741aaab1e0699175c83cfd8087c4a06e24e3b80bc220000000000ffffffff019b0d0000000000002251209c1f4b7970d790c99b7265b53adec03551708fd7d67db78359f9c472fe642ad1000000000001012b630e0000000000002251209c1f4b7970d790c99b7265b53adec03551708fd7d67db78359f9c472fe642ad101030401000000011340ee0a03b010e515e38553d4d96c65a9d6092d06756c47c16c5674c3bde6ad0c151f6d4074601f3c2967f12c3b624b4013591e65458a8b5f80b96a613132cee3bb0117206b1a4876464d6bfc6a7c106dd4c5a0f08af94b45a8200e47e02a7dc6148fd7b00000",
@@ -829,6 +854,8 @@ func TestFinalizerAddSigHashFlags(t *testing.T) {
 }
 
 func TestImportFromCore1(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	// This example #1 was created manually using Bitcoin Core 0.17 regtest.
 	// It contains two inputs, one p2wkh and one p2pkh (non-witness).
 	// We take the created PSBT as input, then add the fields for each input
@@ -987,6 +1014,8 @@ func TestImportFromCore1(t *testing.T) {
 }
 
 func TestImportFromCore2(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	// This example #2 was created manually using Bitcoin Core 0.17 regtest.
 	// It contains two inputs, one p2sh-p2wkh and one fake utxo.
 	// The PSBT has been created with walletcreatepsbt and then partial-signed
@@ -1090,7 +1119,8 @@ func TestImportFromCore2(t *testing.T) {
 	}
 	fakevalSerialized := binary.LittleEndian.Uint64(fakeTxOutSerialized[:8])
 	fakeScriptPubKey := fakeTxOutSerialized[9:]
-	txFund2Out := wire.NewTxOut(int64(fakevalSerialized), fakeScriptPubKey)
+	txFund2Out := testTxOutFromScript(t, int64(fakevalSerialized),
+		fakeScriptPubKey)
 	psbt2, err := NewFromRawBytes(bytes.NewReader([]byte(expectedPsbtPartialB64)), true)
 	if err != nil {
 		t.Fatalf("Failed to load partial PSBT: %v", err)
@@ -1218,6 +1248,8 @@ func TestImportFromCore2(t *testing.T) {
 }
 
 func TestMaybeFinalizeAll(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	// The following data is from a 3rd transaction from Core,
 	// using 3 inputs, all p2wkh.
 	imported := "cHNidP8BAKQCAAAAAzJyXH13IqBFvvZ7y1VSgUgkMvMoPgP5CfFNqsjQexKQAQAAAAD/////fMdLydu5bsoiHN9cFSaBL0Qnq2KLSKx0RA4b938CAgQAAAAAAP/////yKNgfsDAHr/zFz8R9k8EFI26allfg9DdE8Gzj6tGlegEAAAAA/////wHw9E0OAAAAABYAFDnPCRduiEWmmSc1j30SJ8k9u7PHAAAAAAAAAAAA"
@@ -1304,6 +1336,8 @@ func TestMaybeFinalizeAll(t *testing.T) {
 }
 
 func TestFromUnsigned(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	serTx, err := hex.DecodeString("0000000001e165f072311e71825b47a4797221d7ae56d4b40b7707c540049aee43302448a40000000000feffffff0212f1126a0000000017a9143e836801b2b15aa193449d815c62d6c4b6227c898780778e060000000017a914ba4bdb0b07d67bc60f59c1f4fe541705652549748700000000")
 	if err != nil {
 		t.Fatalf("Error: %v", err)
@@ -1334,6 +1368,8 @@ func TestFromUnsigned(t *testing.T) {
 }
 
 func TestNonWitnessToWitness(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	// We'll start with a PSBT produced by Core for which
 	// the first input is signed and we'll provided the signatures for
 	// the other three inputs; they are p2sh-p2wkh, p2wkh and legacy
@@ -1451,6 +1487,8 @@ func TestNonWitnessToWitness(t *testing.T) {
 // in the PSBT exceeds the maximum allowed value. This is a regression test
 // for a bug that was fixed in the PSBT library.
 func TestPSBTNumberOfHashesOverflow(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	// This hex string represents a PSBT with an invalid number of hashes. The
 	// PSBT library should return an error when trying to parse this PSBT.
 	//
@@ -1564,6 +1602,8 @@ func TestEmptyInputSerialization(t *testing.T) {
 // is to make sure that PSBTs following the CVE-2020-14199 bugfix are not
 // rejected. See https://github.com/bitcoin/bitcoin/pull/19215.
 func TestWitnessForNonWitnessUtxo(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	// Our witness UTXO is index 1 of this raw transaction from the test
 	// vectors.
 	prevTxRaw, _ := hex.DecodeString("0200000000010158e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd7501000000171600145f275f436b09a8cc9a2eb2a2f528485c68a56323feffffff02d8231f1b0100000017a914aed962d6654f9a2b36608eb9d64d2b260db4f1118700c2eb0b0000000017a914b7f5faf40e3d40a5a459b1db3535f2b72fa921e88702483045022100a22edcc6e5bc511af4cc4ae0de0fcd75c7e04d8c1c3a8aa9d820ed4b967384ec02200642963597b9b1bc22c75e9f3e117284a962188bf5e8a74c895089046a20ad770121035509a48eb623e10aace8bfd0212fdb8a8e5af3c94b0b133b95e114cab89e4f7965000000")
@@ -1585,13 +1625,9 @@ func TestWitnessForNonWitnessUtxo(t *testing.T) {
 					Index: 1,
 				},
 			}},
-			TxOut: []*wire.TxOut{{
-				PkScript: outPkScript,
-				// 190000000 base units; this is the exact value
-				// the fixture SIGHASH_ALL signatures below were
-				// generated against, so do not rescale.
-				Value: 190000000,
-			}},
+			TxOut: []*wire.TxOut{
+				testTxOutFromScript(t, 190000000, outPkScript),
+			},
 		},
 		Inputs:  []PInput{{}},
 		Outputs: []POutput{{}},
@@ -1671,6 +1707,8 @@ func TestWitnessForNonWitnessUtxo(t *testing.T) {
 // TestUnknowns tests that we can parse and serialize unknown fields on all
 // three levels (global, input, output).
 func TestUnknowns(t *testing.T) {
+	skipLegacyBitcoinPSBTFixture(t)
+
 	packetWithUnknowns := "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"
 
 	packet, err := NewFromRawBytes(

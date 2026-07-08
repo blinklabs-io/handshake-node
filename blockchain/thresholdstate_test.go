@@ -7,6 +7,7 @@ package blockchain
 import (
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 )
 
@@ -130,6 +131,32 @@ nextTest:
 				continue nextTest
 			}
 		}
+	}
+}
+
+func TestUndefinedDeploymentState(t *testing.T) {
+	chain := newFakeChain(&chaincfg.MainNetParams)
+	prevNode := &blockNode{
+		height: int32(chaincfg.MainNetParams.MinerConfirmationWindow),
+	}
+
+	state, err := chain.deploymentState(prevNode, chaincfg.DeploymentCSV)
+	if err != nil {
+		t.Fatalf("deploymentState: %v", err)
+	}
+	if state != ThresholdDefined {
+		t.Fatalf("deploymentState = %v, want %v", state, ThresholdDefined)
+	}
+}
+
+func TestUndefinedDeploymentChecker(t *testing.T) {
+	checker := deploymentChecker{deployment: &chaincfg.ConsensusDeployment{}}
+
+	if checker.HasStarted(nil) {
+		t.Fatal("undefined deployment reported started")
+	}
+	if checker.HasEnded(nil) {
+		t.Fatal("undefined deployment reported ended")
 	}
 }
 

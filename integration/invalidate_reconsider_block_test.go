@@ -8,8 +8,6 @@ import (
 )
 
 func TestInvalidateAndReconsiderBlock(t *testing.T) {
-	t.Skip("Skipping: integration test requires Handshake-aware block generation and chain fixtures")
-
 	// Set up regtest chain.
 	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, nil, "")
 	if err != nil {

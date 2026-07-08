@@ -71,3 +71,30 @@ func TestDefaultRPCPorts(t *testing.T) {
 			regressionNetParams.rpcPort, "18334")
 	}
 }
+
+func TestParseAssumeValid(t *testing.T) {
+	assumeValid := "0000000000000000000000000000000000000000000000000000000000000000"
+	hash, err := parseAssumeValid(assumeValid)
+	if err != nil {
+		t.Fatalf("parseAssumeValid: %v", err)
+	}
+	if hash == nil {
+		t.Fatalf("parseAssumeValid returned nil hash")
+	}
+	if hash.String() != assumeValid {
+		t.Fatalf("parseAssumeValid hash: got %q, want %q",
+			hash.String(), assumeValid)
+	}
+
+	hash, err = parseAssumeValid("")
+	if err != nil {
+		t.Fatalf("parseAssumeValid empty: %v", err)
+	}
+	if hash != nil {
+		t.Fatalf("parseAssumeValid empty: got %v, want nil", hash)
+	}
+
+	if _, err := parseAssumeValid("not-a-hash"); err == nil {
+		t.Fatalf("parseAssumeValid malformed hash unexpectedly succeeded")
+	}
+}

@@ -117,7 +117,8 @@ func (u *Updater) Sign(inIndex int, sig []byte, pubKey []byte,
 		if pInput.WitnessUtxo == nil {
 			txIn := u.Upsbt.UnsignedTx.TxIn[inIndex]
 			outIndex := txIn.PreviousOutPoint.Index
-			script := pInput.NonWitnessUtxo.TxOut[outIndex].PkScript
+			script := txOutPkScript(
+				pInput.NonWitnessUtxo.TxOut[outIndex])
 
 			if txscript.IsWitnessProgram(script) {
 				err := nonWitnessToWitness(u.Upsbt, inIndex)

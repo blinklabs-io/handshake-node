@@ -18,9 +18,11 @@ import (
 // to show users progress of certain "actions" involving some or all current
 // blocks. Ex: syncing to best chain, indexing all blocks, etc.
 type blockProgressLogger struct {
-	receivedLogBlocks int64
-	receivedLogTx     int64
-	lastBlockLogTime  time.Time
+	receivedLogBlocks  int64
+	receivedLogTx      int64
+	receivedLogHeaders int64
+	lastBlockLogTime   time.Time
+	lastHeaderLogTime  time.Time
 
 	subsystemLogger btclog.Logger
 	progressAction  string
@@ -34,9 +36,10 @@ type blockProgressLogger struct {
 //	({numTxs}, height {lastBlockHeight}, {lastBlockTimeStamp})
 func newBlockProgressLogger(progressMessage string, logger btclog.Logger) *blockProgressLogger {
 	return &blockProgressLogger{
-		lastBlockLogTime: time.Now(),
-		progressAction:   progressMessage,
-		subsystemLogger:  logger,
+		lastBlockLogTime:  time.Now(),
+		lastHeaderLogTime: time.Now(),
+		progressAction:    progressMessage,
+		subsystemLogger:   logger,
 	}
 }
 
@@ -70,15 +73,56 @@ func (b *blockProgressLogger) LogBlockHeight(block *hnsutil.Block, chain *blockc
 		txStr = "transaction"
 	}
 	cacheSizeStr := fmt.Sprintf("~%d MiB", chain.CachedStateSize()/1024/1024)
-	b.subsystemLogger.Infof("%s %d %s in the last %s (%d %s, height %d, %s, %s cache)",
-		b.progressAction, b.receivedLogBlocks, blockStr, tDuration, b.receivedLogTx,
-		txStr, block.Height(), block.MsgBlock().Header.Timestamp, cacheSizeStr)
+	blocksPerSecond := float64(b.receivedLogBlocks) / duration.Seconds()
+	b.subsystemLogger.Infof("%s %d %s in the last %s (%.2f blocks/s, %d %s, height %d, %s, %s cache)",
+		b.progressAction, b.receivedLogBlocks, blockStr, tDuration,
+		blocksPerSecond, b.receivedLogTx, txStr, block.Height(),
+		block.MsgBlock().Header.Timestamp,
+		cacheSizeStr)
 
 	b.receivedLogBlocks = 0
 	b.receivedLogTx = 0
 	b.lastBlockLogTime = now
 }
 
-func (b *blockProgressLogger) SetLastLogTime(time time.Time) {
-	b.lastBlockLogTime = time
+// LogHeaderProgress logs header-first IBD progress.  It is throttled the same
+// way block progress logging is to avoid spamming logs while still exposing
+// height, percentage, and throughput for long syncs.
+func (b *blockProgressLogger) LogHeaderProgress(headersProcessed int,
+	bestHeaderHeight, targetHeight int32) {
+
+	if headersProcessed <= 0 {
+		return
+	}
+
+	b.Lock()
+	defer b.Unlock()
+
+	b.receivedLogHeaders += int64(headersProcessed)
+
+	now := time.Now()
+	duration := now.Sub(b.lastHeaderLogTime)
+	if duration < time.Second*10 {
+		return
+	}
+
+	durationMillis := int64(duration / time.Millisecond)
+	tDuration := 10 * time.Millisecond * time.Duration(durationMillis/10)
+
+	percent := float64(100)
+	if targetHeight > 0 && bestHeaderHeight < targetHeight {
+		percent = float64(bestHeaderHeight) / float64(targetHeight) * 100
+	}
+	headersPerSecond := float64(b.receivedLogHeaders) / duration.Seconds()
+	headerStr := "headers"
+	if b.receivedLogHeaders == 1 {
+		headerStr = "header"
+	}
+
+	b.subsystemLogger.Infof("Downloaded %d %s in the last %s (%.2f headers/s, height %d of %d, %.2f%%)",
+		b.receivedLogHeaders, headerStr, tDuration, headersPerSecond,
+		bestHeaderHeight, targetHeight, percent)
+
+	b.receivedLogHeaders = 0
+	b.lastHeaderLogTime = now
 }

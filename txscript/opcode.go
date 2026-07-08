@@ -14,7 +14,9 @@ import (
 	"hash"
 	"strings"
 
+	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/ripemd160"
+	xsha3 "golang.org/x/crypto/sha3"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -233,10 +235,10 @@ const (
 	OP_UNKNOWN189          = 0xbd // 189
 	OP_UNKNOWN190          = 0xbe // 190
 	OP_UNKNOWN191          = 0xbf // 191
-	OP_UNKNOWN192          = 0xc0 // 192
-	OP_UNKNOWN193          = 0xc1 // 193
-	OP_UNKNOWN194          = 0xc2 // 194
-	OP_UNKNOWN195          = 0xc3 // 195
+	OP_BLAKE160            = 0xc0 // 192
+	OP_BLAKE256            = 0xc1 // 193
+	OP_SHA3                = 0xc2 // 194
+	OP_KECCAK              = 0xc3 // 195
 	OP_UNKNOWN196          = 0xc4 // 196
 	OP_UNKNOWN197          = 0xc5 // 197
 	OP_UNKNOWN198          = 0xc6 // 198
@@ -249,7 +251,8 @@ const (
 	OP_UNKNOWN205          = 0xcd // 205
 	OP_UNKNOWN206          = 0xce // 206
 	OP_UNKNOWN207          = 0xcf // 207
-	OP_UNKNOWN208          = 0xd0 // 208
+	OP_TYPE                = 0xd0 // 208
+	OP_UNKNOWN208          = OP_TYPE
 	OP_UNKNOWN209          = 0xd1 // 209
 	OP_UNKNOWN210          = 0xd2 // 210
 	OP_UNKNOWN211          = 0xd3 // 211
@@ -502,6 +505,11 @@ var opcodeArray = [256]opcode{
 	OP_CHECKMULTISIG:       {OP_CHECKMULTISIG, "OP_CHECKMULTISIG", 1, opcodeCheckMultiSig},
 	OP_CHECKMULTISIGVERIFY: {OP_CHECKMULTISIGVERIFY, "OP_CHECKMULTISIGVERIFY", 1, opcodeCheckMultiSigVerify},
 	OP_CHECKSIGADD:         {OP_CHECKSIGADD, "OP_CHECKSIGADD", 1, opcodeCheckSigAdd},
+	OP_BLAKE160:            {OP_BLAKE160, "OP_BLAKE160", 1, opcodeBlake160},
+	OP_BLAKE256:            {OP_BLAKE256, "OP_BLAKE256", 1, opcodeBlake256},
+	OP_SHA3:                {OP_SHA3, "OP_SHA3", 1, opcodeSha3},
+	OP_KECCAK:              {OP_KECCAK, "OP_KECCAK", 1, opcodeKeccak},
+	OP_TYPE:                {OP_TYPE, "OP_TYPE", 1, opcodeType},
 
 	// Reserved opcodes.
 	OP_NOP1:  {OP_NOP1, "OP_NOP1", 1, opcodeNop},
@@ -519,10 +527,6 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN189: {OP_UNKNOWN189, "OP_UNKNOWN189", 1, opcodeInvalid},
 	OP_UNKNOWN190: {OP_UNKNOWN190, "OP_UNKNOWN190", 1, opcodeInvalid},
 	OP_UNKNOWN191: {OP_UNKNOWN191, "OP_UNKNOWN191", 1, opcodeInvalid},
-	OP_UNKNOWN192: {OP_UNKNOWN192, "OP_UNKNOWN192", 1, opcodeInvalid},
-	OP_UNKNOWN193: {OP_UNKNOWN193, "OP_UNKNOWN193", 1, opcodeInvalid},
-	OP_UNKNOWN194: {OP_UNKNOWN194, "OP_UNKNOWN194", 1, opcodeInvalid},
-	OP_UNKNOWN195: {OP_UNKNOWN195, "OP_UNKNOWN195", 1, opcodeInvalid},
 	OP_UNKNOWN196: {OP_UNKNOWN196, "OP_UNKNOWN196", 1, opcodeInvalid},
 	OP_UNKNOWN197: {OP_UNKNOWN197, "OP_UNKNOWN197", 1, opcodeInvalid},
 	OP_UNKNOWN198: {OP_UNKNOWN198, "OP_UNKNOWN198", 1, opcodeInvalid},
@@ -535,7 +539,6 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN205: {OP_UNKNOWN205, "OP_UNKNOWN205", 1, opcodeInvalid},
 	OP_UNKNOWN206: {OP_UNKNOWN206, "OP_UNKNOWN206", 1, opcodeInvalid},
 	OP_UNKNOWN207: {OP_UNKNOWN207, "OP_UNKNOWN207", 1, opcodeInvalid},
-	OP_UNKNOWN208: {OP_UNKNOWN208, "OP_UNKNOWN208", 1, opcodeInvalid},
 	OP_UNKNOWN209: {OP_UNKNOWN209, "OP_UNKNOWN209", 1, opcodeInvalid},
 	OP_UNKNOWN210: {OP_UNKNOWN210, "OP_UNKNOWN210", 1, opcodeInvalid},
 	OP_UNKNOWN211: {OP_UNKNOWN211, "OP_UNKNOWN211", 1, opcodeInvalid},
@@ -641,10 +644,6 @@ var successOpcodes = map[byte]struct{}{
 	OP_UNKNOWN189:   {}, // 189
 	OP_UNKNOWN190:   {}, // 190
 	OP_UNKNOWN191:   {}, // 191
-	OP_UNKNOWN192:   {}, // 192
-	OP_UNKNOWN193:   {}, // 193
-	OP_UNKNOWN194:   {}, // 194
-	OP_UNKNOWN195:   {}, // 195
 	OP_UNKNOWN196:   {}, // 196
 	OP_UNKNOWN197:   {}, // 197
 	OP_UNKNOWN198:   {}, // 198
@@ -1023,18 +1022,33 @@ func opcodeReturn(op *opcode, data []byte, vm *Engine) error {
 	return scriptError(ErrEarlyReturn, "script returned early")
 }
 
+// opcodeType pushes the covenant type of the transaction output with the same
+// index as the currently validated input.  If the transaction has no output at
+// that index, Handshake consensus pushes CovenantNone.
+func opcodeType(op *opcode, data []byte, vm *Engine) error {
+	covenantType := wire.CovenantNone
+	if vm.txIdx < len(vm.tx.TxOut) {
+		txOut := vm.tx.TxOut[vm.txIdx]
+		if txOut != nil {
+			covenantType = txOut.Covenant.Type
+		}
+	}
+
+	vm.dstack.PushInt(scriptNum(covenantType))
+	return nil
+}
+
 // verifyLockTime is a helper function used to validate locktimes.
-func verifyLockTime(txLockTime, threshold, lockTime int64) error {
+func verifyLockTime(txLockTime, typeFlag, valueMask, lockTime int64) error {
 	// The lockTimes in both the script and transaction must be of the same
 	// type.
-	if !((txLockTime < threshold && lockTime < threshold) ||
-		(txLockTime >= threshold && lockTime >= threshold)) {
+	if txLockTime&typeFlag != lockTime&typeFlag {
 		str := fmt.Sprintf("mismatched locktime types -- tx locktime "+
 			"%d, stack locktime %d", txLockTime, lockTime)
 		return scriptError(ErrUnsatisfiedLockTime, str)
 	}
 
-	if lockTime > txLockTime {
+	if lockTime&valueMask > txLockTime&valueMask {
 		str := fmt.Sprintf("locktime requirement not satisfied -- "+
 			"locktime is greater than the transaction locktime: "+
 			"%d > %d", lockTime, txLockTime)
@@ -1086,11 +1100,9 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(ErrNegativeLockTime, str)
 	}
 
-	// The lock time field of a transaction is either a block height at
-	// which the transaction is finalized or a timestamp depending on if the
-	// value is before the txscript.LockTimeThreshold.  When it is under the
-	// threshold it is a block height.
-	err = verifyLockTime(int64(vm.tx.LockTime), LockTimeThreshold,
+	// Handshake locktimes use bit 31 to distinguish time locks from height
+	// locks instead of Bitcoin's threshold.
+	err = verifyLockTime(int64(vm.tx.LockTime), LockTimeFlag, LockTimeMask,
 		int64(lockTime))
 	if err != nil {
 		return err
@@ -1192,7 +1204,8 @@ func opcodeCheckSequenceVerify(op *opcode, data []byte, vm *Engine) error {
 	lockTimeMask := int64(wire.SequenceLockTimeIsSeconds |
 		wire.SequenceLockTimeMask)
 	return verifyLockTime(txSequence&lockTimeMask,
-		wire.SequenceLockTimeIsSeconds, sequence&lockTimeMask)
+		wire.SequenceLockTimeIsSeconds, wire.SequenceLockTimeMask,
+		sequence&lockTimeMask)
 }
 
 // opcodeToAltStack removes the top item from the main data stack and pushes it
@@ -1941,6 +1954,68 @@ func opcodeHash256(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	vm.dstack.PushByteArray(chainhash.DoubleHashB(buf))
+	return nil
+}
+
+// opcodeBlake160 treats the top item of the data stack as raw bytes and
+// replaces it with blake2b-160(data).
+//
+// Stack transformation: [... x1] -> [... blake2b-160(x1)]
+func opcodeBlake160(op *opcode, data []byte, vm *Engine) error {
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	hasher, err := blake2b.New(20, nil)
+	if err != nil {
+		panic("invalid blake2b-160 size")
+	}
+	vm.dstack.PushByteArray(calcHash(buf, hasher))
+	return nil
+}
+
+// opcodeBlake256 treats the top item of the data stack as raw bytes and
+// replaces it with blake2b-256(data).
+//
+// Stack transformation: [... x1] -> [... blake2b-256(x1)]
+func opcodeBlake256(op *opcode, data []byte, vm *Engine) error {
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	hash := blake2b.Sum256(buf)
+	vm.dstack.PushByteArray(hash[:])
+	return nil
+}
+
+// opcodeSha3 treats the top item of the data stack as raw bytes and replaces
+// it with sha3-256(data).
+//
+// Stack transformation: [... x1] -> [... sha3-256(x1)]
+func opcodeSha3(op *opcode, data []byte, vm *Engine) error {
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	hash := xsha3.Sum256(buf)
+	vm.dstack.PushByteArray(hash[:])
+	return nil
+}
+
+// opcodeKeccak treats the top item of the data stack as raw bytes and replaces
+// it with keccak-256(data).
+//
+// Stack transformation: [... x1] -> [... keccak-256(x1)]
+func opcodeKeccak(op *opcode, data []byte, vm *Engine) error {
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	vm.dstack.PushByteArray(calcHash(buf, xsha3.NewLegacyKeccak256()))
 	return nil
 }
 

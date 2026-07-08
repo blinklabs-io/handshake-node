@@ -344,7 +344,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 //   - Generate 1 more block to reach the next state transition
 //   - Assert chain height is expected and state moved to ThresholdActive
 func TestBIP0009(t *testing.T) {
-	t.Skip("Skipping: integration test fails with merkle root mismatch after PoW hash change; needs Handshake-aware block generation")
+	t.Skip("Skipping: requires Handshake-specific versionbits fixtures; current test still assumes btcd-era deployment transition behavior")
 	t.Parallel()
 
 	testBIP0009(t, "dummy", chaincfg.DeploymentTestDummy)
@@ -371,7 +371,7 @@ func TestBIP0009(t *testing.T) {
 //   - Assert bit is set for block prior to state transition (ThresholdLockedIn)
 //   - Assert bit is NOT set for block at state transition (ThresholdActive)
 func TestBIP0009Mining(t *testing.T) {
-	t.Skip("Skipping: integration test requires Handshake-aware CPU miner block generation")
+	t.Skip("Skipping: requires Handshake-specific versionbits mining fixtures; current test still assumes btcd-era deployment transition behavior")
 	t.Parallel()
 
 	// Initialize the primary mining node with only the genesis block.

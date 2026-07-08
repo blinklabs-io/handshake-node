@@ -339,7 +339,8 @@ func BuildBasicFilter(block *wire.MsgBlock, prevOutKeys [][]byte) (*gcs.Filter, 
 }
 
 func isCommitmentOutput(txOut *wire.TxOut) bool {
-	if isRawNullDataScript(txOut.Address.Hash) {
+	if txOut.Address.Version == 31 ||
+		txOut.Covenant.Type == wire.CovenantRevoke {
 		return true
 	}
 
@@ -349,10 +350,6 @@ func isCommitmentOutput(txOut *wire.TxOut) bool {
 	}
 
 	return false
-}
-
-func isRawNullDataScript(script []byte) bool {
-	return txscript.GetScriptClass(script) == txscript.NullDataTy
 }
 
 // GetFilterHash returns the double-SHA256 of the filter.

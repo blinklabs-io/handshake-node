@@ -35,6 +35,88 @@ type nameUndoEntry struct {
 	state    *nameState
 }
 
+type nameRootCache struct {
+	rootNode  urkelNode
+	rootDirty bool
+}
+
+func newNameRootCache(dbTx database.Tx) (*nameRootCache, error) {
+	leaves, err := dbFetchNameLeaves(dbTx)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := &nameRootCache{}
+	cache.rootNode = buildUrkelRootTree(leaves)
+	return cache, nil
+}
+
+func (c *nameRootCache) applyView(view *nameBlockView) error {
+	for nameHash := range view.dirty {
+		ns := view.states[nameHash]
+		if ns == nil || ns.isNull() {
+			c.rootDirty = true
+			continue
+		}
+
+		serialized, err := ns.encode()
+		if err != nil {
+			return err
+		}
+		c.put(nameHash, serialized)
+	}
+	return nil
+}
+
+func (c *nameRootCache) applyUndo(entries []nameUndoEntry) error {
+	for _, entry := range entries {
+		if !entry.existed {
+			c.rootDirty = true
+			continue
+		}
+
+		serialized, err := entry.state.encode()
+		if err != nil {
+			return err
+		}
+		c.put(entry.nameHash, serialized)
+	}
+	return nil
+}
+
+func (c *nameRootCache) put(nameHash chainhash.Hash, serialized []byte) {
+	if c.rootDirty {
+		return
+	}
+	c.rootNode = insertUrkelRoot(c.rootNode, nameHash, serialized, 0)
+}
+
+func (c *nameRootCache) rebuildRoot(dbTx database.Tx) error {
+	leaves, err := dbFetchNameLeaves(dbTx)
+	if err != nil {
+		return err
+	}
+	c.rootNode = buildUrkelRootTree(leaves)
+	c.rootDirty = false
+	return nil
+}
+
+func (c *nameRootCache) root(dbTx database.Tx) (chainhash.Hash, error) {
+	if c.rootDirty {
+		if dbTx == nil {
+			return chainhash.Hash{}, AssertError("dirty name root cache " +
+				"requires a database transaction")
+		}
+		if err := c.rebuildRoot(dbTx); err != nil {
+			return chainhash.Hash{}, err
+		}
+	}
+	if c.rootNode == nil {
+		return chainhash.Hash{}, nil
+	}
+	return c.rootNode.hash(), nil
+}
+
 func dbFetchNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
 	rootBytes := dbTx.Metadata().Get(nameRootKeyName)
 	if rootBytes == nil {
@@ -50,6 +132,17 @@ func dbFetchNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
 	var root chainhash.Hash
 	copy(root[:], rootBytes)
 	return root, nil
+}
+
+// NameRoot returns the currently committed Urkel name tree root.
+func (b *BlockChain) NameRoot() (chainhash.Hash, error) {
+	var root chainhash.Hash
+	err := b.db.View(func(dbTx database.Tx) error {
+		var err error
+		root, err = dbFetchNameRoot(dbTx)
+		return err
+	})
+	return root, err
 }
 
 func dbPutNameRoot(dbTx database.Tx, root chainhash.Hash) error {
@@ -372,15 +465,12 @@ func dbCalcNameTree(dbTx database.Tx) ([]urkelLeaf, chainhash.Hash, error) {
 	return leaves, calcUrkelRoot(leaves), nil
 }
 
-func dbStoreCurrentNameSnapshot(dbTx database.Tx) (chainhash.Hash, error) {
-	leaves, root, err := dbCalcNameTree(dbTx)
+func dbStoreCurrentNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
+	_, root, err := dbCalcNameTree(dbTx)
 	if err != nil {
 		return chainhash.Hash{}, err
 	}
 	if err := dbPutNameRoot(dbTx, root); err != nil {
-		return chainhash.Hash{}, err
-	}
-	if err := dbPutNameSnapshot(dbTx, root, leaves); err != nil {
 		return chainhash.Hash{}, err
 	}
 	return root, nil

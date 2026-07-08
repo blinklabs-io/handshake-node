@@ -102,6 +102,7 @@ type config struct {
 	AddrIndex            bool          `long:"addrindex" description:"Maintain a full address-based transaction index which makes the searchrawtransactions RPC available"`
 	AgentBlacklist       []string      `long:"agentblacklist" description:"A comma separated list of user-agent substrings which will cause handshake-node to reject any peers whose user-agent contains any of the blacklisted substrings."`
 	AgentWhitelist       []string      `long:"agentwhitelist" description:"A comma separated list of user-agent substrings which will cause handshake-node to require all peers' user-agents to contain one of the whitelisted substrings. The blacklist is applied before the whitelist, and an empty whitelist will allow all agents that do not fail the blacklist."`
+	AssumeValid          string        `long:"assumevalid" description:"Trusted block hash below which script validation may be skipped once the hash is known"`
 	BanDuration          time.Duration `long:"banduration" description:"How long to ban misbehaving peers.  Valid time units are {s, m, h}.  Minimum 1 second"`
 	BanThreshold         uint32        `long:"banthreshold" description:"Maximum allowed ban score before disconnecting and banning misbehaving peers."`
 	BlockMaxSize         uint32        `long:"blockmaxsize" description:"Maximum block size in bytes to be used when creating a block"`
@@ -181,6 +182,7 @@ type config struct {
 	oniondial            func(string, string, time.Duration) (net.Conn, error)
 	dial                 func(string, string, time.Duration) (net.Conn, error)
 	addCheckpoints       []chaincfg.Checkpoint
+	assumeValid          *chainhash.Hash
 	miningAddrs          []hnsutil.Address
 	minRelayTxFee        hnsutil.Amount
 	whitelists           []*net.IPNet
@@ -375,6 +377,18 @@ func parseCheckpoints(checkpointStrings []string) ([]chaincfg.Checkpoint, error)
 		checkpoints[i] = checkpoint
 	}
 	return checkpoints, nil
+}
+
+func parseAssumeValid(assumeValid string) (*chainhash.Hash, error) {
+	if assumeValid == "" {
+		return nil, nil
+	}
+	hash, err := chainhash.NewHashFromStr(assumeValid)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse assumevalid %q due "+
+			"to malformed hash", assumeValid)
+	}
+	return hash, nil
 }
 
 // fileExists reports whether the named file or directory exists.
@@ -963,6 +977,15 @@ func loadConfig() (*config, []string, error) {
 	cfg.addCheckpoints, err = parseCheckpoints(cfg.AddCheckpoints)
 	if err != nil {
 		str := "%s: Error parsing checkpoints: %v"
+		err := fmt.Errorf(str, funcName, err)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	cfg.assumeValid, err = parseAssumeValid(cfg.AssumeValid)
+	if err != nil {
+		str := "%s: Error parsing assumevalid: %v"
 		err := fmt.Errorf(str, funcName, err)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)

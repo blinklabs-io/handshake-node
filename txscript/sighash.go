@@ -279,7 +279,7 @@ func calcWitnessSignatureHashRaw(subScript []byte, sigHashes *TxSigHashes,
 			// re-creation of the original p2pkh pk script.
 			w.Write([]byte{0x19})
 			w.Write([]byte{OP_DUP})
-			w.Write([]byte{OP_HASH160})
+			w.Write([]byte{OP_BLAKE160})
 			w.Write([]byte{OP_DATA_20})
 			w.Write(extractWitnessPubKeyHash(subScript))
 			w.Write([]byte{OP_EQUALVERIFY})

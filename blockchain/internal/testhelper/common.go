@@ -6,8 +6,8 @@ import (
 	"runtime"
 
 	"github.com/blinklabs-io/handshake-node/blockchain/internal/workmath"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -48,8 +48,7 @@ func CreateSpendTx(spend *SpendableOut, fee hnsutil.Amount) *wire.MsgTx {
 }
 
 // CreateCoinbaseTx returns a coinbase transaction paying an appropriate
-// subsidy based on the passed block height and the block subsidy.  The
-// coinbase signature script conforms to the requirements of version 2 blocks.
+// subsidy based on the passed block height and the block subsidy.
 func CreateCoinbaseTx(blockHeight int32, blockSubsidy int64) *wire.MsgTx {
 	extraNonce := uint64(0)
 	coinbaseScript, err := StandardCoinbaseScript(blockHeight, extraNonce)
@@ -58,6 +57,7 @@ func CreateCoinbaseTx(blockHeight int32, blockSubsidy int64) *wire.MsgTx {
 	}
 
 	tx := wire.NewMsgTx(1)
+	tx.LockTime = uint32(blockHeight)
 	tx.AddTxIn(&wire.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
@@ -150,7 +150,7 @@ func SolveBlock(header *wire.BlockHeader) bool {
 	// intended to be run as a goroutine.
 	targetDifficulty := workmath.CompactToBig(header.Bits)
 	quit := make(chan bool)
-	results := make(chan sbResult)
+	results := make(chan sbResult, runtime.NumCPU())
 	solver := func(hdr wire.BlockHeader, startNonce, stopNonce uint32) {
 		// We need to modify the nonce field of the header, so make sure
 		// we work with a copy of the original header.

@@ -129,7 +129,7 @@ func NewAddressPubKeyHash(pkHash []byte, net *chaincfg.Params) (Address, error) 
 }
 
 // NewAddressScriptHash constructs a version 0 Address from a 32-byte script
-// hash (the SHA-256 of the redeem script).  This is the Handshake equivalent
+// hash (the SHA3-256 of the redeem script).  This is the Handshake equivalent
 // of Bitcoin's P2WSH.
 func NewAddressScriptHash(scriptHash []byte, net *chaincfg.Params) (Address, error) {
 	if len(scriptHash) != 32 {

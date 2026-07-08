@@ -269,13 +269,11 @@ func (m *CPUMiner) solveBlock(msgBlock *wire.MsgBlock, blockHeight int32,
 				// Non-blocking select to fall through
 			}
 
-			// Update the nonce and hash the block header.  Each
-			// hash is actually a double sha256 (two hashes), so
-			// increment the number of hashes completed for each
-			// attempt accordingly.
+			// Update the nonce and hash the Handshake block header.
+			// Count one completed mining attempt per header hash.
 			header.Nonce = i
 			hash := header.BlockHash()
-			hashesCompleted += 2
+			hashesCompleted++
 
 			// The block is solved when the new block hash is less
 			// than the target difficulty.  Yay!

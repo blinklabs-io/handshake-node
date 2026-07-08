@@ -7,6 +7,7 @@ package mining
 import (
 	"bytes"
 	"container/heap"
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -70,6 +71,26 @@ type TxSource interface {
 	// HaveTransaction returns whether or not the passed transaction hash
 	// exists in the source pool.
 	HaveTransaction(hash *chainhash.Hash) bool
+}
+
+// CoinbaseProof describes a linked claim or airdrop proof to include in the
+// generated coinbase transaction.  The witness is added as an extra null-prevout
+// coinbase input, the output is added at the same index, and Fee is credited to
+// the primary miner payout output.
+type CoinbaseProof struct {
+	Witness []byte
+	Output  *wire.TxOut
+	Fee     int64
+}
+
+// CoinbaseProofSource is an optional extension implemented by transaction
+// sources that can supply claim or airdrop proofs for block templates.
+type CoinbaseProofSource interface {
+	CoinbaseProofs(nextBlockHeight int32) ([]CoinbaseProof, error)
+}
+
+type nameValidationView interface {
+	ApplyTransaction(*hnsutil.Tx, int32, int64, *blockchain.UtxoViewpoint) error
 }
 
 // txPrioItem houses a transaction along with extra information that allows the
@@ -206,17 +227,20 @@ type BlockTemplate struct {
 	// chain.
 	Height int32
 
+	// NameDeflationHeight is the active network height at which claim proof
+	// deflation rules begin. It is retained here so RPC template formatting
+	// can mirror hsd without depending on process-global network state.
+	NameDeflationHeight uint32
+
+	// CoinbaseProofs contains cloned claim and airdrop proofs included in the
+	// generated coinbase transaction.
+	CoinbaseProofs []CoinbaseProof
+
 	// ValidPayAddress indicates whether or not the template coinbase pays
 	// to an address or is redeemable by anyone.  See the documentation on
 	// NewBlockTemplate for details on which this can be useful to generate
 	// templates without a coinbase payment address.
 	ValidPayAddress bool
-
-	// WitnessCommitment is a commitment to the witness data (if any)
-	// within the block. This field will only be populted once segregated
-	// witness has been activated, and the block contains a transaction
-	// which has witness data.
-	WitnessCommitment []byte
 }
 
 // mergeUtxoView adds all of the entries in viewB to viewA.  The result is that
@@ -261,18 +285,31 @@ func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockH
 		// wire.Address only supports witness versions 0-16 (OP_0 through
 		// OP_16), whereas hnsutil.Address allows up to version 31.  Reject
 		// upfront rather than waiting for serialization to fail.
-		if addr.Version() > 16 {
+		version := addr.Version()
+		hash := addr.Hash()
+		if version > 16 {
 			return nil, fmt.Errorf("coinbase address version %d "+
-				"exceeds max supported wire version 16",
-				addr.Version())
+				"exceeds max supported wire version 16", version)
+		}
+		if version == txscript.TaprootWitnessVersion &&
+			len(hash) == 32 {
+
+			return nil, fmt.Errorf("coinbase address version %d "+
+				"with 32-byte hash is a taproot-shaped "+
+				"payout, which Handshake does not support",
+				version)
 		}
 		outputAddr = wire.Address{
-			Version: addr.Version(),
-			Hash:    addr.Hash(),
+			Version: version,
+			Hash:    hash,
 		}
 	}
 
 	tx := wire.NewMsgTx(wire.TxVersion)
+	// Handshake transaction IDs do not commit to witness data, so the
+	// coinbase height must also appear in non-witness serialization to keep
+	// coinbase txids unique across equal-subsidy blocks.
+	tx.LockTime = uint32(nextBlockHeight)
 	tx.AddTxIn(&wire.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
@@ -286,6 +323,142 @@ func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockH
 		Address: outputAddr,
 	})
 	return hnsutil.NewTx(tx), nil
+}
+
+func addCoinbaseProofs(coinbaseTx *hnsutil.Tx,
+	proofs []CoinbaseProof) (int64, error) {
+
+	msgTx := coinbaseTx.MsgTx()
+	var proofFees int64
+	seenProofs := make(map[chainhash.Hash]struct{}, len(proofs))
+	for i, proof := range proofs {
+		if err := ValidateCoinbaseProofShape(proof); err != nil {
+			return 0, fmt.Errorf("coinbase proof %d: %w", i, err)
+		}
+		proofHash := chainhash.HashH(proof.Witness)
+		if _, exists := seenProofs[proofHash]; exists {
+			return 0, fmt.Errorf("coinbase proof %d duplicates "+
+				"earlier proof witness", i)
+		}
+		seenProofs[proofHash] = struct{}{}
+		if proofFees > hnsutil.MaxDoo-proof.Fee {
+			return 0, fmt.Errorf("coinbase proof fees exceed max money")
+		}
+
+		nullHash := chainhash.Hash{}
+		msgTx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: *wire.NewOutPoint(&nullHash,
+				wire.MaxPrevOutIndex),
+			Sequence: wire.MaxTxInSequenceNum,
+			Witness: wire.TxWitness{
+				append([]byte(nil), proof.Witness...),
+			},
+		})
+		msgTx.AddTxOut(cloneCoinbaseProofOutput(proof.Output))
+		proofFees += proof.Fee
+	}
+
+	return proofFees, nil
+}
+
+// ValidateCoinbaseProofShape checks whether a coinbase proof has the covenant
+// layout required before it can be stored in the proof pool or mined.
+func ValidateCoinbaseProofShape(proof CoinbaseProof) error {
+	if proof.Output == nil {
+		return fmt.Errorf("missing output")
+	}
+	if proof.Output.Value < 0 {
+		return fmt.Errorf("has negative output value")
+	}
+	if proof.Fee < 0 {
+		return fmt.Errorf("has negative fee")
+	}
+
+	covenant := proof.Output.Covenant
+	switch covenant.Type {
+	case wire.CovenantNone:
+		if len(covenant.Items) != 0 {
+			return fmt.Errorf("NONE covenant has items")
+		}
+
+	case wire.CovenantClaim:
+		if len(covenant.Items) != 6 {
+			return fmt.Errorf("CLAIM covenant has %d items, want 6",
+				len(covenant.Items))
+		}
+		if len(covenant.Items[0]) != chainhash.HashSize {
+			return fmt.Errorf("CLAIM covenant has name hash length %d, "+
+				"want %d", len(covenant.Items[0]), chainhash.HashSize)
+		}
+		if len(covenant.Items[1]) != 4 {
+			return fmt.Errorf("CLAIM covenant has height length %d, want 4",
+				len(covenant.Items[1]))
+		}
+		if len(covenant.Items[2]) == 0 {
+			return fmt.Errorf("CLAIM covenant missing name")
+		}
+		nameHash := blockchain.HashName(covenant.Items[2])
+		if !bytes.Equal(covenant.Items[0], nameHash[:]) {
+			return fmt.Errorf("CLAIM covenant name hash does not match name")
+		}
+		if len(covenant.Items[3]) != 1 {
+			return fmt.Errorf("CLAIM covenant has flags length %d, want 1",
+				len(covenant.Items[3]))
+		}
+		if len(covenant.Items[4]) != chainhash.HashSize {
+			return fmt.Errorf("CLAIM covenant has commit hash length %d, "+
+				"want %d", len(covenant.Items[4]), chainhash.HashSize)
+		}
+		if len(covenant.Items[5]) != 4 {
+			return fmt.Errorf("CLAIM covenant has commit height length %d, "+
+				"want 4", len(covenant.Items[5]))
+		}
+
+	default:
+		return fmt.Errorf("has unsupported covenant type %d", covenant.Type)
+	}
+
+	return nil
+}
+
+func cloneCoinbaseProofOutput(output *wire.TxOut) *wire.TxOut {
+	return wire.NewTxOut(output.Value,
+		wire.Address{
+			Version: output.Address.Version,
+			Hash:    append([]byte(nil), output.Address.Hash...),
+		},
+		cloneCoinbaseProofCovenant(output.Covenant),
+	)
+}
+
+func cloneCoinbaseProofCovenant(covenant wire.Covenant) wire.Covenant {
+	items := make([][]byte, len(covenant.Items))
+	for i, item := range covenant.Items {
+		items[i] = append([]byte(nil), item...)
+	}
+	return wire.Covenant{
+		Type:  covenant.Type,
+		Items: items,
+	}
+}
+
+func cloneCoinbaseProof(proof CoinbaseProof) CoinbaseProof {
+	return CoinbaseProof{
+		Witness: append([]byte(nil), proof.Witness...),
+		Output:  cloneCoinbaseProofOutput(proof.Output),
+		Fee:     proof.Fee,
+	}
+}
+
+func cloneCoinbaseProofs(proofs []CoinbaseProof) []CoinbaseProof {
+	if len(proofs) == 0 {
+		return nil
+	}
+	cloned := make([]CoinbaseProof, len(proofs))
+	for i := range proofs {
+		cloned[i] = cloneCoinbaseProof(proofs[i])
+	}
+	return cloned
 }
 
 // spendTransaction updates the passed view by marking the inputs to the passed
@@ -355,6 +528,8 @@ type BlkTmplGenerator struct {
 	timeSource  blockchain.MedianTimeSource
 	sigCache    *txscript.SigCache
 	hashCache   *txscript.HashCache
+
+	newNameValidationView func() (nameValidationView, error)
 }
 
 // NewBlkTmplGenerator returns a new block template generator for the given
@@ -377,7 +552,17 @@ func NewBlkTmplGenerator(policy *Policy, params *chaincfg.Params,
 		timeSource:  timeSource,
 		sigCache:    sigCache,
 		hashCache:   hashCache,
+		newNameValidationView: func() (nameValidationView, error) {
+			return chain.NewNameValidationView()
+		},
 	}
+}
+
+func (g *BlkTmplGenerator) nameValidationView() (nameValidationView, error) {
+	if g.newNameValidationView != nil {
+		return g.newNameValidationView()
+	}
+	return g.chain.NewNameValidationView()
 }
 
 // NewBlockTemplate returns a new block template that is ready to be solved
@@ -446,6 +631,7 @@ func (g *BlkTmplGenerator) NewBlockTemplate(payToAddress hnsutil.Address) (*Bloc
 	// Extend the most recently known best block.
 	best := g.chain.BestSnapshot()
 	nextBlockHeight := best.Height + 1
+	parentTime := g.chain.BestBlockTimestamp().Unix()
 
 	// Create a standard coinbase transaction paying to the provided
 	// address.  NOTE: The coinbase value will be updated to include the
@@ -466,6 +652,19 @@ func (g *BlkTmplGenerator) NewBlockTemplate(payToAddress hnsutil.Address) (*Bloc
 		return nil, err
 	}
 	coinbaseSigOpCost := int64(blockchain.CountSigOps(coinbaseTx)) * blockchain.WitnessScaleFactor
+	var coinbaseProofFees int64
+	var coinbaseProofs []CoinbaseProof
+	if proofSource, ok := g.txSource.(CoinbaseProofSource); ok {
+		proofs, err := proofSource.CoinbaseProofs(nextBlockHeight)
+		if err != nil {
+			return nil, err
+		}
+		coinbaseProofFees, err = addCoinbaseProofs(coinbaseTx, proofs)
+		if err != nil {
+			return nil, err
+		}
+		coinbaseProofs = cloneCoinbaseProofs(proofs)
+	}
 
 	// Get the current source transactions and create a priority queue to
 	// hold the transactions which are ready for inclusion into a block
@@ -484,6 +683,10 @@ func (g *BlkTmplGenerator) NewBlockTemplate(payToAddress hnsutil.Address) (*Bloc
 	blockTxns := make([]*hnsutil.Tx, 0, len(sourceTxns))
 	blockTxns = append(blockTxns, coinbaseTx)
 	blockUtxos := blockchain.NewUtxoViewpoint()
+	nameView, err := g.nameValidationView()
+	if err != nil {
+		return nil, err
+	}
 
 	// dependers is used to track transactions which depend on another
 	// transaction in the source pool.  This, in conjunction with the
@@ -598,20 +801,19 @@ mempoolLoop:
 	// transaction.
 	blockWeight := uint32((blockHeaderOverhead * blockchain.WitnessScaleFactor) +
 		blockchain.GetTransactionWeight(coinbaseTx))
+	if len(coinbaseProofs) > 0 && blockWeight >= g.policy.BlockMaxWeight {
+		return nil, fmt.Errorf("coinbase proofs exceed max block weight")
+	}
 	blockSigOpCost := coinbaseSigOpCost
 	totalFees := int64(0)
+	if len(coinbaseProofs) > 0 {
+		if err := nameView.ApplyTransaction(coinbaseTx, nextBlockHeight,
+			parentTime, blockUtxos); err != nil {
 
-	// Query the version bits state to see if segwit has been activated, if
-	// so then this means that we'll include any transactions with witness
-	// data in the mempool, and also add the witness commitment as an
-	// OP_RETURN output in the coinbase transaction.
-	segwitState, err := g.chain.ThresholdState(chaincfg.DeploymentSegwit)
-	if err != nil {
-		return nil, err
+			return nil, fmt.Errorf("coinbase proof name validation: %w",
+				err)
+		}
 	}
-	segwitActive := segwitState == blockchain.ThresholdActive
-
-	witnessIncluded := false
 
 	// Choose which transactions make it into the block.
 	for priorityQueue.Len() > 0 {
@@ -619,44 +821,6 @@ mempoolLoop:
 		// depending on the sort order) transaction.
 		prioItem := heap.Pop(priorityQueue).(*txPrioItem)
 		tx := prioItem.tx
-
-		switch {
-		// If segregated witness has not been activated yet, then we
-		// shouldn't include any witness transactions in the block.
-		case !segwitActive && tx.HasWitness():
-			continue
-
-		// Otherwise, Keep track of if we've included a transaction
-		// with witness data or not. If so, then we'll need to include
-		// the witness commitment as the last output in the coinbase
-		// transaction.
-		case segwitActive && !witnessIncluded && tx.HasWitness():
-			// If we're about to include a transaction bearing
-			// witness data, then we'll also need to include a
-			// witness commitment in the coinbase transaction.
-			// Therefore, we account for the additional weight
-			// within the block with a model coinbase tx with a
-			// witness commitment.
-			coinbaseCopy := hnsutil.NewTx(coinbaseTx.MsgTx().Copy())
-			coinbaseCopy.MsgTx().TxIn[0].Witness = [][]byte{
-				bytes.Repeat([]byte("a"),
-					blockchain.CoinbaseWitnessDataLen),
-			}
-			coinbaseCopy.MsgTx().AddTxOut(&wire.TxOut{
-				Address: wire.Address{}, // witness commitment placeholder
-			})
-
-			// In order to accurately account for the weight
-			// addition due to this coinbase transaction, we'll add
-			// the difference of the transaction before and after
-			// the addition of the commitment to the block weight.
-			weightDiff := blockchain.GetTransactionWeight(coinbaseCopy) -
-				blockchain.GetTransactionWeight(coinbaseTx)
-
-			blockWeight += uint32(weightDiff)
-
-			witnessIncluded = true
-		}
 
 		// Grab any transactions which depend on this one.
 		deps := dependers[*tx.Hash()]
@@ -676,7 +840,7 @@ mempoolLoop:
 		// Enforce maximum signature operation cost per block.  Also
 		// check for overflow.
 		sigOpCost, err := blockchain.GetSigOpCost(tx, false,
-			blockUtxos, true, segwitActive)
+			blockUtxos, true, true)
 		if err != nil {
 			log.Tracef("Skipping tx %s due to error in "+
 				"GetSigOpCost: %v", tx.Hash(), err)
@@ -754,6 +918,14 @@ mempoolLoop:
 			logSkippedDeps(tx, deps)
 			continue
 		}
+		err = nameView.ApplyTransaction(tx, nextBlockHeight,
+			parentTime, blockUtxos)
+		if err != nil {
+			log.Tracef("Skipping tx %s due to error in "+
+				"ApplyTransaction: %v", tx.Hash(), err)
+			logSkippedDeps(tx, deps)
+			continue
+		}
 
 		// Spend the transaction inputs in the block utxo view and add
 		// an entry for it to ensure any transactions which reference
@@ -793,16 +965,18 @@ mempoolLoop:
 	blockWeight -= wire.MaxVarIntPayload -
 		(uint32(wire.VarIntSerializeSize(uint64(len(blockTxns)))) *
 			blockchain.WitnessScaleFactor)
-	coinbaseTx.MsgTx().TxOut[0].Value += totalFees
-	txFees[0] = -totalFees
-
-	// If segwit is active and we included transactions with witness data,
-	// then we'll need to include a commitment to the witness data in an
-	// OP_RETURN output within the coinbase transaction.
-	var witnessCommitment []byte
-	if witnessIncluded {
-		witnessCommitment = AddWitnessCommitment(coinbaseTx, blockTxns)
+	coinbaseExtra := totalFees
+	if coinbaseExtra > hnsutil.MaxDoo-coinbaseProofFees {
+		return nil, fmt.Errorf("coinbase extra value exceeds max money")
 	}
+	coinbaseExtra += coinbaseProofFees
+	if coinbaseTx.MsgTx().TxOut[0].Value > hnsutil.MaxDoo-coinbaseExtra {
+		return nil, fmt.Errorf("coinbase payout exceeds max money")
+	}
+	coinbaseTx.MsgTx().TxOut[0].Value += coinbaseExtra
+	coinbaseTx = hnsutil.NewTx(coinbaseTx.MsgTx())
+	blockTxns[0] = coinbaseTx
+	txFees[0] = -totalFees
 
 	// Calculate the required difficulty for the block.  The timestamp
 	// is potentially adjusted to ensure it comes after the median time of
@@ -821,13 +995,20 @@ mempoolLoop:
 	}
 
 	// Create a new block ready to be solved.
+	nameRoot, err := g.chain.NameRoot()
+	if err != nil {
+		return nil, err
+	}
+
 	var msgBlock wire.MsgBlock
 	msgBlock.Header = wire.BlockHeader{
-		Version:    nextBlockVersion,
-		PrevBlock:  best.Hash,
-		MerkleRoot: blockchain.CalcMerkleRoot(blockTxns, false),
-		Timestamp:  ts,
-		Bits:       reqDifficulty,
+		Version:     nextBlockVersion,
+		PrevBlock:   best.Hash,
+		MerkleRoot:  blockchain.CalcMerkleRoot(blockTxns, false),
+		NameRoot:    nameRoot,
+		WitnessRoot: blockchain.CalcMerkleRoot(blockTxns, true),
+		Timestamp:   ts,
+		Bits:        reqDifficulty,
 	}
 	for _, tx := range blockTxns {
 		if err := msgBlock.AddTransaction(tx.MsgTx()); err != nil {
@@ -850,62 +1031,14 @@ mempoolLoop:
 		blockWeight, blockchain.CompactToBig(msgBlock.Header.Bits))
 
 	return &BlockTemplate{
-		Block:             &msgBlock,
-		Fees:              txFees,
-		SigOpCosts:        txSigOpCosts,
-		Height:            nextBlockHeight,
-		ValidPayAddress:   payToAddress != nil,
-		WitnessCommitment: witnessCommitment,
+		Block:               &msgBlock,
+		Fees:                txFees,
+		SigOpCosts:          txSigOpCosts,
+		Height:              nextBlockHeight,
+		NameDeflationHeight: g.chainParams.NameDeflationHeight,
+		CoinbaseProofs:      coinbaseProofs,
+		ValidPayAddress:     payToAddress != nil,
 	}, nil
-}
-
-// AddWitnessCommitment adds the witness commitment as an OP_RETURN output
-// within the coinbase tx.  The raw commitment is returned.
-func AddWitnessCommitment(coinbaseTx *hnsutil.Tx,
-	blockTxns []*hnsutil.Tx) []byte {
-
-	// The witness of the coinbase transaction MUST be exactly 32-bytes
-	// of all zeroes.
-	var witnessNonce [blockchain.CoinbaseWitnessDataLen]byte
-	coinbaseTx.MsgTx().TxIn[0].Witness = wire.TxWitness{witnessNonce[:]}
-
-	// Next, obtain the merkle root of a tree which consists of the
-	// wtxid of all transactions in the block. The coinbase
-	// transaction will have a special wtxid of all zeroes.
-	witnessMerkleRoot := blockchain.CalcMerkleRoot(blockTxns, true)
-
-	// The preimage to the witness commitment is:
-	// witnessRoot || coinbaseWitness
-	var witnessPreimage [64]byte
-	copy(witnessPreimage[:32], witnessMerkleRoot[:])
-	copy(witnessPreimage[32:], witnessNonce[:])
-
-	// The witness commitment itself is the double-sha256 of the
-	// witness preimage generated above. With the commitment
-	// generated, the witness script for the output is: OP_RETURN
-	// OP_DATA_36 {0xaa21a9ed || witnessCommitment}. The leading
-	// prefix is referred to as the "witness magic bytes".
-	witnessCommitment := chainhash.DoubleHashB(witnessPreimage[:])
-	witnessScript := append(blockchain.WitnessMagicBytes, witnessCommitment...)
-
-	// Finally, create the OP_RETURN carrying witness commitment
-	// output as an additional output within the coinbase.
-	// The witness script (magic bytes + commitment hash) is stored
-	// in the Address so that ExtractWitnessCommitment can locate it
-	// via Address.WitnessProgram().
-	commitmentOutput := &wire.TxOut{
-		Value: 0,
-		Address: wire.Address{
-			// Version 1 permits the 38-byte OP_RETURN commitment
-			// payload; version 0 is restricted to 20 or 32 bytes.
-			Version: 1,
-			Hash:    witnessScript,
-		},
-	}
-	coinbaseTx.MsgTx().TxOut = append(coinbaseTx.MsgTx().TxOut,
-		commitmentOutput)
-
-	return witnessCommitment
 }
 
 // UpdateBlockTime updates the timestamp in the header of the passed block to
@@ -933,44 +1066,17 @@ func (g *BlkTmplGenerator) UpdateBlockTime(msgBlock *wire.MsgBlock) error {
 	return nil
 }
 
-// UpdateExtraNonce updates the extra nonce in the coinbase script of the passed
-// block by regenerating the coinbase script with the passed value and block
-// height.  It also recalculates and updates the new merkle root that results
-// from changing the coinbase script.
+// UpdateExtraNonce updates the Handshake header extra nonce of the passed block.
+// The coinbase witness is intentionally left unchanged because Handshake
+// transaction IDs do not include witness data, so changing it would not alter
+// the header Merkle root or expand the mining search space.
 func (g *BlkTmplGenerator) UpdateExtraNonce(msgBlock *wire.MsgBlock, blockHeight int32, extraNonce uint64) error {
-	coinbaseScript, err := standardCoinbaseScript(blockHeight, extraNonce)
-	if err != nil {
-		return err
+	for i := range msgBlock.Header.ExtraNonce {
+		msgBlock.Header.ExtraNonce[i] = 0
 	}
-	if len(coinbaseScript) > blockchain.MaxCoinbaseScriptLen {
-		return fmt.Errorf("coinbase transaction script length "+
-			"of %d is out of range (min: %d, max: %d)",
-			len(coinbaseScript), blockchain.MinCoinbaseScriptLen,
-			blockchain.MaxCoinbaseScriptLen)
-	}
-	// In Handshake, the coinbase script goes in the witness.
-	// If AddWitnessCommitment has already placed a 32-byte witness nonce
-	// as the first element, we must preserve it and prepend the coinbase
-	// script rather than replacing the entire witness field.
-	existingWitness := msgBlock.Transactions[0].TxIn[0].Witness
-	if len(existingWitness) > 0 && len(existingWitness[0]) == blockchain.CoinbaseWitnessDataLen {
-		// Witness nonce is present (placed by AddWitnessCommitment).
-		// Keep the nonce as element [0] so that ValidateWitnessCommitment
-		// can locate it, and append the coinbase script after it.
-		msgBlock.Transactions[0].TxIn[0].Witness = append(
-			existingWitness, coinbaseScript)
-	} else {
-		msgBlock.Transactions[0].TxIn[0].Witness = [][]byte{coinbaseScript}
-	}
-
-	// TODO(davec): A hnsutil.Block should use saved in the state to avoid
-	// recalculating all of the other transaction hashes.
-	// block.Transactions[0].InvalidateCache()
-
-	// Recalculate the merkle root with the updated extra nonce.
-	block := hnsutil.NewBlock(msgBlock)
-	merkleRoot := blockchain.CalcMerkleRoot(block.Transactions(), false)
-	msgBlock.Header.MerkleRoot = merkleRoot
+	binary.LittleEndian.PutUint64(
+		msgBlock.Header.ExtraNonce[:8], extraNonce,
+	)
 	return nil
 }
 

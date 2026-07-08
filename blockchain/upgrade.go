@@ -775,8 +775,7 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 			}
 		}
 		rootExists := dbTx.Metadata().Get(nameRootKeyName) != nil
-		root, err := dbFetchNameRoot(dbTx)
-		if err != nil {
+		if _, err := dbFetchNameRoot(dbTx); err != nil {
 			return err
 		}
 		if !rootExists {
@@ -792,32 +791,12 @@ func (b *BlockChain) maybeUpgradeDbBuckets(interrupt <-chan struct{}) error {
 						"database; rebuild name state before upgrade",
 				}
 			}
-			if _, err := dbStoreCurrentNameSnapshot(dbTx); err != nil {
+			if _, err := dbStoreCurrentNameRoot(dbTx); err != nil {
 				return err
 			}
 			return nil
 		}
 
-		emptyRoot := chainhash.Hash{}
-		if root == emptyRoot {
-			if err := dbPutNameSnapshot(dbTx, root, nil); err != nil {
-				return err
-			}
-		}
-
-		leaves, currentRoot, err := dbCalcNameTree(dbTx)
-		if err != nil {
-			return err
-		}
-		if currentRoot == root {
-			if err := dbPutNameSnapshot(dbTx, root, leaves); err != nil {
-				return err
-			}
-		} else if err := dbPutNameSnapshot(dbTx, currentRoot,
-			leaves); err != nil {
-
-			return err
-		}
 		return nil
 	})
 	if err != nil {

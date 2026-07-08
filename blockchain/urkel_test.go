@@ -7,6 +7,7 @@ package blockchain
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
@@ -239,9 +240,15 @@ func TestFetchNameProofUsesStoredSnapshot(t *testing.T) {
 		if err := dbPutNameState(dbTx, ns); err != nil {
 			return err
 		}
-		var err error
-		oldRoot, err = dbStoreCurrentNameSnapshot(dbTx)
+		leaves, root, err := dbCalcNameTree(dbTx)
 		if err != nil {
+			return err
+		}
+		oldRoot = root
+		if err := dbPutNameRoot(dbTx, oldRoot); err != nil {
+			return err
+		}
+		if err := dbPutNameSnapshot(dbTx, oldRoot, leaves); err != nil {
 			return err
 		}
 
@@ -250,7 +257,7 @@ func TestFetchNameProofUsesStoredSnapshot(t *testing.T) {
 		if err := dbPutNameState(dbTx, updated); err != nil {
 			return err
 		}
-		_, err = dbStoreCurrentNameSnapshot(dbTx)
+		_, err = dbStoreCurrentNameRoot(dbTx)
 		return err
 	})
 	if err != nil {
@@ -270,6 +277,139 @@ func TestFetchNameProofUsesStoredSnapshot(t *testing.T) {
 	}
 	if !bytes.Equal(got, oldValue) {
 		t.Fatalf("snapshot proof value = %x, want %x", got, oldValue)
+	}
+}
+
+func TestStoreCurrentNameRootDoesNotWriteSnapshot(t *testing.T) {
+	chain, teardown, err := chainSetup("namerootonly",
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	key := hashName([]byte("alpha"))
+	ns := newNameState(key)
+	ns.set([]byte("alpha"), 1)
+	ns.data = []byte("resource")
+
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		if err := dbPutNameState(dbTx, ns); err != nil {
+			return err
+		}
+		root, err := dbStoreCurrentNameRoot(dbTx)
+		if err != nil {
+			return err
+		}
+
+		bucket := dbTx.Metadata().Bucket(nameSnapshotBucketName)
+		if bucket == nil {
+			return fmt.Errorf("name snapshot bucket missing")
+		}
+		if snapshot := bucket.Get(root[:]); snapshot != nil {
+			return fmt.Errorf("dbStoreCurrentNameRoot wrote snapshot of %d bytes",
+				len(snapshot))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("db update: %v", err)
+	}
+}
+
+func TestNameRootCacheTracksViewChanges(t *testing.T) {
+	chain, teardown, err := chainSetup("namerootcache",
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	key := hashName([]byte("alpha"))
+	ns := newNameState(key)
+	ns.set([]byte("alpha"), 1)
+	ns.data = []byte("old-resource")
+
+	updated := ns.clone()
+	updated.data = []byte("new-resource")
+	updatedValue, err := updated.encode()
+	if err != nil {
+		t.Fatalf("updated encode: %v", err)
+	}
+	wantUpdatedRoot := calcUrkelRoot([]urkelLeaf{{
+		key:   key,
+		value: updatedValue,
+	}})
+
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		if err := dbPutNameState(dbTx, ns); err != nil {
+			return err
+		}
+
+		cache, err := newNameRootCache(dbTx)
+		if err != nil {
+			return err
+		}
+		_, dbRoot, err := dbCalcNameTree(dbTx)
+		if err != nil {
+			return err
+		}
+		got, err := cache.root(dbTx)
+		if err != nil {
+			return err
+		}
+		if got != dbRoot {
+			return fmt.Errorf("initial cached root = %v, want %v",
+				got, dbRoot)
+		}
+
+		view := &nameBlockView{
+			states: map[chainhash.Hash]*nameState{
+				key: updated,
+			},
+			dirty: map[chainhash.Hash]struct{}{
+				key: {},
+			},
+		}
+		if err := cache.applyView(view); err != nil {
+			return err
+		}
+		got, err = cache.root(dbTx)
+		if err != nil {
+			return err
+		}
+		if got != wantUpdatedRoot {
+			return fmt.Errorf("updated cached root = %v, want %v",
+				got, wantUpdatedRoot)
+		}
+
+		deleted := newNameState(key)
+		if err := dbPutNameState(dbTx, deleted); err != nil {
+			return err
+		}
+		deleteView := &nameBlockView{
+			states: map[chainhash.Hash]*nameState{
+				key: deleted,
+			},
+			dirty: map[chainhash.Hash]struct{}{
+				key: {},
+			},
+		}
+		if err := cache.applyView(deleteView); err != nil {
+			return err
+		}
+		got, err = cache.root(dbTx)
+		if err != nil {
+			return err
+		}
+		if got != (chainhash.Hash{}) {
+			return fmt.Errorf("deleted cached root = %v, want empty root",
+				got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("db update: %v", err)
 	}
 }
 

@@ -195,18 +195,15 @@ const (
 	// the stack.
 	ErrScriptValidation
 
-	// ErrUnexpectedWitness indicates that a block includes transactions
-	// with witness data, but doesn't also have a witness commitment within
-	// the coinbase transaction.
+	// ErrUnexpectedWitness is retained for legacy reject-code compatibility.
 	ErrUnexpectedWitness
 
-	// ErrInvalidWitnessCommitment indicates that a block's witness
-	// commitment is not well formed.
+	// ErrInvalidWitnessCommitment is retained for legacy reject-code
+	// compatibility.
 	ErrInvalidWitnessCommitment
 
-	// ErrWitnessCommitmentMismatch indicates that the witness commitment
-	// included in the block's coinbase transaction doesn't match the
-	// manually computed witness commitment.
+	// ErrWitnessCommitmentMismatch is retained for legacy reject-code
+	// compatibility.
 	ErrWitnessCommitmentMismatch
 
 	// ErrPreviousBlockUnknown indicates that the previous block is not known.

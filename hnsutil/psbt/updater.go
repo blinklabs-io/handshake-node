@@ -12,7 +12,7 @@ package psbt
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/sha3"
 
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
@@ -124,7 +124,11 @@ func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 		// redeemScript.
 		if pInput.RedeemScript != nil {
 			outIndex := u.Upsbt.UnsignedTx.TxIn[inIndex].PreviousOutPoint.Index
-			scriptPubKey := pInput.NonWitnessUtxo.TxOut[outIndex].PkScript
+			if outIndex >= uint32(len(pInput.NonWitnessUtxo.TxOut)) {
+				return ErrInvalidPrevOutNonWitnessTransaction
+			}
+			scriptPubKey := txOutPkScript(
+				pInput.NonWitnessUtxo.TxOut[outIndex])
 			scriptHash := hnsutil.Hash160(pInput.RedeemScript)
 
 			scriptHashScript, err := txscript.NewScriptBuilder().
@@ -151,7 +155,7 @@ func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 	// checked the script hash. But that should be a negligible performance
 	// penalty.
 	if pInput.WitnessUtxo != nil {
-		scriptPubKey := pInput.WitnessUtxo.PkScript
+		scriptPubKey := txOutPkScript(pInput.WitnessUtxo)
 
 		var script []byte
 		if pInput.RedeemScript != nil {
@@ -181,7 +185,7 @@ func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 		// witnessScript field is present, this will be signed as
 		// p2wkh.
 		if pInput.WitnessScript != nil {
-			witnessScriptHash := sha256.Sum256(pInput.WitnessScript)
+			witnessScriptHash := sha3.Sum256(pInput.WitnessScript)
 			witnessScriptHashScript, err := txscript.NewScriptBuilder().
 				AddOp(txscript.OP_0).
 				AddData(witnessScriptHash[:]).
@@ -195,7 +199,7 @@ func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 			}
 		} else {
 			// Otherwise, this is a p2wkh input.
-			pubkeyHash := hnsutil.Hash160(pubkey)
+			pubkeyHash := hnsutil.Blake160(pubkey)
 			pubkeyHashScript, err := txscript.NewScriptBuilder().
 				AddOp(txscript.OP_0).
 				AddData(pubkeyHash).

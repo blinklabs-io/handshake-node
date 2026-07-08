@@ -18,11 +18,11 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/hnsutil/base58"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
+	"github.com/blinklabs-io/handshake-node/hnsutil/base58"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 const (
@@ -562,7 +562,7 @@ func (k *ExtendedKey) Address(net *chaincfg.Params) (hnsutil.Address, error) {
 	if len(pubKey) == 0 {
 		return nil, errors.New("extended key has no public key material")
 	}
-	pkHash := hnsutil.Hash160(pubKey)
+	pkHash := hnsutil.Blake160(pubKey)
 	return hnsutil.NewAddressPubKeyHash(pkHash, net)
 }
 

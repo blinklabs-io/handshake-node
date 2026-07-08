@@ -156,11 +156,11 @@ func isPubKeyScript(script []byte) bool {
 // extractPubKeyHash extracts the public key hash from the passed script if it
 // is a standard pay-to-pubkey-hash script.  It will return nil otherwise.
 func extractPubKeyHash(script []byte) []byte {
-	// A pay-to-pubkey-hash script is of the form:
-	//  OP_DUP OP_HASH160 OP_DATA_20 <20-byte hash> OP_EQUALVERIFY OP_CHECKSIG
+	// A Handshake pay-to-pubkey-hash script is of the form:
+	//  OP_DUP OP_BLAKE160 OP_DATA_20 <20-byte hash> OP_EQUALVERIFY OP_CHECKSIG
 	if len(script) == 25 &&
 		script[0] == OP_DUP &&
-		script[1] == OP_HASH160 &&
+		script[1] == OP_BLAKE160 &&
 		script[2] == OP_DATA_20 &&
 		script[23] == OP_EQUALVERIFY &&
 		script[24] == OP_CHECKSIG {
@@ -795,7 +795,7 @@ func CalcMultiSigStats(script []byte) (int, int, error) {
 // output to a 20-byte pubkey hash. It is expected that the input is a valid
 // hash.
 func payToPubKeyHashScript(pubKeyHash []byte) ([]byte, error) {
-	return NewScriptBuilder().AddOp(OP_DUP).AddOp(OP_HASH160).
+	return NewScriptBuilder().AddOp(OP_DUP).AddOp(OP_BLAKE160).
 		AddData(pubKeyHash).AddOp(OP_EQUALVERIFY).AddOp(OP_CHECKSIG).
 		Script()
 }

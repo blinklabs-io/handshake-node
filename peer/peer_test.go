@@ -844,6 +844,141 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 	}
 }
 
+func TestOutboundPeerAcceptsVerAckBeforeVersion(t *testing.T) {
+	type verackState struct {
+		id           int32
+		versionKnown bool
+		services     wire.ServiceFlag
+		lastBlock    int32
+	}
+	verack := make(chan verackState, 1)
+	peerCfg := &peer.Config{
+		Listeners: peer.MessageListeners{
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
+				verack <- verackState{
+					id:           p.ID(),
+					versionKnown: p.VersionKnown(),
+					services:     p.Services(),
+					lastBlock:    p.LastBlock(),
+				}
+			},
+		},
+		UserAgentName:    "peer",
+		UserAgentVersion: "1.0",
+		ChainParams:      &chaincfg.MainNetParams,
+		Services:         wire.SFNodeNetwork,
+		AllowSelfConns:   true,
+	}
+
+	localConn, remoteConn := pipe(
+		&conn{laddr: "10.0.0.1:12038", raddr: "10.0.0.2:12038"},
+		&conn{laddr: "10.0.0.2:12038", raddr: "10.0.0.1:12038"},
+	)
+
+	p, err := peer.NewOutboundPeer(peerCfg, "10.0.0.2:12038")
+	if err != nil {
+		t.Fatalf("NewOutboundPeer: unexpected err - %v", err)
+	}
+	p.AssociateConnection(localConn)
+	defer func() {
+		p.Disconnect()
+		p.WaitForDisconnect()
+	}()
+
+	outboundMessages := make(chan wire.HandshakeMessage)
+	go func() {
+		for {
+			_, msg, _, err := wire.ReadHandshakeMessageN(
+				remoteConn,
+				peerCfg.ChainParams.Net,
+			)
+			if err != nil {
+				close(outboundMessages)
+				return
+			}
+			outboundMessages <- msg
+		}
+	}()
+
+	select {
+	case msg := <-outboundMessages:
+		if _, ok := msg.(*wire.HnsMsgVersion); !ok {
+			t.Fatalf("expected version message, got %s", msg.Type())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("peer did not send version message")
+	}
+
+	if _, err := wire.WriteHnsMessageN(
+		remoteConn.Writer,
+		&wire.HnsMsgVerack{},
+		peerCfg.ChainParams.Net,
+	); err != nil {
+		t.Fatalf("WriteHnsMessageN verack: %v", err)
+	}
+
+	remoteNA := wire.NewNetAddressIPPort(
+		net.ParseIP("10.0.0.2"),
+		uint16(12038),
+		wire.SFNodeNetwork,
+	)
+	remoteVersionMsg := &wire.HnsMsgVersion{
+		Version:  wire.HnsProtocolVersion,
+		Services: uint64(peerCfg.Services),
+		Time:     uint64(time.Now().Unix()),
+		Remote:   wire.NewHnsNetAddress(remoteNA),
+		Agent:    wire.DefaultUserAgent,
+		Height:   123,
+	}
+	if _, err := wire.WriteHnsMessageN(
+		remoteConn.Writer,
+		remoteVersionMsg,
+		peerCfg.ChainParams.Net,
+	); err != nil {
+		t.Fatalf("WriteHnsMessageN version: %v", err)
+	}
+
+	select {
+	case msg := <-outboundMessages:
+		if _, ok := msg.(*wire.HnsMsgVerack); !ok {
+			t.Fatalf("expected verack message, got %s", msg.Type())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("peer did not send verack message")
+	}
+
+	select {
+	case state := <-verack:
+		if state.id == 0 {
+			t.Fatal("verack callback fired before peer ID assignment")
+		}
+		if !state.versionKnown {
+			t.Fatal("verack callback fired before version was known")
+		}
+		if state.services != wire.SFNodeNetwork {
+			t.Fatalf("verack callback services = %v, want %v",
+				state.services, wire.SFNodeNetwork)
+		}
+		if state.lastBlock != int32(remoteVersionMsg.Height) {
+			t.Fatalf("verack callback last block = %d, want %d",
+				state.lastBlock, remoteVersionMsg.Height)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("verack callback timeout")
+	}
+
+	if !p.VersionKnown() {
+		t.Fatal("peer version was not known")
+	}
+	if !p.VerAckReceived() {
+		t.Fatal("peer verack was not recorded")
+	}
+	if p.LastBlock() != int32(remoteVersionMsg.Height) {
+		t.Fatalf("peer last block = %d, want %d",
+			p.LastBlock(), remoteVersionMsg.Height)
+	}
+}
+
 // TestDuplicateVersionMsg ensures that receiving a version message after one
 // has already been received results in the peer being disconnected.
 func TestDuplicateVersionMsg(t *testing.T) {
