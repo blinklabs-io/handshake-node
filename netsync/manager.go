@@ -774,10 +774,19 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 			log.Infof("Rejected block %v from %s: %v", blockHash,
 				peer, err)
 			if shouldMarkRejectedBlockInvalid(ruleErr) {
-				limitAdd(sm.rejectedBlocks, *blockHash, maxRejectedBlocks)
-				if invalidateErr := sm.chain.InvalidateBlock(blockHash); invalidateErr != nil {
-					log.Debugf("Unable to mark rejected block %v invalid: %v",
-						blockHash, invalidateErr)
+				haveBlock, haveErr := sm.chain.HaveBlock(blockHash)
+				if haveErr != nil {
+					log.Debugf("Unable to determine whether rejected block %v "+
+						"has stored data: %v", blockHash, haveErr)
+				} else if haveBlock {
+					limitAdd(sm.rejectedBlocks, *blockHash, maxRejectedBlocks)
+					if invalidateErr := sm.chain.InvalidateBlock(blockHash); invalidateErr != nil {
+						log.Debugf("Unable to mark rejected block %v invalid: %v",
+							blockHash, invalidateErr)
+					}
+				} else {
+					log.Debugf("Rejected block %v did not store block data; "+
+						"leaving header valid for retry from other peers", blockHash)
 				}
 				state.syncCandidate = false
 				sm.resetRequestedBlocksForPeer(state)

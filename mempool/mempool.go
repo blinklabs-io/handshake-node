@@ -577,14 +577,16 @@ func (mp *TxPool) RemoveNameConflicts(tx *hnsutil.Tx) {
 	// Protect concurrent access.
 	mp.mtx.Lock()
 	for _, nameHash := range mutableNameActions(tx) {
-		conflict, ok := mp.nameActions[nameHash]
-		if !ok || conflict.Hash().IsEqual(txHash) {
-			continue
+		for {
+			conflict, ok := mp.nameActions[nameHash]
+			if !ok || conflict.Hash().IsEqual(txHash) {
+				break
+			}
+			if txSpendsTransaction(conflict, tx) {
+				break
+			}
+			mp.removeTransaction(conflict, true)
 		}
-		if txSpendsTransaction(conflict, tx) {
-			continue
-		}
-		mp.removeTransaction(conflict, true)
 	}
 	mp.mtx.Unlock()
 }
@@ -771,32 +773,9 @@ func coinbaseProofHash(proof mining.CoinbaseProof) (chainhash.Hash, error) {
 }
 
 func validateCoinbaseProofShape(proof mining.CoinbaseProof) error {
-	if proof.Output == nil {
-		return fmt.Errorf("coinbase proof missing output")
+	if err := mining.ValidateCoinbaseProofShape(proof); err != nil {
+		return fmt.Errorf("coinbase proof %w", err)
 	}
-	if proof.Output.Value < 0 {
-		return fmt.Errorf("coinbase proof has negative output value")
-	}
-	if proof.Fee < 0 {
-		return fmt.Errorf("coinbase proof has negative fee")
-	}
-
-	covenant := proof.Output.Covenant
-	switch covenant.Type {
-	case wire.CovenantNone:
-		if len(covenant.Items) != 0 {
-			return fmt.Errorf("coinbase proof NONE covenant has items")
-		}
-	case wire.CovenantClaim:
-		if len(covenant.Items) < 2 || len(covenant.Items[1]) != 4 {
-			return fmt.Errorf("coinbase proof CLAIM covenant " +
-				"missing height")
-		}
-	default:
-		return fmt.Errorf("coinbase proof has unsupported covenant type %d",
-			covenant.Type)
-	}
-
 	return nil
 }
 

@@ -234,11 +234,17 @@ func TestTxOutPkScript(t *testing.T) {
 	opReturnLikeTxOut := &wire.TxOut{
 		Address: wire.Address{Version: 0, Hash: opReturnLikeHash},
 	}
-	wantOpReturnLikeProgram := opReturnLikeTxOut.Address.WitnessProgram()
+	wantOpReturnLikeProgram := append([]byte{
+		txscript.OP_0,
+		byte(len(opReturnLikeHash)),
+	}, opReturnLikeHash...)
 	gotOpReturnLikeProgram := txOutPkScript(opReturnLikeTxOut)
 	if !bytes.Equal(gotOpReturnLikeProgram, wantOpReturnLikeProgram) {
 		t.Fatalf("unexpected OP_RETURN-like witness program: got %x want %x",
 			gotOpReturnLikeProgram, wantOpReturnLikeProgram)
+	}
+	if txOutIsUnspendable(opReturnLikeTxOut) {
+		t.Fatal("OP_RETURN-like witness program was treated as unspendable")
 	}
 
 	nullDataTxOut := &wire.TxOut{

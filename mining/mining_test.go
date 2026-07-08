@@ -83,9 +83,10 @@ func (s staticTestTxSource) CoinbaseProofs(int32) ([]CoinbaseProof, error) {
 }
 
 type rejectingNameView struct {
-	t         *testing.T
-	forbidden chainhash.Hash
-	applied   []chainhash.Hash
+	t            *testing.T
+	forbidden    chainhash.Hash
+	wantPrevTime int64
+	applied      []chainhash.Hash
 }
 
 func (v *rejectingNameView) ApplyTransaction(tx *hnsutil.Tx, height int32,
@@ -94,8 +95,12 @@ func (v *rejectingNameView) ApplyTransaction(tx *hnsutil.Tx, height int32,
 	v.t.Helper()
 
 	_ = height
-	_ = prevTime
 	_ = view
+
+	if v.wantPrevTime != 0 && prevTime != v.wantPrevTime {
+		v.t.Fatalf("name validation prevTime = %d, want %d",
+			prevTime, v.wantPrevTime)
+	}
 
 	txHash := tx.Hash()
 	if txHash.IsEqual(&v.forbidden) {
@@ -1055,8 +1060,9 @@ func TestNewBlockTemplateValidatesScriptsBeforeNameState(t *testing.T) {
 		txSource, chain, timeSource, sigCache, hashCache)
 
 	nameView := &rejectingNameView{
-		t:         t,
-		forbidden: *invalidSpend.Hash(),
+		t:            t,
+		forbidden:    *invalidSpend.Hash(),
+		wantPrevTime: chain.BestBlockTimestamp().Unix(),
 	}
 	generator.newNameValidationView = func() (nameValidationView, error) {
 		return nameView, nil
@@ -1160,6 +1166,41 @@ func TestNewBlockTemplateIncludesCoinbaseAirdropProof(t *testing.T) {
 	}
 
 	connectMiningTestTemplate(t, chain, template)
+}
+
+func TestNewBlockTemplateRejectsCoinbaseProofOverPolicyWeight(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	chain, timeSource, sigCache, hashCache, cleanup :=
+		newMiningTestChain(t, &params)
+	defer cleanup()
+
+	_, payAddr, _, _ := miningTestKeyAddress(t, &params)
+	proof, proofOutput, airdropFee := miningTestAirdropProof(t)
+	txSource := staticTestTxSource{
+		updated: time.Now(),
+		have:    make(map[chainhash.Hash]struct{}),
+		coinbaseProofs: []CoinbaseProof{{
+			Witness: proof,
+			Output:  proofOutput,
+			Fee:     int64(airdropFee),
+		}},
+	}
+	policy := Policy{
+		BlockMaxWeight: 1,
+		BlockMaxSize:   blockchain.MaxBlockBaseSize,
+	}
+	generator := NewBlkTmplGenerator(&policy, &params,
+		txSource, chain, timeSource, sigCache, hashCache)
+
+	_, err := generator.NewBlockTemplate(payAddr)
+	if err == nil {
+		t.Fatal("NewBlockTemplate accepted overweight coinbase proofs")
+	}
+	if !strings.Contains(err.Error(), "coinbase proofs exceed max block weight") {
+		t.Fatalf("NewBlockTemplate error = %v", err)
+	}
 }
 
 func TestAddCoinbaseProofsRejectsDuplicateWitness(t *testing.T) {

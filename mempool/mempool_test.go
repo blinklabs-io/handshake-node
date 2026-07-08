@@ -819,9 +819,10 @@ func TestRemoveNameConflicts(t *testing.T) {
 	}
 	tc := &testContext{t, harness}
 
-	fundingTx := tc.addCoinbaseTx(2)
+	fundingTx := tc.addCoinbaseTx(3)
 	inputA := txOutToSpendableOut(fundingTx, 0)
 	inputB := txOutToSpendableOut(fundingTx, 1)
+	inputC := txOutToSpendableOut(fundingTx, 2)
 
 	openA, err := harness.CreateSignedTxWithCovenant(
 		inputA, 1000, mempoolOpenCovenant("phasefive"), false,
@@ -837,8 +838,20 @@ func TestRemoveNameConflicts(t *testing.T) {
 	}
 	testPoolMembership(tc, openA, false, true)
 
-	minedOpen, err := harness.CreateSignedTxWithCovenant(
+	staleOpen, err := harness.CreateSignedTxWithCovenant(
 		inputB, 1000, mempoolOpenCovenant("phasefive"), false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create second stale OPEN transaction: %v", err)
+	}
+	harness.txPool.mtx.Lock()
+	harness.txPool.addTransaction(blockchain.NewUtxoViewpoint(),
+		staleOpen, 0, 0)
+	harness.txPool.mtx.Unlock()
+	testPoolMembership(tc, staleOpen, false, true)
+
+	minedOpen, err := harness.CreateSignedTxWithCovenant(
+		inputC, 1000, mempoolOpenCovenant("phasefive"), false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create mined OPEN transaction: %v", err)
@@ -846,6 +859,7 @@ func TestRemoveNameConflicts(t *testing.T) {
 
 	harness.txPool.RemoveNameConflicts(minedOpen)
 	testPoolMembership(tc, openA, false, false)
+	testPoolMembership(tc, staleOpen, false, false)
 	testPoolMembership(tc, minedOpen, false, false)
 
 	nameHash := blockchain.HashName([]byte("phasefive"))
@@ -1275,6 +1289,22 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	}); err != nil {
 
 		t.Fatalf("AddCoinbaseProof claim: %v", err)
+	}
+
+	malformedClaim := wire.NewTxOut(50, addr, wire.Covenant{
+		Type: wire.CovenantClaim,
+		Items: [][]byte{
+			mempoolHashItem("phasefive"),
+			mempoolU32Item(11),
+		},
+	})
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x06},
+		Output:  malformedClaim,
+		Fee:     5,
+	}); err == nil {
+
+		t.Fatal("AddCoinbaseProof malformed claim: expected error")
 	}
 
 	proofs, err = mp.CoinbaseProofs(10)

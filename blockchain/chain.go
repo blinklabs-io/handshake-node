@@ -1274,6 +1274,7 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) connectBestChain(node *blockNode, block *hnsutil.Block, flags BehaviorFlags) (bool, error) {
 	fastAdd := flags&BFFastAdd == BFFastAdd
+	var err error
 
 	flushIndexState := func() {
 		// Intentionally ignore errors writing updated node status to DB. If
@@ -1310,7 +1311,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *hnsutil.Block, fla
 			// expensive memory allocation done by fetch input utxos.
 			view := NewUtxoViewpoint()
 			view.SetBestHash(parentHash)
-			err := b.checkConnectBlock(node, block, view, nil)
+			err = b.checkConnectBlock(node, block, view, nil)
 			if err == nil {
 				b.index.SetStatusFlags(node, statusValid)
 			} else if _, ok := err.(RuleError); ok {
@@ -1326,15 +1327,17 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *hnsutil.Block, fla
 			}
 		}
 
-		err := b.db.View(func(dbTx database.Tx) error {
-			return checkCoinbaseAirdropsAvailable(dbTx, block)
-		})
-		if err != nil {
-			if _, ok := err.(RuleError); ok {
-				b.index.SetStatusFlags(node, statusValidateFailed)
-				flushIndexState()
+		if fastAdd {
+			err = b.db.View(func(dbTx database.Tx) error {
+				return checkCoinbaseAirdropsAvailable(dbTx, block)
+			})
+			if err != nil {
+				if _, ok := err.(RuleError); ok {
+					b.index.SetStatusFlags(node, statusValidateFailed)
+					flushIndexState()
+				}
+				return false, err
 			}
-			return false, err
 		}
 
 		// Connect the transactions to the cache.  All the txs are considered valid
@@ -1406,7 +1409,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *hnsutil.Block, fla
 
 	// Reorganize the chain.
 	log.Infof("REORGANIZE: Block %v is causing a reorganize.", node.hash)
-	err := b.reorganizeChain(detachNodes, attachNodes)
+	err = b.reorganizeChain(detachNodes, attachNodes)
 
 	// Either getReorganizeNodes or reorganizeChain could have made unsaved
 	// changes to the block index, so flush regardless of whether there was an
@@ -1467,6 +1470,16 @@ func (b *BlockChain) BestSnapshot() *BestState {
 	snapshot := b.stateSnapshot
 	b.stateLock.RUnlock()
 	return snapshot
+}
+
+// BestBlockTimestamp returns the timestamp of the current best chain tip.
+//
+// This function is safe for concurrent access.
+func (b *BlockChain) BestBlockTimestamp() time.Time {
+	b.chainLock.RLock()
+	timestamp := b.bestChain.Tip().timestamp
+	b.chainLock.RUnlock()
+	return time.Unix(timestamp, 0)
 }
 
 // BestHeader returns the hash and the height of the best header.

@@ -2064,15 +2064,22 @@ func (p *Peer) processRemoteVersionMsg(msg *wire.HnsMsgVersion) error {
 	return nil
 }
 
-// processRemoteVerAckMsg takes the verack from the remote peer and handles it.
-func (p *Peer) processRemoteVerAckMsg(msg *wire.HnsMsgVerack) {
+func (p *Peer) recordRemoteVerAckMsg() {
 	p.flagsMtx.Lock()
 	p.verAckReceived = true
 	p.flagsMtx.Unlock()
+}
 
+func (p *Peer) notifyRemoteVerAckMsg(msg *wire.HnsMsgVerack) {
 	if p.cfg.Listeners.OnVerAck != nil {
 		p.cfg.Listeners.OnVerAck(p, msg)
 	}
+}
+
+// processRemoteVerAckMsg takes the verack from the remote peer and handles it.
+func (p *Peer) processRemoteVerAckMsg(msg *wire.HnsMsgVerack) {
+	p.recordRemoteVerAckMsg()
+	p.notifyRemoteVerAckMsg(msg)
 }
 
 // localVersionMsg creates a version message that can be used to send to the
@@ -2190,6 +2197,8 @@ func (p *Peer) waitToFinishNegotiation(_ uint32) error {
 // on inbound connections, so outbound negotiation must allow verack to arrive
 // before the remote version packet.
 func (p *Peer) readRemoteVersionAllowingEarlyVerAck() error {
+	var earlyVerAck *wire.HnsMsgVerack
+
 	for {
 		remoteMsg, _, err := p.readMessage(wire.LatestEncoding, false)
 		if err == wire.ErrUnknownMessage {
@@ -2200,12 +2209,19 @@ func (p *Peer) readRemoteVersionAllowingEarlyVerAck() error {
 
 		switch msg := remoteMsg.(type) {
 		case *wire.HnsMsgVersion:
-			return p.processRemoteVersionMsg(msg)
+			if err := p.processRemoteVersionMsg(msg); err != nil {
+				return err
+			}
+			if earlyVerAck != nil {
+				p.notifyRemoteVerAckMsg(earlyVerAck)
+			}
+			return nil
 		case *wire.HnsMsgVerack:
 			if p.VerAckReceived() {
 				return wire.ErrInvalidHandshake
 			}
-			p.processRemoteVerAckMsg(msg)
+			p.recordRemoteVerAckMsg()
+			earlyVerAck = msg
 		default:
 			return wire.ErrInvalidHandshake
 		}

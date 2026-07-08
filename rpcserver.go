@@ -2014,10 +2014,14 @@ func (state *gbtWorkState) updateBlockTemplate(s *rpcServer, useCoinbaseValue bo
 			template.Block.Transactions[0].TxOut[0].Address = wireAddr
 			template.ValidPayAddress = true
 
-			// Update the merkle root.
+			// Update the roots committed by the header now that the
+			// coinbase output has changed.
 			block := hnsutil.NewBlock(template.Block)
-			merkleRoot := blockchain.CalcMerkleRoot(block.Transactions(), false)
-			template.Block.Header.MerkleRoot = merkleRoot
+			transactions := block.Transactions()
+			template.Block.Header.MerkleRoot = blockchain.CalcMerkleRoot(
+				transactions, false)
+			template.Block.Header.WitnessRoot = blockchain.CalcMerkleRoot(
+				transactions, true)
 		}
 
 		// Set locals for convenience.

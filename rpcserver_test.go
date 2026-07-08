@@ -521,6 +521,71 @@ func TestGBTWorkStateRegeneratesTemplateAfterMempoolUpdateWindow(t *testing.T) {
 	}
 }
 
+func TestGBTWorkStateUpdatesRootsAfterCachedCoinbaseAddress(t *testing.T) {
+	txSource := &gbtTestTxSource{updated: time.Now()}
+	server, _ := newGBTTestRPCServer(t, txSource)
+	state := server.gbtWorkState
+
+	payAddr, err := hnsutil.NewAddressPubKeyHash(bytes.Repeat([]byte{0x44},
+		20), server.cfg.ChainParams)
+	if err != nil {
+		t.Fatalf("NewAddressPubKeyHash: %v", err)
+	}
+	oldCfg := cfg
+	cfg = &config{miningAddrs: []hnsutil.Address{payAddr}}
+	t.Cleanup(func() {
+		cfg = oldCfg
+	})
+
+	state.Lock()
+	if err := state.updateBlockTemplate(server, true); err != nil {
+		state.Unlock()
+		t.Fatalf("updateBlockTemplate coinbasevalue: %v", err)
+	}
+	firstTemplate := state.template
+	if firstTemplate.ValidPayAddress {
+		state.Unlock()
+		t.Fatal("coinbasevalue template unexpectedly had a payment address")
+	}
+
+	if err := state.updateBlockTemplate(server, false); err != nil {
+		state.Unlock()
+		t.Fatalf("updateBlockTemplate coinbasetxn: %v", err)
+	}
+	if state.template != firstTemplate {
+		state.Unlock()
+		t.Fatal("template regenerated instead of updating cached coinbase")
+	}
+	result, err := state.blockTemplateResult(false, nil)
+	state.Unlock()
+	if err != nil {
+		t.Fatalf("blockTemplateResult: %v", err)
+	}
+	if result.CoinbaseTxn == nil {
+		t.Fatal("coinbasetxn missing")
+	}
+
+	rawCoinbase, err := hex.DecodeString(result.CoinbaseTxn.Data)
+	if err != nil {
+		t.Fatalf("DecodeString coinbase: %v", err)
+	}
+	var coinbase wire.MsgTx
+	if err := coinbase.Deserialize(bytes.NewReader(rawCoinbase)); err != nil {
+		t.Fatalf("Deserialize coinbase: %v", err)
+	}
+	txs := []*hnsutil.Tx{hnsutil.NewTx(&coinbase)}
+	wantMerkleRoot := blockchain.CalcMerkleRoot(txs, false).String()
+	wantWitnessRoot := blockchain.CalcMerkleRoot(txs, true).String()
+	if result.MerkleRoot != wantMerkleRoot {
+		t.Fatalf("merkleroot = %q, want %q", result.MerkleRoot,
+			wantMerkleRoot)
+	}
+	if result.WitnessRoot != wantWitnessRoot {
+		t.Fatalf("witnessroot = %q, want %q", result.WitnessRoot,
+			wantWitnessRoot)
+	}
+}
+
 // TestHandleTestMempoolAcceptFailDecode checks that when invalid hex string is
 // used as the raw txns, the corresponding error is returned.
 func TestHandleTestMempoolAcceptFailDecode(t *testing.T) {

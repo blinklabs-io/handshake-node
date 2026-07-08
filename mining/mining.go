@@ -5,6 +5,7 @@
 package mining
 
 import (
+	"bytes"
 	"container/heap"
 	"encoding/binary"
 	"fmt"
@@ -331,25 +332,8 @@ func addCoinbaseProofs(coinbaseTx *hnsutil.Tx,
 	var proofFees int64
 	seenProofs := make(map[chainhash.Hash]struct{}, len(proofs))
 	for i, proof := range proofs {
-		if proof.Output == nil {
-			return 0, fmt.Errorf("coinbase proof %d missing output", i)
-		}
-		if proof.Output.Value < 0 {
-			return 0, fmt.Errorf("coinbase proof %d has negative output value", i)
-		}
-		if proof.Fee < 0 {
-			return 0, fmt.Errorf("coinbase proof %d has negative fee", i)
-		}
-		switch proof.Output.Covenant.Type {
-		case wire.CovenantNone:
-			if len(proof.Output.Covenant.Items) != 0 {
-				return 0, fmt.Errorf("coinbase proof %d has "+
-					"NONE covenant items", i)
-			}
-		case wire.CovenantClaim:
-		default:
-			return 0, fmt.Errorf("coinbase proof %d has unsupported "+
-				"covenant type %d", i, proof.Output.Covenant.Type)
+		if err := ValidateCoinbaseProofShape(proof); err != nil {
+			return 0, fmt.Errorf("coinbase proof %d: %w", i, err)
 		}
 		proofHash := chainhash.HashH(proof.Witness)
 		if _, exists := seenProofs[proofHash]; exists {
@@ -375,6 +359,66 @@ func addCoinbaseProofs(coinbaseTx *hnsutil.Tx,
 	}
 
 	return proofFees, nil
+}
+
+// ValidateCoinbaseProofShape checks whether a coinbase proof has the covenant
+// layout required before it can be stored in the proof pool or mined.
+func ValidateCoinbaseProofShape(proof CoinbaseProof) error {
+	if proof.Output == nil {
+		return fmt.Errorf("missing output")
+	}
+	if proof.Output.Value < 0 {
+		return fmt.Errorf("has negative output value")
+	}
+	if proof.Fee < 0 {
+		return fmt.Errorf("has negative fee")
+	}
+
+	covenant := proof.Output.Covenant
+	switch covenant.Type {
+	case wire.CovenantNone:
+		if len(covenant.Items) != 0 {
+			return fmt.Errorf("NONE covenant has items")
+		}
+
+	case wire.CovenantClaim:
+		if len(covenant.Items) != 6 {
+			return fmt.Errorf("CLAIM covenant has %d items, want 6",
+				len(covenant.Items))
+		}
+		if len(covenant.Items[0]) != chainhash.HashSize {
+			return fmt.Errorf("CLAIM covenant has name hash length %d, "+
+				"want %d", len(covenant.Items[0]), chainhash.HashSize)
+		}
+		if len(covenant.Items[1]) != 4 {
+			return fmt.Errorf("CLAIM covenant has height length %d, want 4",
+				len(covenant.Items[1]))
+		}
+		if len(covenant.Items[2]) == 0 {
+			return fmt.Errorf("CLAIM covenant missing name")
+		}
+		nameHash := blockchain.HashName(covenant.Items[2])
+		if !bytes.Equal(covenant.Items[0], nameHash[:]) {
+			return fmt.Errorf("CLAIM covenant name hash does not match name")
+		}
+		if len(covenant.Items[3]) != 1 {
+			return fmt.Errorf("CLAIM covenant has flags length %d, want 1",
+				len(covenant.Items[3]))
+		}
+		if len(covenant.Items[4]) != chainhash.HashSize {
+			return fmt.Errorf("CLAIM covenant has commit hash length %d, "+
+				"want %d", len(covenant.Items[4]), chainhash.HashSize)
+		}
+		if len(covenant.Items[5]) != 4 {
+			return fmt.Errorf("CLAIM covenant has commit height length %d, "+
+				"want 4", len(covenant.Items[5]))
+		}
+
+	default:
+		return fmt.Errorf("has unsupported covenant type %d", covenant.Type)
+	}
+
+	return nil
 }
 
 func cloneCoinbaseProofOutput(output *wire.TxOut) *wire.TxOut {
@@ -587,6 +631,7 @@ func (g *BlkTmplGenerator) NewBlockTemplate(payToAddress hnsutil.Address) (*Bloc
 	// Extend the most recently known best block.
 	best := g.chain.BestSnapshot()
 	nextBlockHeight := best.Height + 1
+	parentTime := g.chain.BestBlockTimestamp().Unix()
 
 	// Create a standard coinbase transaction paying to the provided
 	// address.  NOTE: The coinbase value will be updated to include the
@@ -756,8 +801,19 @@ mempoolLoop:
 	// transaction.
 	blockWeight := uint32((blockHeaderOverhead * blockchain.WitnessScaleFactor) +
 		blockchain.GetTransactionWeight(coinbaseTx))
+	if len(coinbaseProofs) > 0 && blockWeight >= g.policy.BlockMaxWeight {
+		return nil, fmt.Errorf("coinbase proofs exceed max block weight")
+	}
 	blockSigOpCost := coinbaseSigOpCost
 	totalFees := int64(0)
+	if len(coinbaseProofs) > 0 {
+		if err := nameView.ApplyTransaction(coinbaseTx, nextBlockHeight,
+			parentTime, blockUtxos); err != nil {
+
+			return nil, fmt.Errorf("coinbase proof name validation: %w",
+				err)
+		}
+	}
 
 	// Choose which transactions make it into the block.
 	for priorityQueue.Len() > 0 {
@@ -863,7 +919,7 @@ mempoolLoop:
 			continue
 		}
 		err = nameView.ApplyTransaction(tx, nextBlockHeight,
-			best.MedianTime.Unix(), blockUtxos)
+			parentTime, blockUtxos)
 		if err != nil {
 			log.Tracef("Skipping tx %s due to error in "+
 				"ApplyTransaction: %v", tx.Hash(), err)
@@ -918,6 +974,8 @@ mempoolLoop:
 		return nil, fmt.Errorf("coinbase payout exceeds max money")
 	}
 	coinbaseTx.MsgTx().TxOut[0].Value += coinbaseExtra
+	coinbaseTx = hnsutil.NewTx(coinbaseTx.MsgTx())
+	blockTxns[0] = coinbaseTx
 	txFees[0] = -totalFees
 
 	// Calculate the required difficulty for the block.  The timestamp

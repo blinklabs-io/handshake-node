@@ -78,19 +78,9 @@ func newLazyNameBlockView(chain *BlockChain) *nameBlockView {
 // NewNameValidationView returns a stateful name validation view initialized
 // from the current committed name state.
 func (b *BlockChain) NewNameValidationView() (*NameValidationView, error) {
-	var view *nameBlockView
-	err := b.db.View(func(dbTx database.Tx) error {
-		var err error
-		view, err = newNameBlockView(dbTx, b)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	return &NameValidationView{
 		chain: b,
-		view:  view,
+		view:  newLazyNameBlockView(b),
 	}, nil
 }
 

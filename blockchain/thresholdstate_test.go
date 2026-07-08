@@ -135,9 +135,7 @@ nextTest:
 }
 
 func TestUndefinedDeploymentState(t *testing.T) {
-	chain := &BlockChain{
-		chainParams: &chaincfg.MainNetParams,
-	}
+	chain := newFakeChain(&chaincfg.MainNetParams)
 	prevNode := &blockNode{
 		height: int32(chaincfg.MainNetParams.MinerConfirmationWindow),
 	}

@@ -845,11 +845,22 @@ func TestUnsupportedVersionPeer(t *testing.T) {
 }
 
 func TestOutboundPeerAcceptsVerAckBeforeVersion(t *testing.T) {
-	verack := make(chan struct{}, 1)
+	type verackState struct {
+		id           int32
+		versionKnown bool
+		services     wire.ServiceFlag
+		lastBlock    int32
+	}
+	verack := make(chan verackState, 1)
 	peerCfg := &peer.Config{
 		Listeners: peer.MessageListeners{
 			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
-				verack <- struct{}{}
+				verack <- verackState{
+					id:           p.ID(),
+					versionKnown: p.VersionKnown(),
+					services:     p.Services(),
+					lastBlock:    p.LastBlock(),
+				}
 			},
 		},
 		UserAgentName:    "peer",
@@ -937,7 +948,21 @@ func TestOutboundPeerAcceptsVerAckBeforeVersion(t *testing.T) {
 	}
 
 	select {
-	case <-verack:
+	case state := <-verack:
+		if state.id == 0 {
+			t.Fatal("verack callback fired before peer ID assignment")
+		}
+		if !state.versionKnown {
+			t.Fatal("verack callback fired before version was known")
+		}
+		if state.services != wire.SFNodeNetwork {
+			t.Fatalf("verack callback services = %v, want %v",
+				state.services, wire.SFNodeNetwork)
+		}
+		if state.lastBlock != int32(remoteVersionMsg.Height) {
+			t.Fatalf("verack callback last block = %d, want %d",
+				state.lastBlock, remoteVersionMsg.Height)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("verack callback timeout")
 	}

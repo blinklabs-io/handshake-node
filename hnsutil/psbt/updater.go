@@ -124,6 +124,9 @@ func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 		// redeemScript.
 		if pInput.RedeemScript != nil {
 			outIndex := u.Upsbt.UnsignedTx.TxIn[inIndex].PreviousOutPoint.Index
+			if outIndex >= uint32(len(pInput.NonWitnessUtxo.TxOut)) {
+				return ErrInvalidPrevOutNonWitnessTransaction
+			}
 			scriptPubKey := txOutPkScript(
 				pInput.NonWitnessUtxo.TxOut[outIndex])
 			scriptHash := hnsutil.Hash160(pInput.RedeemScript)

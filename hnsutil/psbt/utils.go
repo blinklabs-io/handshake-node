@@ -6,7 +6,6 @@ package psbt
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -297,21 +296,19 @@ func getKey(r io.Reader) (int, []byte, error) {
 	return int(keyType), keyData, nil
 }
 
-// readTxOut is a limited version of wire.ReadTxOut, because the latter is not
-// exported.
+// readTxOut decodes a Handshake transaction output stored in a PSBT witness
+// UTXO field.
 func readTxOut(txout []byte) (*wire.TxOut, error) {
-	if len(txout) < 10 {
+	r := bytes.NewReader(txout)
+	out := &wire.TxOut{}
+	if err := wire.ReadTxOut(r, 0, 0, out); err != nil {
+		return nil, err
+	}
+	if r.Len() != 0 {
 		return nil, ErrInvalidPsbtFormat
 	}
 
-	valueSer := binary.LittleEndian.Uint64(txout[:8])
-	scriptPubKey := txout[9:]
-	addr, err := txscript.AddressFromWitnessProgram(scriptPubKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return wire.NewTxOut(int64(valueSer), addr, wire.Covenant{}), nil
+	return out, nil
 }
 
 // SumUtxoInputValues tries to extract the sum of all inputs specified in the

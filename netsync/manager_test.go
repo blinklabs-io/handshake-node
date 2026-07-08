@@ -1213,7 +1213,7 @@ func TestBuildBlockRequestCapsInflightBlocks(t *testing.T) {
 	require.Equal(t, nextHash, gdmsg.Inventory[0].InvVect().Hash)
 }
 
-func TestRejectedBlockIsNotRequestedAgain(t *testing.T) {
+func TestRejectedBlockBodyCanBeRequestedAgain(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil
 	sm, tearDown := makeMockSyncManager(t, &params)
@@ -1248,17 +1248,19 @@ func TestRejectedBlockIsNotRequestedAgain(t *testing.T) {
 	})
 
 	blockHash := *block.Hash()
-	require.Contains(t, sm.rejectedBlocks, blockHash)
+	require.NotContains(t, sm.rejectedBlocks, blockHash)
 	require.NotContains(t, sm.requestedBlocks, blockHash)
 	require.NotContains(t, syncPeerState.requestedBlocks, blockHash)
+	require.True(t, sm.chain.IsValidHeader(block.Hash()))
 
 	haveInv, err := sm.haveInventory(
 		wire.NewInvVect(wire.InvTypeBlock, block.Hash()))
 	require.NoError(t, err)
-	require.True(t, haveInv)
+	require.False(t, haveInv)
 
 	gdmsg = sm.buildBlockRequest(syncPeer)
-	require.Empty(t, gdmsg.Inventory)
+	require.Len(t, gdmsg.Inventory, 1)
+	require.Equal(t, blockHash, gdmsg.Inventory[0].InvVect().Hash)
 }
 
 func TestIsInIBDMode(t *testing.T) {
