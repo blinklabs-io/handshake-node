@@ -1449,8 +1449,8 @@ out:
 		log.Errorf("Error while flushing blockchain caches: %v", err)
 	}
 
-	sm.wg.Done()
 	log.Trace("Block handler done")
+	sm.wg.Done()
 }
 
 // handleBlockchainNotification handles notifications from blockchain.  It does

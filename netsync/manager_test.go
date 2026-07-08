@@ -73,23 +73,11 @@ func dbSetup(t *testing.T, params *chaincfg.Params) (database.DB, func(), error)
 	return db, teardown, nil
 }
 
-// chainSetup is used to create a new db and chain instance with the genesis
-// block already inserted.  In addition to the new chain instance, it returns
-// a teardown function the caller should invoke when done testing to clean up.
-func chainSetup(t *testing.T, params *chaincfg.Params) (
-	*blockchain.BlockChain, func(), error) {
-
-	db, teardown, err := dbSetup(t, params)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Copy the chain params to ensure any modifications the tests do to
-	// the chain parameters do not affect the global instance.
+func cloneChainParams(params *chaincfg.Params) chaincfg.Params {
 	paramsCopy := *params
 
-	// Deep-copy deployment starters/enders so that parallel tests don't
-	// race on the shared blockClock field written by SynchronizeClock.
+	// Deep-copy deployment starters/enders so parallel tests don't race on
+	// the shared blockClock field written by SynchronizeClock.
 	for i := range paramsCopy.Deployments {
 		d := &paramsCopy.Deployments[i]
 		if s, ok := d.DeploymentStarter.(*chaincfg.MedianTimeDeploymentStarter); ok {
@@ -101,6 +89,22 @@ func chainSetup(t *testing.T, params *chaincfg.Params) (
 				e.EndTime())
 		}
 	}
+
+	return paramsCopy
+}
+
+// chainSetup is used to create a new db and chain instance with the genesis
+// block already inserted.  In addition to the new chain instance, it returns
+// a teardown function the caller should invoke when done testing to clean up.
+func chainSetup(t *testing.T, params *chaincfg.Params) (
+	*blockchain.BlockChain, func(), error) {
+
+	db, teardown, err := dbSetup(t, params)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	paramsCopy := cloneChainParams(params)
 
 	// Create the main chain instance.
 	chain, err := blockchain.New(&blockchain.Config{
@@ -646,7 +650,7 @@ func TestHandleBlockMsgStayingCurrentAcceptsForkAndReorg(t *testing.T) {
 func TestBlockAcceptedNotificationRelaysInventoryWhenCurrent(t *testing.T) {
 	t.Parallel()
 
-	params := chaincfg.RegressionNetParams
+	params := cloneChainParams(&chaincfg.RegressionNetParams)
 	params.Checkpoints = nil
 
 	db, tearDown, err := dbSetup(t, &params)
@@ -689,7 +693,7 @@ func TestBlockAcceptedNotificationRelaysInventoryWhenCurrent(t *testing.T) {
 func TestBlockConnectedNotificationRemovesCoinbaseProofs(t *testing.T) {
 	t.Parallel()
 
-	params := chaincfg.RegressionNetParams
+	params := cloneChainParams(&chaincfg.RegressionNetParams)
 	params.Checkpoints = nil
 
 	db, tearDown, err := dbSetup(t, &params)
