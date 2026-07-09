@@ -225,6 +225,41 @@ func TestChainSvrWsNtfns(t *testing.T) {
 				Transaction: "001122",
 			},
 		},
+		{
+			name: "nameupdated",
+			newNtfn: func() (interface{}, error) {
+				return hnsjson.NewCmd("nameupdated", "example",
+					"0000000000000000000000000000000000000000000000000000000000000001",
+					"OPEN", uint8(2), "123", uint32(0),
+					`{"height":100000,"hash":"456","index":1,"time":12345678}`)
+			},
+			staticNtfn: func() interface{} {
+				blockDetails := hnsjson.BlockDetails{
+					Height: 100000,
+					Hash:   "456",
+					Index:  1,
+					Time:   12345678,
+				}
+				return hnsjson.NewNameUpdatedNtfn("example",
+					"0000000000000000000000000000000000000000000000000000000000000001",
+					"OPEN", 2, "123", 0, &blockDetails)
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"nameupdated","params":["example","0000000000000000000000000000000000000000000000000000000000000001","OPEN",2,"123",0,{"height":100000,"hash":"456","index":1,"time":12345678}],"id":null}`,
+			unmarshalled: &hnsjson.NameUpdatedNtfn{
+				Name:         "example",
+				NameHash:     "0000000000000000000000000000000000000000000000000000000000000001",
+				Covenant:     "OPEN",
+				CovenantType: 2,
+				TxID:         "123",
+				Vout:         0,
+				Block: &hnsjson.BlockDetails{
+					Height: 100000,
+					Hash:   "456",
+					Index:  1,
+					Time:   12345678,
+				},
+			},
+		},
 	}
 
 	t.Logf("Running %d tests", len(tests))

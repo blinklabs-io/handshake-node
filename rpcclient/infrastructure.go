@@ -279,6 +279,26 @@ func (c *Client) trackRegisteredNtfns(cmd interface{}) {
 	case *hnsjson.NotifyBlocksCmd:
 		c.ntfnState.notifyBlocks = true
 
+	case *hnsjson.NotifyNamesCmd:
+		var names []string
+		if bcmd.Names != nil {
+			names = *bcmd.Names
+		}
+		var nameHashes []string
+		if bcmd.NameHashes != nil {
+			nameHashes = *bcmd.NameHashes
+		}
+		if len(names) == 0 && len(nameHashes) == 0 {
+			c.ntfnState.notifyNamesAll = true
+			break
+		}
+		for _, name := range names {
+			c.ntfnState.notifyNames[name] = struct{}{}
+		}
+		for _, nameHash := range nameHashes {
+			c.ntfnState.notifyNameHashes[nameHash] = struct{}{}
+		}
+
 	case *hnsjson.NotifyNewTransactionsCmd:
 		if bcmd.Verbose != nil && *bcmd.Verbose {
 			c.ntfnState.notifyNewTxVerbose = true
@@ -580,6 +600,30 @@ func (c *Client) reregisterNtfns() error {
 	if stateCopy.notifyBlocks {
 		log.Debugf("Reregistering [notifyblocks]")
 		if err := c.NotifyBlocks(); err != nil {
+			return err
+		}
+	}
+
+	// Reregister notifynames if needed.
+	if stateCopy.notifyNamesAll || len(stateCopy.notifyNames) > 0 ||
+		len(stateCopy.notifyNameHashes) > 0 {
+
+		names := make([]string, 0, len(stateCopy.notifyNames))
+		for name := range stateCopy.notifyNames {
+			names = append(names, name)
+		}
+		nameHashes := make([]string, 0, len(stateCopy.notifyNameHashes))
+		for nameHash := range stateCopy.notifyNameHashes {
+			nameHashes = append(nameHashes, nameHash)
+		}
+		log.Debugf("Reregistering [notifynames] names: %v, "+
+			"name hashes: %v, all=%v", names, nameHashes,
+			stateCopy.notifyNamesAll)
+		if stateCopy.notifyNamesAll {
+			names = nil
+			nameHashes = nil
+		}
+		if err := c.notifyNamesInternal(names, nameHashes).Receive(); err != nil {
 			return err
 		}
 	}

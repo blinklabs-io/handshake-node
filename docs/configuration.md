@@ -3,6 +3,26 @@
 handshake-node has a number of [configuration](https://pkg.go.dev/github.com/blinklabs-io/handshake-node)
 options, which can be viewed by running: `$ handshake-node --help`.
 
+Configuration precedence is:
+
+1. Built-in defaults
+2. `handshake-node.conf`
+3. Environment variables
+4. Command-line flags
+
+Environment variables use the `HANDSHAKE_NODE_` prefix followed by the long
+option name in uppercase.  Dashes are converted to underscores.  For example,
+`--rpcuser` can be set with `HANDSHAKE_NODE_RPCUSER`, and `--blockmaxweight`
+can be set with `HANDSHAKE_NODE_BLOCKMAXWEIGHT`.  Slice options such as
+`--addpeer` accept comma-separated values.
+
+```bash
+HANDSHAKE_NODE_RPCUSER=myuser \
+HANDSHAKE_NODE_RPCPASS=mypassword \
+HANDSHAKE_NODE_RPCLISTEN=127.0.0.1:12037 \
+handshake-node
+```
+
 ## Peer server listen interface
 
 handshake-node allows you to bind to specific interfaces which enables you to setup
@@ -69,6 +89,9 @@ A few things to note regarding the RPC server:
 * The RPC server has TLS enabled by default, even for localhost.  You may use
   the `--notls` option to disable it, but only when all listeners are on
   localhost interfaces.
+* The `--rpcallowip` flag can be specified multiple times to restrict RPC
+  clients to explicit IP addresses or CIDR networks.  Empty means all remote
+  addresses are allowed subject to authentication.
 * The `--rpclisten` flag can be specified multiple times to listen on multiple
   interfaces as a couple of the examples below illustrate.
 * The RPC server is disabled by default when using the `--regtest` and

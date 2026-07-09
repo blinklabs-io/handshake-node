@@ -65,11 +65,13 @@ var wsHandlersBeforeInit = map[string]wsCommandHandler{
 	"loadtxfilter":              handleLoadTxFilter,
 	"help":                      handleWebsocketHelp,
 	"notifyblocks":              handleNotifyBlocks,
+	"notifynames":               handleNotifyNames,
 	"notifynewtransactions":     handleNotifyNewTransactions,
 	"notifyreceived":            handleNotifyReceived,
 	"notifyspent":               handleNotifySpent,
 	"session":                   handleSession,
 	"stopnotifyblocks":          handleStopNotifyBlocks,
+	"stopnotifynames":           handleStopNotifyNames,
 	"stopnotifynewtransactions": handleStopNotifyNewTransactions,
 	"stopnotifyspent":           handleStopNotifySpent,
 	"stopnotifyreceived":        handleStopNotifyReceived,
@@ -383,6 +385,11 @@ type notificationRegisterClient wsClient
 type notificationUnregisterClient wsClient
 type notificationRegisterBlocks wsClient
 type notificationUnregisterBlocks wsClient
+type notificationRegisterNames struct {
+	wsc   *wsClient
+	watch *wsNameWatch
+}
+type notificationUnregisterNames wsClient
 type notificationRegisterNewMempoolTxs wsClient
 type notificationUnregisterNewMempoolTxs wsClient
 type notificationRegisterSpent struct {
@@ -402,6 +409,38 @@ type notificationUnregisterAddr struct {
 	addr string
 }
 
+type wsNameWatch struct {
+	wsc        *wsClient
+	all        bool
+	nameHashes map[chainhash.Hash]struct{}
+}
+
+func (w *wsNameWatch) matches(nameHash chainhash.Hash) bool {
+	if w.all {
+		return true
+	}
+	_, ok := w.nameHashes[nameHash]
+	return ok
+}
+
+func newWSNameWatch(wsc *wsClient, names []string,
+	nameHashes []chainhash.Hash) *wsNameWatch {
+
+	watch := &wsNameWatch{
+		wsc:        wsc,
+		all:        len(names) == 0 && len(nameHashes) == 0,
+		nameHashes: make(map[chainhash.Hash]struct{}, len(names)+len(nameHashes)),
+	}
+	for _, name := range names {
+		nameHash := blockchain.HashName([]byte(name))
+		watch.nameHashes[nameHash] = struct{}{}
+	}
+	for _, nameHash := range nameHashes {
+		watch.nameHashes[nameHash] = struct{}{}
+	}
+	return watch
+}
+
 // notificationHandler reads notifications and control messages from the queue
 // handler and processes one at a time.
 func (m *wsNotificationManager) notificationHandler() {
@@ -416,6 +455,7 @@ func (m *wsNotificationManager) notificationHandler() {
 	// Where possible, the quit channel is used as the unique id for a client
 	// since it is quite a bit more efficient than using the entire struct.
 	blockNotifications := make(map[chan struct{}]*wsClient)
+	nameNotifications := make(map[chan struct{}]*wsNameWatch)
 	txNotifications := make(map[chan struct{}]*wsClient)
 	watchedOutPoints := make(map[wire.OutPoint]map[chan struct{}]*wsClient)
 	watchedAddrs := make(map[string]map[chan struct{}]*wsClient)
@@ -441,6 +481,13 @@ out:
 					}
 				}
 
+				if len(nameNotifications) != 0 {
+					for _, tx := range block.Transactions() {
+						m.notifyForNameTx(nameNotifications,
+							tx, block)
+					}
+				}
+
 				if len(blockNotifications) != 0 {
 					m.notifyBlockConnected(blockNotifications,
 						block)
@@ -462,6 +509,9 @@ out:
 				if n.isNew && len(txNotifications) != 0 {
 					m.notifyForNewTx(txNotifications, n.tx)
 				}
+				if len(nameNotifications) != 0 {
+					m.notifyForNameTx(nameNotifications, n.tx, nil)
+				}
 				m.notifyForTx(watchedOutPoints, watchedAddrs, n.tx, nil)
 				m.notifyRelevantTxAccepted(n.tx, clients)
 
@@ -473,6 +523,13 @@ out:
 				wsc := (*wsClient)(n)
 				delete(blockNotifications, wsc.quit)
 
+			case *notificationRegisterNames:
+				nameNotifications[n.wsc.quit] = n.watch
+
+			case *notificationUnregisterNames:
+				wsc := (*wsClient)(n)
+				delete(nameNotifications, wsc.quit)
+
 			case *notificationRegisterClient:
 				wsc := (*wsClient)(n)
 				clients[wsc.quit] = wsc
@@ -482,6 +539,7 @@ out:
 				// Remove any requests made by the client as well as
 				// the client itself.
 				delete(blockNotifications, wsc.quit)
+				delete(nameNotifications, wsc.quit)
 				delete(txNotifications, wsc.quit)
 				for k := range wsc.spentRequests {
 					op := k
@@ -549,6 +607,23 @@ func (m *wsNotificationManager) RegisterBlockUpdates(wsc *wsClient) {
 // websocket client.
 func (m *wsNotificationManager) UnregisterBlockUpdates(wsc *wsClient) {
 	m.queueNotification <- (*notificationUnregisterBlocks)(wsc)
+}
+
+// RegisterNameUpdates requests name covenant update notifications to the passed
+// websocket client.
+func (m *wsNotificationManager) RegisterNameUpdates(wsc *wsClient,
+	watch *wsNameWatch) {
+
+	m.queueNotification <- &notificationRegisterNames{
+		wsc:   wsc,
+		watch: watch,
+	}
+}
+
+// UnregisterNameUpdates removes name covenant update notifications for the
+// passed websocket client.
+func (m *wsNotificationManager) UnregisterNameUpdates(wsc *wsClient) {
+	m.queueNotification <- (*notificationUnregisterNames)(wsc)
 }
 
 // subscribedClients returns the set of all websocket client quit channels that
@@ -893,6 +968,131 @@ func blockDetails(block *hnsutil.Block, txIndex int) *hnsjson.BlockDetails {
 		Hash:   block.Hash().String(),
 		Index:  txIndex,
 		Time:   block.MsgBlock().Header.Timestamp.Unix(),
+	}
+}
+
+type nameNotificationEvent struct {
+	name         string
+	nameHash     chainhash.Hash
+	covenant     string
+	covenantType uint8
+	txID         string
+	vout         uint32
+	block        *hnsjson.BlockDetails
+}
+
+func isNameNotificationCovenant(covenantType uint8) bool {
+	switch covenantType {
+	case wire.CovenantClaim, wire.CovenantOpen, wire.CovenantBid,
+		wire.CovenantReveal, wire.CovenantRegister,
+		wire.CovenantUpdate, wire.CovenantRenew,
+		wire.CovenantTransfer, wire.CovenantFinalize,
+		wire.CovenantRevoke:
+
+		return true
+	default:
+		return false
+	}
+}
+
+func nameFromCovenant(covenant wire.Covenant) string {
+	switch covenant.Type {
+	case wire.CovenantClaim, wire.CovenantOpen, wire.CovenantBid,
+		wire.CovenantFinalize:
+
+		if len(covenant.Items) > 2 {
+			return string(covenant.Items[2])
+		}
+	}
+	return ""
+}
+
+func nameNotificationEvents(tx *hnsutil.Tx,
+	block *hnsutil.Block) []nameNotificationEvent {
+
+	txHash := tx.Hash().String()
+	msgTx := tx.MsgTx()
+	events := make([]nameNotificationEvent, 0)
+	for i, txOut := range msgTx.TxOut {
+		covenant := txOut.Covenant
+		if !isNameNotificationCovenant(covenant.Type) {
+			continue
+		}
+		if len(covenant.Items) == 0 ||
+			len(covenant.Items[0]) != chainhash.HashSize {
+
+			continue
+		}
+
+		var nameHash chainhash.Hash
+		copy(nameHash[:], covenant.Items[0])
+		events = append(events, nameNotificationEvent{
+			name:         nameFromCovenant(covenant),
+			nameHash:     nameHash,
+			covenant:     covenant.String(),
+			covenantType: covenant.Type,
+			txID:         txHash,
+			vout:         uint32(i),
+			block:        blockDetails(block, tx.Index()),
+		})
+	}
+	return events
+}
+
+func (m *wsNotificationManager) resolveNameForNotification(
+	event *nameNotificationEvent) {
+
+	if event.name != "" || m.server == nil || m.server.cfg.Chain == nil {
+		return
+	}
+	state, found, err := m.server.cfg.Chain.FetchNameStateByHash(event.nameHash)
+	if err != nil || !found {
+		return
+	}
+	event.name = state.Name()
+}
+
+// notifyForNameTx examines each transaction output, notifying interested
+// websocket clients of Handshake name covenant activity.
+func (m *wsNotificationManager) notifyForNameTx(clients map[chan struct{}]*wsNameWatch,
+	tx *hnsutil.Tx, block *hnsutil.Block) {
+
+	if len(clients) == 0 {
+		return
+	}
+
+	events := nameNotificationEvents(tx, block)
+	if len(events) == 0 {
+		return
+	}
+
+	for _, event := range events {
+		var marshalledJSON []byte
+		for _, watch := range clients {
+			if !watch.matches(event.nameHash) {
+				continue
+			}
+
+			if marshalledJSON == nil {
+				m.resolveNameForNotification(&event)
+				ntfn := hnsjson.NewNameUpdatedNtfn(
+					event.name, event.nameHash.String(),
+					event.covenant, event.covenantType,
+					event.txID, event.vout, event.block,
+				)
+				var err error
+				marshalledJSON, err = hnsjson.MarshalCmd(
+					hnsjson.RpcVersion1, nil, ntfn,
+				)
+				if err != nil {
+					rpcsLog.Errorf("Failed to marshal name "+
+						"notification: %v", err)
+					break
+				}
+			}
+
+			watch.wsc.QueueNotification(marshalledJSON)
+		}
 	}
 }
 
@@ -2042,6 +2242,49 @@ func handleSession(wsc *wsClient, icmd interface{}) (interface{}, error) {
 // websocket connections.
 func handleStopNotifyBlocks(wsc *wsClient, icmd interface{}) (interface{}, error) {
 	wsc.server.ntfnMgr.UnregisterBlockUpdates(wsc)
+	return nil, nil
+}
+
+// handleNotifyNames implements the notifynames command extension for websocket
+// connections.
+func handleNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
+	cmd, ok := icmd.(*hnsjson.NotifyNamesCmd)
+	if !ok {
+		return nil, hnsjson.ErrRPCInternal
+	}
+
+	var names []string
+	if cmd.Names != nil {
+		names = *cmd.Names
+	}
+	var nameHashes []chainhash.Hash
+	if cmd.NameHashes != nil {
+		nameHashes = make([]chainhash.Hash, 0, len(*cmd.NameHashes))
+		for _, hashStr := range *cmd.NameHashes {
+			nameHash, rpcErr := parseRPCHash(hashStr, "name hash")
+			if rpcErr != nil {
+				return nil, rpcErr
+			}
+			nameHashes = append(nameHashes, nameHash)
+		}
+	}
+
+	for _, name := range names {
+		if name == "" {
+			return nil, rpcInvalidParameterError(
+				"name filter cannot be empty")
+		}
+	}
+
+	watch := newWSNameWatch(wsc, names, nameHashes)
+	wsc.server.ntfnMgr.RegisterNameUpdates(wsc, watch)
+	return nil, nil
+}
+
+// handleStopNotifyNames implements the stopnotifynames command extension for
+// websocket connections.
+func handleStopNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
+	wsc.server.ntfnMgr.UnregisterNameUpdates(wsc)
 	return nil, nil
 }
 

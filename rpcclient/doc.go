@@ -11,19 +11,19 @@ This client provides a robust and easy to use client for interfacing with a
 JSON-RPC server that uses a handshake-node/bitcoin core compatible JSON-RPC
 API.  This client has been tested with handshake-node
 (https://github.com/blinklabs-io/handshake-node),
-btcwallet (https://github.com/btcsuite/btcwallet), and
+bursa (https://github.com/blinklabs-io/bursa), and
 bitcoin core (https://github.com/bitcoin).
 
 In addition to the compatible standard HTTP POST JSON-RPC API, handshake-node
-and btcwallet provide a websocket interface that is more efficient than the
-standard HTTP POST method of accessing RPC.  The section below discusses the
-differences between HTTP POST and websockets.
+provides a websocket interface that is more efficient than the standard HTTP
+POST method of accessing RPC.  The section below discusses the differences
+between HTTP POST and websockets.
 
 By default, this client assumes the RPC server supports websockets and has
 TLS enabled.  In practice, this currently means it assumes you are talking to
-handshake-node or btcwallet by default.  However, configuration options are
-provided to fall back to HTTP POST and disable TLS to support talking with
-inferior bitcoin core style RPC servers.
+handshake-node by default.  However, configuration options are provided to fall
+back to HTTP POST and disable TLS to support talking with inferior bitcoin core
+style RPC servers.
 
 # Websockets vs HTTP POST
 
@@ -33,8 +33,8 @@ quite a bit of overhead to every call and lacks flexibility for features such as
 notifications.
 
 In contrast, the websocket-based JSON-RPC interface provided by handshake-node
-and btcwallet only uses a single connection that remains open and allows
-asynchronous bi-directional communication.
+only uses a single connection that remains open and allows asynchronous
+bi-directional communication.
 
 The websocket interface supports all of the same commands as HTTP POST, but they
 can be invoked without having to go through a connect/disconnect cycle for every
@@ -105,18 +105,19 @@ Minor RPC Server Differences and Chain/Wallet Separation
 
 Some of the commands are extensions specific to a particular RPC server.  For
 example, the DebugLevel call is an extension only provided by handshake-node
-(and btcwallet passthrough).  Therefore if you call one of these commands against
-an RPC server that doesn't provide them, you will get an unimplemented error
-from the server.  An effort has been made to call out which commands are
-extensions in their documentation.
+(and wallet passthroughs that choose to expose it).  Therefore if you call one
+of these commands against an RPC server that doesn't provide them, you will get
+an unimplemented error from the server.  An effort has been made to call out
+which commands are extensions in their documentation.
 
 Also, it is important to realize that handshake-node intentionally separates the
-wallet functionality into a separate process named btcwallet.  This means if you
+wallet functionality into a separate process named bursa.  This means if you
 are connected to the handshake-node RPC server directly, only the RPCs which are
 related to
 chain services will be available.  Depending on your application, you might only
-need chain-related RPCs.  In contrast, btcwallet provides pass through treatment
-for chain-related RPCs, so it supports them in addition to wallet-related RPCs.
+need chain-related RPCs.  Bursa owns keys, signing, coin selection, and wallet
+state while using handshake-node RPCs for UTXO lookup, unsigned covenant
+transaction construction, broadcast, and notifications.
 
 # Errors
 
@@ -172,9 +173,9 @@ The following full-blown client examples are in the examples directory:
     Connects to a handshake-node RPC server using TLS-secured websockets, registers for
     block connected and block disconnected notifications, and gets the current
     block count
-  - btcwalletwebsockets
-    Connects to a btcwallet RPC server using TLS-secured websockets, registers
-    for notifications about changes to account balances, and gets a list of
-    unspent transaction outputs (utxos) the wallet can sign
+  - hnswalletwebsockets
+    Connects to a wallet RPC server using TLS-secured websockets, registers for
+    wallet notifications, and gets a list of unspent transaction outputs
+    (UTXOs) the wallet can sign
 */
 package rpcclient

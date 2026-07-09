@@ -41,6 +41,33 @@ func NewStopNotifyBlocksCmd() *StopNotifyBlocksCmd {
 	return &StopNotifyBlocksCmd{}
 }
 
+// NotifyNamesCmd defines the notifynames JSON-RPC command.
+type NotifyNamesCmd struct {
+	Names      *[]string `jsonrpcdefault:"[]"`
+	NameHashes *[]string `jsonrpcdefault:"[]"`
+}
+
+// NewNotifyNamesCmd returns a new instance which can be used to issue a
+// notifynames JSON-RPC command.
+//
+// The parameters which are pointers indicate they are optional.  Passing nil
+// for optional parameters subscribes to every name covenant update.
+func NewNotifyNamesCmd(names, nameHashes *[]string) *NotifyNamesCmd {
+	return &NotifyNamesCmd{
+		Names:      names,
+		NameHashes: nameHashes,
+	}
+}
+
+// StopNotifyNamesCmd defines the stopnotifynames JSON-RPC command.
+type StopNotifyNamesCmd struct{}
+
+// NewStopNotifyNamesCmd returns a new instance which can be used to issue a
+// stopnotifynames JSON-RPC command.
+func NewStopNotifyNamesCmd() *StopNotifyNamesCmd {
+	return &StopNotifyNamesCmd{}
+}
+
 // NotifyNewTransactionsCmd defines the notifynewtransactions JSON-RPC command.
 type NotifyNewTransactionsCmd struct {
 	Verbose *bool `jsonrpcdefault:"false"`
@@ -228,11 +255,13 @@ func init() {
 	MustRegisterCmd("authenticate", (*AuthenticateCmd)(nil), flags)
 	MustRegisterCmd("loadtxfilter", (*LoadTxFilterCmd)(nil), flags)
 	MustRegisterCmd("notifyblocks", (*NotifyBlocksCmd)(nil), flags)
+	MustRegisterCmd("notifynames", (*NotifyNamesCmd)(nil), flags)
 	MustRegisterCmd("notifynewtransactions", (*NotifyNewTransactionsCmd)(nil), flags)
 	MustRegisterCmd("notifyreceived", (*NotifyReceivedCmd)(nil), flags)
 	MustRegisterCmd("notifyspent", (*NotifySpentCmd)(nil), flags)
 	MustRegisterCmd("session", (*SessionCmd)(nil), flags)
 	MustRegisterCmd("stopnotifyblocks", (*StopNotifyBlocksCmd)(nil), flags)
+	MustRegisterCmd("stopnotifynames", (*StopNotifyNamesCmd)(nil), flags)
 	MustRegisterCmd("stopnotifynewtransactions", (*StopNotifyNewTransactionsCmd)(nil), flags)
 	MustRegisterCmd("stopnotifyspent", (*StopNotifySpentCmd)(nil), flags)
 	MustRegisterCmd("stopnotifyreceived", (*StopNotifyReceivedCmd)(nil), flags)

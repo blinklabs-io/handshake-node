@@ -36,6 +36,36 @@ func TestHnsutilAddressToWireRejectsTaprootShapedAddress(t *testing.T) {
 	}
 }
 
+func TestRPCClientAllowed(t *testing.T) {
+	nets, err := parseIPNets([]string{"127.0.0.1", "10.0.0.0/8"},
+		"rpcallowip")
+	if err != nil {
+		t.Fatalf("parseIPNets: %v", err)
+	}
+
+	server := &rpcServer{cfg: rpcserverConfig{RPCAllowNets: nets}}
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{addr: "127.0.0.1:12037", want: true},
+		{addr: "10.1.2.3:12037", want: true},
+		{addr: "192.0.2.1:12037", want: false},
+		{addr: "not-an-address", want: false},
+	}
+	for _, test := range tests {
+		if got := server.rpcClientAllowed(test.addr); got != test.want {
+			t.Fatalf("rpcClientAllowed(%q): got %v, want %v",
+				test.addr, got, test.want)
+		}
+	}
+
+	allowAll := &rpcServer{}
+	if !allowAll.rpcClientAllowed("192.0.2.1:12037") {
+		t.Fatalf("empty allowlist rejected RPC client")
+	}
+}
+
 type gbtTestTxSource struct {
 	updated time.Time
 }

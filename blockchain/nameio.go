@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
@@ -558,6 +559,34 @@ func (b *BlockChain) FetchNameStateByHash(nameHash chainhash.Hash) (
 		return nil, false, err
 	}
 	return state, found, nil
+}
+
+// FetchAllNameStates returns read-only snapshots for all currently persisted
+// Handshake name states.  Results are sorted by name hash for deterministic
+// RPC responses.
+func (b *BlockChain) FetchAllNameStates() ([]*NameState, error) {
+	var states []*NameState
+	err := b.db.View(func(dbTx database.Tx) error {
+		allStates, err := dbFetchAllNameStates(dbTx)
+		if err != nil {
+			return err
+		}
+		states = make([]*NameState, 0, len(allStates))
+		for _, ns := range allStates {
+			states = append(states, newNameStateView(ns))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(states, func(i, j int) bool {
+		left := states[i].NameHash()
+		right := states[j].NameHash()
+		return bytes.Compare(left[:], right[:]) < 0
+	})
+	return states, nil
 }
 
 // FetchNameProof returns an hsd-compatible Urkel proof for the provided name

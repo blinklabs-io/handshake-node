@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -33,6 +33,9 @@ var (
 // reconnect.
 type notificationState struct {
 	notifyBlocks       bool
+	notifyNamesAll     bool
+	notifyNames        map[string]struct{}
+	notifyNameHashes   map[string]struct{}
 	notifyNewTx        bool
 	notifyNewTxVerbose bool
 	notifyReceived     map[string]struct{}
@@ -43,6 +46,15 @@ type notificationState struct {
 func (s *notificationState) Copy() *notificationState {
 	var stateCopy notificationState
 	stateCopy.notifyBlocks = s.notifyBlocks
+	stateCopy.notifyNamesAll = s.notifyNamesAll
+	stateCopy.notifyNames = make(map[string]struct{})
+	for name := range s.notifyNames {
+		stateCopy.notifyNames[name] = struct{}{}
+	}
+	stateCopy.notifyNameHashes = make(map[string]struct{})
+	for hash := range s.notifyNameHashes {
+		stateCopy.notifyNameHashes[hash] = struct{}{}
+	}
 	stateCopy.notifyNewTx = s.notifyNewTx
 	stateCopy.notifyNewTxVerbose = s.notifyNewTxVerbose
 	stateCopy.notifyReceived = make(map[string]struct{})
@@ -60,8 +72,10 @@ func (s *notificationState) Copy() *notificationState {
 // newNotificationState returns a new notification state ready to be populated.
 func newNotificationState() *notificationState {
 	return &notificationState{
-		notifyReceived: make(map[string]struct{}),
-		notifySpent:    make(map[hnsjson.OutPoint]struct{}),
+		notifyNames:      make(map[string]struct{}),
+		notifyNameHashes: make(map[string]struct{}),
+		notifyReceived:   make(map[string]struct{}),
+		notifySpent:      make(map[hnsjson.OutPoint]struct{}),
 	}
 }
 
@@ -150,6 +164,10 @@ type NotificationHandlers struct {
 	// NOTE: This is a btcsuite extension ported from
 	// github.com/decred/dcrrpcclient.
 	OnRelevantTxAccepted func(transaction []byte)
+
+	// OnNameUpdated is invoked when a mempool transaction or newly connected
+	// block contains a subscribed Handshake name covenant.
+	OnNameUpdated func(notification *hnsjson.NameUpdatedNtfn)
 
 	// OnRescanFinished is invoked after a rescan finishes due to a previous
 	// call to Rescan or RescanEndHeight.  Finished rescans should be
@@ -340,6 +358,23 @@ func (c *Client) handleNotification(ntfn *rawNotification) {
 		}
 
 		c.ntfnHandlers.OnRelevantTxAccepted(transaction)
+
+	// OnNameUpdated
+	case hnsjson.NameUpdatedNtfnMethod:
+		// Ignore the notification if the client is not interested in
+		// it.
+		if c.ntfnHandlers.OnNameUpdated == nil {
+			return
+		}
+
+		notification, err := parseNameUpdatedNtfnParams(ntfn.Params)
+		if err != nil {
+			log.Warnf("Received invalid nameupdated notification: %v",
+				err)
+			return
+		}
+
+		c.ntfnHandlers.OnNameUpdated(notification)
 
 	// OnRescanFinished
 	case hnsjson.RescanFinishedNtfnMethod:
@@ -634,6 +669,43 @@ func parseRelevantTxAcceptedParams(params []json.RawMessage) (transaction []byte
 	return parseHexParam(params[0])
 }
 
+// parseNameUpdatedNtfnParams parses the parameters included in a nameupdated
+// notification.
+func parseNameUpdatedNtfnParams(params []json.RawMessage) (*hnsjson.NameUpdatedNtfn,
+	error) {
+
+	if len(params) < 6 || len(params) > 7 {
+		return nil, wrongNumParams(len(params))
+	}
+
+	ntfn := &hnsjson.NameUpdatedNtfn{}
+	if err := json.Unmarshal(params[0], &ntfn.Name); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(params[1], &ntfn.NameHash); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(params[2], &ntfn.Covenant); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(params[3], &ntfn.CovenantType); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(params[4], &ntfn.TxID); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(params[5], &ntfn.Vout); err != nil {
+		return nil, err
+	}
+	if len(params) == 7 {
+		if err := json.Unmarshal(params[6], &ntfn.Block); err != nil {
+			return nil, err
+		}
+	}
+
+	return ntfn, nil
+}
+
 // parseChainTxNtfnParams parses out the transaction and optional details about
 // the block it's mined in from the parameters of recvtx and redeemingtx
 // notifications.
@@ -900,6 +972,72 @@ func (c *Client) NotifyBlocksAsync() FutureNotifyBlocksResult {
 // NOTE: This is a btcd extension and requires a websocket connection.
 func (c *Client) NotifyBlocks() error {
 	return c.NotifyBlocksAsync().Receive()
+}
+
+// FutureNotifyNamesResult is a future promise to deliver the result of a
+// NotifyNamesAsync RPC invocation (or an applicable error).
+type FutureNotifyNamesResult chan *Response
+
+// Receive waits for the Response promised by the future and returns an error
+// if the registration was not successful.
+func (r FutureNotifyNamesResult) Receive() error {
+	_, err := ReceiveFuture(r)
+	return err
+}
+
+func (c *Client) notifyNamesInternal(names, nameHashes []string) FutureNotifyNamesResult {
+	// Not supported in HTTP POST mode.
+	if c.config.HTTPPostMode {
+		return newFutureError(ErrWebsocketsRequired)
+	}
+
+	// Ignore the notification if the client is not interested in
+	// notifications.
+	if c.ntfnHandlers == nil {
+		return newNilFutureResult()
+	}
+
+	var namesPtr *[]string
+	if names != nil || len(nameHashes) > 0 {
+		namesPtr = &names
+	}
+	var nameHashesPtr *[]string
+	if nameHashes != nil {
+		nameHashesPtr = &nameHashes
+	}
+	cmd := hnsjson.NewNotifyNamesCmd(namesPtr, nameHashesPtr)
+	return c.SendCmd(cmd)
+}
+
+// NotifyNamesAsync returns an instance of a type that can be used to get the
+// result of the RPC at some future time by invoking the Receive function on the
+// returned instance.
+//
+// See NotifyNames for the blocking version and more details.
+//
+// NOTE: This is a handshake-node extension and requires a websocket
+// connection.
+func (c *Client) NotifyNamesAsync(names []string,
+	nameHashes []chainhash.Hash) FutureNotifyNamesResult {
+
+	hashes := make([]string, 0, len(nameHashes))
+	for _, nameHash := range nameHashes {
+		hashes = append(hashes, nameHash.String())
+	}
+	return c.notifyNamesInternal(names, hashes)
+}
+
+// NotifyNames registers the client to receive notifications when matching
+// Handshake name covenants are accepted to the mempool or connected in a block.
+// Passing no names and no name hashes registers for all name covenant updates.
+//
+// The notifications delivered as a result of this call will be via
+// OnNameUpdated.
+//
+// NOTE: This is a handshake-node extension and requires a websocket
+// connection.
+func (c *Client) NotifyNames(names []string, nameHashes []chainhash.Hash) error {
+	return c.NotifyNamesAsync(names, nameHashes).Receive()
 }
 
 // FutureNotifySpentResult is a future promise to deliver the result of a

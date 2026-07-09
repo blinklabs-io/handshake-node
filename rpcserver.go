@@ -427,7 +427,17 @@ type commandHandler func(*rpcServer, interface{}, <-chan struct{}) (interface{},
 var rpcHandlers map[string]commandHandler
 var rpcHandlersBeforeInit = map[string]commandHandler{
 	"addnode":                handleAddNode,
+	"createbid":              handleCreateBid,
+	"createfinalize":         handleCreateFinalize,
+	"createopen":             handleCreateOpen,
 	"createrawtransaction":   handleCreateRawTransaction,
+	"createregister":         handleCreateRegister,
+	"createredeem":           handleCreateRedeem,
+	"createrenew":            handleCreateRenew,
+	"createreveal":           handleCreateReveal,
+	"createrevoke":           handleCreateRevoke,
+	"createtransfer":         handleCreateTransfer,
+	"createupdate":           handleCreateUpdate,
 	"debuglevel":             handleDebugLevel,
 	"decoderawtransaction":   handleDecodeRawTransaction,
 	"decodescript":           handleDecodeScript,
@@ -454,6 +464,13 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getinfo":                handleGetInfo,
 	"getmempoolinfo":         handleGetMempoolInfo,
 	"getmininginfo":          handleGetMiningInfo,
+	"getauctioninfo":         handleGetAuctionInfo,
+	"getnamebyhash":          handleGetNameByHash,
+	"getnameinfo":            handleGetNameInfo,
+	"getnameproof":           handleGetNameProof,
+	"getnameresource":        handleGetNameResource,
+	"getnames":               handleGetNames,
+	"getnamesbyhash":         handleGetNamesByHash,
 	"getnettotals":           handleGetNetTotals,
 	"getnetworkhashps":       handleGetNetworkHashPS,
 	"getnodeaddresses":       handleGetNodeAddresses,
@@ -475,6 +492,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"uptime":                 handleUptime,
 	"validateaddress":        handleValidateAddress,
 	"verifychain":            handleVerifyChain,
+	"verifynameproof":        handleVerifyNameProof,
 	"verifymessage":          handleVerifyMessage,
 	"version":                handleVersion,
 	"testmempoolaccept":      handleTestMempoolAccept,
@@ -864,93 +882,447 @@ func messageToHex(msg wire.Message) (string, error) {
 	return hex.EncodeToString(buf.Bytes()), nil
 }
 
+func validateTxLockTime(lockTime *int64) *hnsjson.RPCError {
+	if lockTime != nil &&
+		(*lockTime < 0 || *lockTime > int64(wire.MaxTxInSequenceNum)) {
+		return &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCInvalidParameter,
+			Message: "Locktime out of range",
+		}
+	}
+	return nil
+}
+
+func addTxInputs(mtx *wire.MsgTx, inputs []hnsjson.TransactionInput,
+	lockTime *int64) *hnsjson.RPCError {
+
+	for _, input := range inputs {
+		txHash, err := chainhash.NewHashFromStr(input.Txid)
+		if err != nil {
+			return rpcDecodeHexError(input.Txid)
+		}
+
+		prevOut := wire.NewOutPoint(txHash, input.Vout)
+		txIn := wire.NewTxIn(prevOut, wire.MaxTxInSequenceNum, nil)
+		if lockTime != nil && *lockTime != 0 {
+			txIn.Sequence = wire.MaxTxInSequenceNum - 1
+		}
+		mtx.AddTxIn(txIn)
+	}
+	return nil
+}
+
+func parseOutputAddress(s *rpcServer, encodedAddr string) (wire.Address, *hnsjson.RPCError) {
+	params := s.cfg.ChainParams
+	addr, err := hnsutil.DecodeAddress(encodedAddr, params)
+	if err != nil {
+		return wire.Address{}, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCInvalidAddressOrKey,
+			Message: "Invalid address or key: " + err.Error(),
+		}
+	}
+	if !addr.IsForNet(params) {
+		return wire.Address{}, &hnsjson.RPCError{
+			Code: hnsjson.ErrRPCInvalidAddressOrKey,
+			Message: "Invalid address: " + encodedAddr +
+				" is for the wrong network",
+		}
+	}
+	wireAddr, err := hnsutilAddressToWire(addr)
+	if err != nil {
+		return wire.Address{}, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCInvalidAddressOrKey,
+			Message: "Invalid address or key: " + err.Error(),
+		}
+	}
+	return wireAddr, nil
+}
+
+func hnsToDoo(amount float64) (int64, *hnsjson.RPCError) {
+	if amount <= 0 {
+		return 0, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCType,
+			Message: "Invalid amount",
+		}
+	}
+	doos, err := hnsutil.NewAmount(amount)
+	if err != nil {
+		return 0, internalRPCError(err.Error(), "Failed to convert amount")
+	}
+	if int64(doos) > hnsutil.MaxDoo {
+		return 0, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCType,
+			Message: "Invalid amount",
+		}
+	}
+	return int64(doos), nil
+}
+
+func createCovenantTxHex(s *rpcServer, inputs []hnsjson.TransactionInput,
+	address string, amount float64, covenant wire.Covenant,
+	lockTime *int64) (interface{}, error) {
+
+	if rpcErr := validateTxLockTime(lockTime); rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	mtx := wire.NewMsgTx(wire.TxVersion)
+	if rpcErr := addTxInputs(mtx, inputs, lockTime); rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	wireAddr, rpcErr := parseOutputAddress(s, address)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	value, rpcErr := hnsToDoo(amount)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	mtx.AddTxOut(wire.NewTxOut(value, wireAddr, covenant))
+
+	if lockTime != nil {
+		mtx.LockTime = uint32(*lockTime)
+	}
+	mtxHex, err := messageToHex(mtx)
+	if err != nil {
+		return nil, err
+	}
+	return mtxHex, nil
+}
+
+func u32CovenantItem(value uint32) []byte {
+	var item [4]byte
+	binary.LittleEndian.PutUint32(item[:], value)
+	return append([]byte(nil), item[:]...)
+}
+
+func u8CovenantItem(value uint8) []byte {
+	return []byte{value}
+}
+
+func hashCovenantItem(hash chainhash.Hash) []byte {
+	return append([]byte(nil), hash[:]...)
+}
+
+func parseHashCovenantItem(value, field string) ([]byte, *hnsjson.RPCError) {
+	hash, rpcErr := parseRPCHash(value, field)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return hashCovenantItem(hash), nil
+}
+
+func parseHexCovenantItem(value, field string, maxLen int) ([]byte, *hnsjson.RPCError) {
+	item, err := hex.DecodeString(value)
+	if err != nil {
+		return nil, rpcDecodeHexError(value)
+	}
+	if len(item) > maxLen {
+		return nil, rpcInvalidParameterError(fmt.Sprintf(
+			"%s exceeds max length %d", field, maxLen))
+	}
+	return item, nil
+}
+
+func validateCovenantName(s *rpcServer, name string) *hnsjson.RPCError {
+	if _, _, err := s.cfg.Chain.FetchNameState([]byte(name)); err != nil {
+		return rpcNameLookupError(err)
+	}
+	return nil
+}
+
+func renewalHashForNextBlock(s *rpcServer) (chainhash.Hash, error) {
+	best := s.cfg.Chain.BestSnapshot()
+	var nextHeight uint32
+	if best.Height >= 0 {
+		nextHeight = uint32(best.Height) + 1
+	}
+	if nextHeight < s.cfg.ChainParams.NameRenewalMaturity {
+		return chainhash.Hash{}, nil
+	}
+
+	renewalHeight := nextHeight - s.cfg.ChainParams.NameRenewalMaturity
+	hash, err := s.cfg.Chain.BlockHashByHeight(int32(renewalHeight))
+	if err != nil {
+		return chainhash.Hash{}, err
+	}
+	return *hash, nil
+}
+
+func renewalHashItem(s *rpcServer, provided *string) ([]byte, error) {
+	if provided != nil {
+		item, rpcErr := parseHashCovenantItem(*provided, "renewal hash")
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+		return item, nil
+	}
+
+	hash, err := renewalHashForNextBlock(s)
+	if err != nil {
+		return nil, internalRPCError(err.Error(),
+			"Failed to choose renewal hash")
+	}
+	return hashCovenantItem(hash), nil
+}
+
+// handleCreateOpen handles createopen commands.
+func handleCreateOpen(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateOpenCmd)
+	if rpcErr := validateCovenantName(s, c.Name); rpcErr != nil {
+		return nil, rpcErr
+	}
+	nameHash := blockchain.HashName([]byte(c.Name))
+	covenant := wire.Covenant{
+		Type: wire.CovenantOpen,
+		Items: [][]byte{
+			hashCovenantItem(nameHash),
+			u32CovenantItem(0),
+			[]byte(c.Name),
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateBid handles createbid commands.
+func handleCreateBid(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateBidCmd)
+	if rpcErr := validateCovenantName(s, c.Name); rpcErr != nil {
+		return nil, rpcErr
+	}
+	blind, rpcErr := parseHashCovenantItem(c.Blind, "blind")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	nameHash := blockchain.HashName([]byte(c.Name))
+	covenant := wire.Covenant{
+		Type: wire.CovenantBid,
+		Items: [][]byte{
+			hashCovenantItem(nameHash),
+			u32CovenantItem(c.Start),
+			[]byte(c.Name),
+			blind,
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateReveal handles createreveal commands.
+func handleCreateReveal(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateRevealCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	nonce, rpcErr := parseHashCovenantItem(c.Nonce, "nonce")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantReveal,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+			nonce,
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateRedeem handles createredeem commands.
+func handleCreateRedeem(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateRedeemCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantRedeem,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateRegister handles createregister commands.
+func handleCreateRegister(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateRegisterCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	resource, rpcErr := parseHexCovenantItem(c.Resource, "resource", 512)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	renewal, err := renewalHashItem(s, c.RenewalHash)
+	if err != nil {
+		return nil, err
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantRegister,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+			resource,
+			renewal,
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateUpdate handles createupdate commands.
+func handleCreateUpdate(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateUpdateCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	resource, rpcErr := parseHexCovenantItem(c.Resource, "resource", 512)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantUpdate,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+			resource,
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateRenew handles createrenew commands.
+func handleCreateRenew(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateRenewCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	renewal, err := renewalHashItem(s, c.RenewalHash)
+	if err != nil {
+		return nil, err
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantRenew,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+			renewal,
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateTransfer handles createtransfer commands.
+func handleCreateTransfer(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateTransferCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	transferAddr, rpcErr := parseOutputAddress(s, c.TransferAddress)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantTransfer,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+			u8CovenantItem(transferAddr.Version),
+			append([]byte(nil), transferAddr.Hash...),
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateFinalize handles createfinalize commands.
+func handleCreateFinalize(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateFinalizeCmd)
+	if rpcErr := validateCovenantName(s, c.Name); rpcErr != nil {
+		return nil, rpcErr
+	}
+	renewal, err := renewalHashItem(s, c.RenewalHash)
+	if err != nil {
+		return nil, err
+	}
+	nameHash := blockchain.HashName([]byte(c.Name))
+	covenant := wire.Covenant{
+		Type: wire.CovenantFinalize,
+		Items: [][]byte{
+			hashCovenantItem(nameHash),
+			u32CovenantItem(c.Start),
+			[]byte(c.Name),
+			u8CovenantItem(c.Flags),
+			u32CovenantItem(c.Claimed),
+			u32CovenantItem(c.Renewals),
+			renewal,
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
+// handleCreateRevoke handles createrevoke commands.
+func handleCreateRevoke(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.CreateRevokeCmd)
+	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	covenant := wire.Covenant{
+		Type: wire.CovenantRevoke,
+		Items: [][]byte{
+			nameHash,
+			u32CovenantItem(c.Start),
+		},
+	}
+	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
+		covenant, c.LockTime)
+}
+
 // handleCreateRawTransaction handles createrawtransaction commands.
 func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateRawTransactionCmd)
 
 	// Validate the locktime, if given.
-	if c.LockTime != nil &&
-		(*c.LockTime < 0 || *c.LockTime > int64(wire.MaxTxInSequenceNum)) {
-		return nil, &hnsjson.RPCError{
-			Code:    hnsjson.ErrRPCInvalidParameter,
-			Message: "Locktime out of range",
-		}
+	if rpcErr := validateTxLockTime(c.LockTime); rpcErr != nil {
+		return nil, rpcErr
 	}
 
 	// Add all transaction inputs to a new transaction after performing
 	// some validity checks.
 	mtx := wire.NewMsgTx(wire.TxVersion)
-	for _, input := range c.Inputs {
-		txHash, err := chainhash.NewHashFromStr(input.Txid)
-		if err != nil {
-			return nil, rpcDecodeHexError(input.Txid)
-		}
-
-		prevOut := wire.NewOutPoint(txHash, input.Vout)
-		txIn := wire.NewTxIn(prevOut, wire.MaxTxInSequenceNum, nil)
-		if c.LockTime != nil && *c.LockTime != 0 {
-			txIn.Sequence = wire.MaxTxInSequenceNum - 1
-		}
-		mtx.AddTxIn(txIn)
+	if rpcErr := addTxInputs(mtx, c.Inputs, c.LockTime); rpcErr != nil {
+		return nil, rpcErr
 	}
 
 	// Add all transaction outputs to the transaction after performing
 	// some validity checks.
-	params := s.cfg.ChainParams
 	for encodedAddr, amount := range c.Amounts {
-		if amount <= 0 {
-			return nil, &hnsjson.RPCError{
-				Code:    hnsjson.ErrRPCType,
-				Message: "Invalid amount",
-			}
+		wireAddr, rpcErr := parseOutputAddress(s, encodedAddr)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+		value, rpcErr := hnsToDoo(amount)
+		if rpcErr != nil {
+			return nil, rpcErr
 		}
 
-		// Decode the provided address.
-		addr, err := hnsutil.DecodeAddress(encodedAddr, params)
-		if err != nil {
-			return nil, &hnsjson.RPCError{
-				Code:    hnsjson.ErrRPCInvalidAddressOrKey,
-				Message: "Invalid address or key: " + err.Error(),
-			}
-		}
-
-		// Ensure the network encoded with the address matches the
-		// network the server is currently on.  DecodeAddress validates
-		// the bech32 address range, then hnsutilAddressToWire applies
-		// the narrower transaction output rules.
-		if !addr.IsForNet(params) {
-			return nil, &hnsjson.RPCError{
-				Code: hnsjson.ErrRPCInvalidAddressOrKey,
-				Message: "Invalid address: " + encodedAddr +
-					" is for the wrong network",
-			}
-		}
-		wireAddr, err := hnsutilAddressToWire(addr)
-		if err != nil {
-			return nil, &hnsjson.RPCError{
-				Code: hnsjson.ErrRPCInvalidAddressOrKey,
-				Message: "Invalid address or key: " +
-					err.Error(),
-			}
-		}
-
-		// Convert the HNS amount to integer dollarydoos, then range-check
-		// against MaxDoo.  Doing the clamp on the converted integer
-		// avoids float rounding/overflow edge cases that a pre-conversion
-		// check misses.
-		doos, err := hnsutil.NewAmount(amount)
-		if err != nil {
-			context := "Failed to convert amount"
-			return nil, internalRPCError(err.Error(), context)
-		}
-		if int64(doos) > hnsutil.MaxDoo {
-			return nil, &hnsjson.RPCError{
-				Code:    hnsjson.ErrRPCType,
-				Message: "Invalid amount",
-			}
-		}
-
-		txOut := wire.NewTxOut(int64(doos), wireAddr, wire.Covenant{})
+		txOut := wire.NewTxOut(value, wireAddr, wire.Covenant{})
 		mtx.AddTxOut(txOut)
 	}
 
@@ -2646,6 +3018,447 @@ func handleGetCFilterHeader(s *rpcServer, cmd interface{}, closeChan <-chan stru
 
 	hash.SetBytes(headerBytes)
 	return hash.String(), nil
+}
+
+func rpcInvalidParameterError(message string) *hnsjson.RPCError {
+	return &hnsjson.RPCError{
+		Code:    hnsjson.ErrRPCInvalidParameter,
+		Message: message,
+	}
+}
+
+func rpcNameLookupError(err error) *hnsjson.RPCError {
+	if strings.HasPrefix(err.Error(), "invalid Handshake name") {
+		return rpcInvalidParameterError(err.Error())
+	}
+	return internalRPCError(err.Error(), "Failed to query name state")
+}
+
+func parseRPCHash(value, field string) (chainhash.Hash, *hnsjson.RPCError) {
+	hash, err := chainhash.NewHashFromStr(value)
+	if err != nil {
+		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
+			"Invalid %s %q", field, value))
+	}
+	return *hash, nil
+}
+
+func nameStateToJSON(ns *blockchain.NameState) *hnsjson.NameStateResult {
+	owner := ns.Owner()
+	return &hnsjson.NameStateResult{
+		Name:       ns.Name(),
+		NameHash:   ns.NameHash().String(),
+		Height:     ns.Height(),
+		Renewal:    ns.Renewal(),
+		OwnerHash:  owner.Hash.String(),
+		OwnerIndex: owner.Index,
+		Value:      ns.Value(),
+		Highest:    ns.Highest(),
+		Data:       hex.EncodeToString(ns.Data()),
+		Transfer:   ns.Transfer(),
+		Revoked:    ns.Revoked(),
+		Claimed:    ns.Claimed(),
+		Renewals:   ns.Renewals(),
+		Registered: ns.Registered(),
+		Expired:    ns.Expired(),
+		Weak:       ns.Weak(),
+	}
+}
+
+func resourceRecordToJSON(record wire.DomainRecord) *hnsjson.NameResourceRecordResult {
+	switch r := record.(type) {
+	case *wire.DsDomainRecord:
+		return &hnsjson.NameResourceRecordResult{
+			Type:       "DS",
+			TypeID:     r.Type(),
+			KeyTag:     r.KeyTag,
+			Algorithm:  r.Algorithm,
+			DigestType: r.DigestType,
+			Digest:     hex.EncodeToString(r.Digest),
+		}
+	case *wire.NsDomainRecord:
+		return &hnsjson.NameResourceRecordResult{
+			Type:   "NS",
+			TypeID: r.Type(),
+			Name:   r.Name,
+		}
+	case *wire.Glue4DomainRecord:
+		return &hnsjson.NameResourceRecordResult{
+			Type:    "GLUE4",
+			TypeID:  r.Type(),
+			Name:    r.Name,
+			Address: r.Address.String(),
+		}
+	case *wire.Glue6DomainRecord:
+		return &hnsjson.NameResourceRecordResult{
+			Type:    "GLUE6",
+			TypeID:  r.Type(),
+			Name:    r.Name,
+			Address: r.Address.String(),
+		}
+	case *wire.Synth4DomainRecord:
+		return &hnsjson.NameResourceRecordResult{
+			Type:    "SYNTH4",
+			TypeID:  r.Type(),
+			Address: r.Address.String(),
+		}
+	case *wire.Synth6DomainRecord:
+		return &hnsjson.NameResourceRecordResult{
+			Type:    "SYNTH6",
+			TypeID:  r.Type(),
+			Address: r.Address.String(),
+		}
+	case *wire.TextDomainRecord:
+		items := make([]string, 0, len(r.Items))
+		for _, item := range r.Items {
+			items = append(items, hex.EncodeToString(item))
+		}
+		return &hnsjson.NameResourceRecordResult{
+			Type:   "TXT",
+			TypeID: r.Type(),
+			Items:  items,
+		}
+	default:
+		return &hnsjson.NameResourceRecordResult{
+			Type:   "UNKNOWN",
+			TypeID: record.Type(),
+		}
+	}
+}
+
+func resourceDataToJSON(resource *wire.DomainResourceData) *hnsjson.NameResourceDataResult {
+	result := &hnsjson.NameResourceDataResult{
+		Version: resource.Version,
+		Records: make([]*hnsjson.NameResourceRecordResult, 0,
+			len(resource.Records)),
+	}
+	for _, record := range resource.Records {
+		result.Records = append(result.Records, resourceRecordToJSON(record))
+	}
+	return result
+}
+
+func nextFutureHeight(current, next, candidate uint32) uint32 {
+	if candidate <= current {
+		return next
+	}
+	if next == 0 || candidate < next {
+		return candidate
+	}
+	return next
+}
+
+func nameAuctionInfoToJSON(name string, currentHeight uint32,
+	params *chaincfg.Params, state *blockchain.NameState,
+	found bool) *hnsjson.GetAuctionInfoResult {
+
+	nameHash := blockchain.HashName([]byte(name))
+	result := &hnsjson.GetAuctionInfoResult{
+		Name:          name,
+		NameHash:      nameHash.String(),
+		Found:         found,
+		Phase:         "available",
+		CurrentHeight: currentHeight,
+	}
+	if !found {
+		return result
+	}
+
+	owner := state.Owner()
+	result.Name = state.Name()
+	if result.Name == "" {
+		result.Name = name
+	}
+	result.NameHash = state.NameHash().String()
+	result.StartHeight = state.Height()
+	result.OwnerHash = owner.Hash.String()
+	result.OwnerIndex = owner.Index
+	result.Value = state.Value()
+	result.Highest = state.Highest()
+	result.RenewalHeight = state.Renewal()
+	result.ExpirationHeight = state.Renewal() + params.NameRenewalWindow
+	result.Registered = state.Registered()
+	result.Expired = state.Expired()
+	result.Weak = state.Weak()
+
+	if transfer := state.Transfer(); transfer != 0 {
+		result.TransferUnlockHeight = transfer + params.NameTransferLockup
+	}
+	if revoked := state.Revoked(); revoked != 0 {
+		result.RevokeMaturityHeight = revoked + params.NameAuctionMaturity
+	}
+
+	openPeriod := params.NameTreeInterval + 1
+	if state.Revoked() != 0 {
+		result.Phase = "revoked"
+		result.NextHeight = nextFutureHeight(currentHeight, 0,
+			result.RevokeMaturityHeight)
+		return result
+	}
+
+	if state.Claimed() != 0 {
+		result.CloseHeight = state.Height() + params.NameLockupPeriod
+		if currentHeight < result.CloseHeight {
+			result.Phase = "locked"
+			result.NextHeight = result.CloseHeight
+		} else {
+			result.Phase = "closed"
+		}
+		result.NextHeight = nextFutureHeight(currentHeight,
+			result.NextHeight, result.TransferUnlockHeight)
+		result.NextHeight = nextFutureHeight(currentHeight,
+			result.NextHeight, result.ExpirationHeight)
+		return result
+	}
+
+	result.BiddingStart = state.Height() + openPeriod
+	result.RevealStart = result.BiddingStart + params.NameBiddingPeriod
+	result.CloseHeight = result.RevealStart + params.NameRevealPeriod
+	switch {
+	case currentHeight < result.BiddingStart:
+		result.Phase = "opening"
+		result.NextHeight = result.BiddingStart
+	case currentHeight < result.RevealStart:
+		result.Phase = "bidding"
+		result.NextHeight = result.RevealStart
+	case currentHeight < result.CloseHeight:
+		result.Phase = "reveal"
+		result.NextHeight = result.CloseHeight
+	default:
+		result.Phase = "closed"
+		result.NextHeight = nextFutureHeight(currentHeight, 0,
+			result.TransferUnlockHeight)
+		result.NextHeight = nextFutureHeight(currentHeight,
+			result.NextHeight, result.ExpirationHeight)
+	}
+	return result
+}
+
+// handleGetNameInfo implements the getnameinfo command.
+func handleGetNameInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetNameInfoCmd)
+	state, found, err := s.cfg.Chain.FetchNameState([]byte(c.Name))
+	if err != nil {
+		return nil, rpcNameLookupError(err)
+	}
+	if !found {
+		return &hnsjson.GetNameInfoResult{Found: false}, nil
+	}
+	return &hnsjson.GetNameInfoResult{
+		Found: true,
+		State: nameStateToJSON(state),
+	}, nil
+}
+
+// handleGetNameByHash implements the getnamebyhash command.
+func handleGetNameByHash(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetNameByHashCmd)
+	nameHash, rpcErr := parseRPCHash(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	state, found, err := s.cfg.Chain.FetchNameStateByHash(nameHash)
+	if err != nil {
+		return nil, internalRPCError(err.Error(), "Failed to query name state")
+	}
+	if !found {
+		return &hnsjson.GetNameInfoResult{Found: false}, nil
+	}
+	return &hnsjson.GetNameInfoResult{
+		Found: true,
+		State: nameStateToJSON(state),
+	}, nil
+}
+
+// handleGetNames implements the getnames command.
+func handleGetNames(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c, ok := cmd.(*hnsjson.GetNamesCmd)
+	if !ok {
+		return nil, hnsjson.ErrRPCInternal
+	}
+
+	offset := 0
+	if c.Offset != nil {
+		offset = *c.Offset
+	}
+	if offset < 0 {
+		return nil, rpcInvalidParameterError("offset cannot be negative")
+	}
+
+	limit := 0
+	if c.Limit != nil {
+		limit = *c.Limit
+	}
+	if limit < 0 {
+		return nil, rpcInvalidParameterError("limit cannot be negative")
+	}
+
+	states, err := s.cfg.Chain.FetchAllNameStates()
+	if err != nil {
+		return nil, internalRPCError(err.Error(), "Failed to list names")
+	}
+
+	if offset > len(states) {
+		states = nil
+	} else {
+		states = states[offset:]
+	}
+	if limit > 0 && limit < len(states) {
+		states = states[:limit]
+	}
+
+	results := make([]*hnsjson.NameStateResult, 0, len(states))
+	for _, state := range states {
+		results = append(results, nameStateToJSON(state))
+	}
+	return results, nil
+}
+
+// handleGetNamesByHash implements the getnamesbyhash command.
+func handleGetNamesByHash(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetNamesByHashCmd)
+	results := make([]*hnsjson.GetNameInfoResult, 0, len(c.NameHashes))
+	for _, hashStr := range c.NameHashes {
+		nameHash, rpcErr := parseRPCHash(hashStr, "name hash")
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+
+		state, found, err := s.cfg.Chain.FetchNameStateByHash(nameHash)
+		if err != nil {
+			return nil, internalRPCError(err.Error(),
+				"Failed to query name state")
+		}
+		if !found {
+			results = append(results, &hnsjson.GetNameInfoResult{
+				Found: false,
+			})
+			continue
+		}
+		results = append(results, &hnsjson.GetNameInfoResult{
+			Found: true,
+			State: nameStateToJSON(state),
+		})
+	}
+	return results, nil
+}
+
+// handleGetNameResource implements the getnameresource command.
+func handleGetNameResource(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetNameResourceCmd)
+	nameHash := blockchain.HashName([]byte(c.Name))
+	result := &hnsjson.GetNameResourceResult{
+		Name:     c.Name,
+		NameHash: nameHash.String(),
+	}
+
+	state, found, err := s.cfg.Chain.FetchNameState([]byte(c.Name))
+	if err != nil {
+		return nil, rpcNameLookupError(err)
+	}
+	if !found {
+		return result, nil
+	}
+
+	data := state.Data()
+	result.Found = true
+	result.Data = hex.EncodeToString(data)
+	if len(data) == 0 {
+		return result, nil
+	}
+
+	resource, err := wire.NewDomainResourceDataFromBytes(data)
+	if err != nil {
+		return nil, internalRPCError(err.Error(),
+			"Failed to decode name resource")
+	}
+	result.Resource = resourceDataToJSON(resource)
+	return result, nil
+}
+
+// handleGetAuctionInfo implements the getauctioninfo command.
+func handleGetAuctionInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetAuctionInfoCmd)
+	state, found, err := s.cfg.Chain.FetchNameState([]byte(c.Name))
+	if err != nil {
+		return nil, rpcNameLookupError(err)
+	}
+
+	best := s.cfg.Chain.BestSnapshot()
+	var currentHeight uint32
+	if best.Height > 0 {
+		currentHeight = uint32(best.Height)
+	}
+	return nameAuctionInfoToJSON(c.Name, currentHeight, s.cfg.ChainParams,
+		state, found), nil
+}
+
+// handleGetNameProof implements the getnameproof command.
+func handleGetNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetNameProofCmd)
+	if _, _, err := s.cfg.Chain.FetchNameState([]byte(c.Name)); err != nil {
+		return nil, rpcNameLookupError(err)
+	}
+
+	var root chainhash.Hash
+	if c.Root != nil {
+		parsedRoot, rpcErr := parseRPCHash(*c.Root, "name root")
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+		root = parsedRoot
+	} else {
+		var err error
+		root, err = s.cfg.Chain.NameRoot()
+		if err != nil {
+			return nil, internalRPCError(err.Error(),
+				"Failed to query name root")
+		}
+	}
+
+	nameHash := blockchain.HashName([]byte(c.Name))
+	proof, err := s.cfg.Chain.FetchNameProof(root, nameHash)
+	if err != nil {
+		return nil, rpcInvalidParameterError(err.Error())
+	}
+	return &hnsjson.GetNameProofResult{
+		Name:     c.Name,
+		NameHash: nameHash.String(),
+		Root:     root.String(),
+		Proof:    hex.EncodeToString(proof),
+	}, nil
+}
+
+// handleVerifyNameProof implements the verifynameproof command.
+func handleVerifyNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.VerifyNameProofCmd)
+	root, rpcErr := parseRPCHash(c.Root, "name root")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	nameHash, rpcErr := parseRPCHash(c.NameHash, "name hash")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	proof, err := hex.DecodeString(c.Proof)
+	if err != nil {
+		return nil, rpcDecodeHexError(c.Proof)
+	}
+	value, exists, err := blockchain.VerifyUrkelProof(root, nameHash, proof)
+	if err != nil {
+		return nil, rpcInvalidParameterError(err.Error())
+	}
+	result := &hnsjson.VerifyNameProofResult{
+		Root:     root.String(),
+		NameHash: nameHash.String(),
+		Exists:   exists,
+	}
+	if exists {
+		result.Value = hex.EncodeToString(value)
+	}
+	return result, nil
 }
 
 // handleGetConnectionCount implements the getconnectioncount command.
@@ -4487,6 +5300,39 @@ func (s *rpcServer) limitConnections(w http.ResponseWriter, remoteAddr string) b
 	return false
 }
 
+func (s *rpcServer) rpcClientAllowed(remoteAddr string) bool {
+	if len(s.cfg.RPCAllowNets) == 0 {
+		return true
+	}
+
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, ipnet := range s.cfg.RPCAllowNets {
+		if ipnet.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *rpcServer) rejectDisallowedRPCClient(w http.ResponseWriter,
+	remoteAddr string) bool {
+
+	if s.rpcClientAllowed(remoteAddr) {
+		return false
+	}
+
+	rpcsLog.Warnf("RPC client %s rejected by rpcallowip", remoteAddr)
+	http.Error(w, "403 Forbidden.", http.StatusForbidden)
+	return true
+}
+
 // incrementClients adds one to the number of connected RPC clients.  Note
 // this only applies to standard clients.  Websocket clients have their own
 // limits and are tracked separately.
@@ -4963,6 +5809,10 @@ func (s *rpcServer) Start() {
 		w.Header().Set("Content-Type", "application/json")
 		r.Close = true
 
+		if s.rejectDisallowedRPCClient(w, r.RemoteAddr) {
+			return
+		}
+
 		// Limit the number of connections to max allowed.
 		if s.limitConnections(w, r.RemoteAddr) {
 			return
@@ -4983,6 +5833,10 @@ func (s *rpcServer) Start() {
 
 	// Websocket endpoint.
 	rpcServeMux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		if s.rejectDisallowedRPCClient(w, r.RemoteAddr) {
+			return
+		}
+
 		authenticated, isAdmin, err := s.checkAuth(r, false)
 		if err != nil {
 			jsonAuthFail(w)
@@ -5201,6 +6055,10 @@ type rpcserverConfig struct {
 	// The fee estimator keeps track of how long transactions are left in
 	// the mempool before they are mined into blocks.
 	FeeEstimator *mempool.FeeEstimator
+
+	// RPCAllowNets optionally restricts RPC clients to the configured IP
+	// networks. Empty allows all remote addresses.
+	RPCAllowNets []*net.IPNet
 }
 
 // newRPCServer returns a new instance of the rpcServer struct.

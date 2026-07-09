@@ -15,14 +15,18 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
-	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
+
+func init() {
+	ffldb.TstSetNoSync(true)
+}
 
 const (
 	// testDbType is the database backend type to use for the tests.
