@@ -379,36 +379,15 @@ func (b *BlockChain) CalcSequenceLock(tx *hnsutil.Tx, utxoView *UtxoViewpoint, m
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) calcSequenceLock(node *blockNode, tx *hnsutil.Tx, utxoView *UtxoViewpoint, mempool bool) (*SequenceLock, error) {
 	// A value of -1 for each relative lock type represents a relative time
-	// lock value that will allow a transaction to be included in a block
-	// at any given height or time. This value is returned as the relative
-	// lock time in the case that BIP 68 is disabled, or has not yet been
-	// activated.
+	// lock value that will allow a transaction to be included in a block at
+	// any given height or time.
 	sequenceLock := &SequenceLock{Seconds: -1, BlockHeight: -1}
 
-	// The sequence locks semantics are always active for transactions
-	// within the mempool.
-	csvSoftforkActive := mempool
-
-	// If we're performing block validation, then we need to query the BIP9
-	// state.
-	if !csvSoftforkActive {
-		// Obtain the latest BIP9 version bits state for the
-		// CSV-package soft-fork deployment. The adherence of sequence
-		// locks depends on the current soft-fork state.
-		csvState, err := b.deploymentState(node.parent, chaincfg.DeploymentCSV)
-		if err != nil {
-			return nil, err
-		}
-		csvSoftforkActive = csvState == ThresholdActive
-	}
-
-	// If the transaction's version is less than 2, and BIP 68 has not yet
-	// been activated then sequence locks are disabled. Additionally,
-	// sequence locks don't apply to coinbase transactions Therefore, we
-	// return sequence lock values of -1 indicating that this transaction
-	// can be included within a block at any given height or time.
+	// Handshake sequence-lock semantics are active consensus rules for
+	// version 2+ transactions. They are not gated behind Bitcoin's BIP9 CSV
+	// deployment. Sequence locks also do not apply to coinbase transactions.
 	mTx := tx.MsgTx()
-	sequenceLockActive := uint32(mTx.Version) >= 2 && csvSoftforkActive
+	sequenceLockActive := uint32(mTx.Version) >= 2
 	if !sequenceLockActive || IsCoinBase(tx) {
 		return sequenceLock, nil
 	}

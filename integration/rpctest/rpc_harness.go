@@ -31,9 +31,11 @@ const (
 	minRPCPort  = maxPeerPort
 	maxRPCPort  = 60000
 
-	// BlockVersion is the default block version used when generating
-	// blocks.
-	BlockVersion = 4
+	// BlockVersion is the default Handshake block version used when
+	// generating blocks.  Handshake uses direct deployment-bit masks and the
+	// default mainnet/regtest version is zero when no deployment is being
+	// signaled.
+	BlockVersion = 0
 
 	// DefaultMaxConnectionRetries is the default number of times we re-try
 	// to connect to the node after starting it.

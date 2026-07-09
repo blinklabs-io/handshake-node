@@ -21,13 +21,9 @@ import (
 )
 
 const (
-	// vbLegacyBlockVersion is the highest legacy block version before the
-	// version bits scheme became active.
-	vbLegacyBlockVersion = 4
-
-	// vbTopBits defines the bits to set in the version to signal that the
-	// version bits scheme is being used.
-	vbTopBits = 0x20000000
+	// vbDefaultBlockVersion is the default Handshake block version when no
+	// deployment bits are being signaled.
+	vbDefaultBlockVersion = 0
 )
 
 // assertVersionBit gets the passed block hash from the given test harness and
@@ -170,7 +166,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	// still defined and did NOT move to started.
 	confirmationWindow := r.ActiveNet.MinerConfirmationWindow
 	for i := uint32(0); i < confirmationWindow-2; i++ {
-		_, err := r.GenerateAndSubmitBlock(nil, vbLegacyBlockVersion,
+		_, err := r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion,
 			time.Time{})
 		if err != nil {
 			t.Fatalf("failed to generated block %d: %v", i, err)
@@ -185,7 +181,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	//
 	// Assert the chain height is the expected value and the soft fork
 	// status is started.
-	_, err = r.GenerateAndSubmitBlock(nil, vbLegacyBlockVersion, time.Time{})
+	_, err = r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion, time.Time{})
 	if err != nil {
 		t.Fatalf("failed to generated block: %v", err)
 	}
@@ -208,7 +204,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	if deployment.CustomActivationThreshold != 0 {
 		activationThreshold = deployment.CustomActivationThreshold
 	}
-	signalForkVersion := int32(1<<deployment.BitNumber) | vbTopBits
+	signalForkVersion := int32(1 << deployment.BitNumber)
 	for i := uint32(0); i < activationThreshold-1; i++ {
 		_, err := r.GenerateAndSubmitBlock(nil, signalForkVersion,
 			time.Time{})
@@ -217,7 +213,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 		}
 	}
 	for i := uint32(0); i < confirmationWindow-(activationThreshold-1); i++ {
-		_, err := r.GenerateAndSubmitBlock(nil, vbLegacyBlockVersion,
+		_, err := r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion,
 			time.Time{})
 		if err != nil {
 			t.Fatalf("failed to generated block %d: %v", i, err)
@@ -242,7 +238,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 		}
 	}
 	for i := uint32(0); i < confirmationWindow-activationThreshold; i++ {
-		_, err := r.GenerateAndSubmitBlock(nil, vbLegacyBlockVersion,
+		_, err := r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion,
 			time.Time{})
 		if err != nil {
 			t.Fatalf("failed to generated block %d: %v", i, err)
@@ -260,7 +256,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	// Assert the chain height is the expected value and the soft fork
 	// status is still locked in and did NOT move to active.
 	for i := uint32(0); i < confirmationWindow-1; i++ {
-		_, err := r.GenerateAndSubmitBlock(nil, vbLegacyBlockVersion,
+		_, err := r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion,
 			time.Time{})
 		if err != nil {
 			t.Fatalf("failed to generated block %d: %v", i, err)
@@ -276,7 +272,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	//
 	// Assert the chain height is the expected value and the soft fork
 	// status moved to active.
-	_, err = r.GenerateAndSubmitBlock(nil, vbLegacyBlockVersion, time.Time{})
+	_, err = r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion, time.Time{})
 	if err != nil {
 		t.Fatalf("failed to generated block: %v", err)
 	}

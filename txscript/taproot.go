@@ -28,6 +28,8 @@ const (
 	BaseLeafVersion TapscriptLeafVersion = 0xc0
 )
 
+var errTaprootUnsupported = fmt.Errorf("taproot is not supported in Handshake")
+
 const (
 	// ControlBlockBaseSize is the base size of a control block. This
 	// includes the initial byte for the leaf version, and then serialized
@@ -778,10 +780,9 @@ func AssembleTaprootScriptTree(leaves ...TapLeaf) *IndexedTapScriptTree {
 	return scriptTree
 }
 
-// PayToTaprootScript creates a pk script for a pay-to-taproot output key.
+// PayToTaprootScript is retained for btcd API compatibility, but Taproot is
+// not a Handshake consensus feature and this helper always returns
+// errTaprootUnsupported.
 func PayToTaprootScript(taprootKey *btcec.PublicKey) ([]byte, error) {
-	return NewScriptBuilder().
-		AddOp(OP_1).
-		AddData(schnorr.SerializePubKey(taprootKey)).
-		Script()
+	return nil, errTaprootUnsupported
 }

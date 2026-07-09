@@ -9,21 +9,10 @@ import (
 )
 
 const (
-	// vbLegacyBlockVersion is the highest legacy block version before the
-	// version bits scheme became active.
-	vbLegacyBlockVersion = 4
-
-	// vbTopBits defines the bits to set in the version to signal that the
-	// version bits scheme is being used.
-	vbTopBits = 0x20000000
-
-	// vbTopMask is the bitmask to use to determine whether or not the
-	// version bits scheme is in use.
-	vbTopMask = 0xe0000000
-
 	// vbNumBits is the total number of bits available for use with the
-	// version bits scheme.
-	vbNumBits = 29
+	// version bits scheme.  Handshake block versions are direct deployment
+	// bit masks, without Bitcoin's versionbits top-bit prefix.
+	vbNumBits = 32
 )
 
 // bitConditionChecker provides a thresholdConditionChecker which can be used to
@@ -94,9 +83,6 @@ func (c bitConditionChecker) MinerConfirmationWindow() uint32 {
 func (c bitConditionChecker) Condition(node *blockNode) (bool, error) {
 	conditionMask := uint32(1) << c.bit
 	version := uint32(node.version)
-	if version&vbTopMask != vbTopBits {
-		return false, nil
-	}
 	if version&conditionMask == 0 {
 		return false, nil
 	}
@@ -254,8 +240,7 @@ func (c deploymentChecker) IsSpeedy() bool {
 func (c deploymentChecker) Condition(node *blockNode) (bool, error) {
 	conditionMask := uint32(1) << c.deployment.BitNumber
 	version := uint32(node.version)
-	return (version&vbTopMask == vbTopBits) && (version&conditionMask != 0),
-		nil
+	return version&conditionMask != 0, nil
 }
 
 // ForceActive returns if the deployment should be forced to transition to the
@@ -293,7 +278,7 @@ func (b *BlockChain) calcNextBlockVersion(prevNode *blockNode) (int32, error) {
 	// Set the appropriate bits for each actively defined rule deployment
 	// that is either in the process of being voted on, or locked in for the
 	// activation at the next threshold window change.
-	expectedVersion := uint32(vbTopBits)
+	var expectedVersion uint32
 	for id := 0; id < len(b.chainParams.Deployments); id++ {
 		deployment := &b.chainParams.Deployments[id]
 		cache := &b.deploymentCaches[id]

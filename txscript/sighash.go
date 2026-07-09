@@ -84,8 +84,7 @@ func CalcSignatureHash(script []byte, hashType SigHashType, tx *wire.MsgTx, idx 
 		return nil, err
 	}
 	return nil, fmt.Errorf("CalcSignatureHash: legacy sighash is not " +
-		"supported in Handshake; use CalcWitnessSigHash or " +
-		"CalcTaprootSignatureHash instead")
+		"supported in Handshake; use CalcWitnessSigHash instead")
 }
 
 // calcSignatureHash computes the signature hash for the specified input of the
@@ -638,43 +637,23 @@ func calcTaprootSignatureHashRaw(sigHashes *TxSigHashes, hType SigHashType,
 	return sigHash[:], nil
 }
 
-// CalcTaprootSignatureHash computes the sighash digest of a transaction's
-// taproot-spending input using the new sighash digest algorithm described in
-// BIP 341. As the new digest algorithms may require the digest to commit to the
-// entire prev output, a PrevOutputFetcher argument is required to obtain the
-// needed information. The TxSigHashes pre-computed sighash midstate MUST be
-// specified.
+// CalcTaprootSignatureHash is retained for btcd API compatibility, but Taproot
+// is not a Handshake consensus feature and this helper always returns
+// errTaprootUnsupported.
 func CalcTaprootSignatureHash(sigHashes *TxSigHashes, hType SigHashType,
 	tx *wire.MsgTx, idx int,
 	prevOutFetcher PrevOutputFetcher) ([]byte, error) {
 
-	return calcTaprootSignatureHashRaw(
-		sigHashes, hType, tx, idx, prevOutFetcher,
-	)
+	return nil, errTaprootUnsupported
 }
 
-// CalcTaprootSignatureHash is similar to CalcTaprootSignatureHash but for
-// _tapscript_ spends instead. A proper TapLeaf instance (the script leaf being
-// signed) must be passed in. The functional options can be used to specify an
-// annex if the signature was bound to that context.
-//
-// NOTE: This function is able to compute the sighash of scripts that contain a
-// code separator if the caller passes in an instance of
-// WithBaseTapscriptVersion with the valid position.
+// CalcTapscriptSignaturehash is retained for btcd API compatibility, but
+// Tapscript is not a Handshake consensus feature and this helper always returns
+// errTaprootUnsupported.
 func CalcTapscriptSignaturehash(sigHashes *TxSigHashes, hType SigHashType,
 	tx *wire.MsgTx, idx int, prevOutFetcher PrevOutputFetcher,
 	tapLeaf TapLeaf,
 	sigHashOpts ...TaprootSigHashOption) ([]byte, error) {
 
-	tapLeafHash := tapLeaf.TapHash()
-
-	var opts []TaprootSigHashOption
-	opts = append(
-		opts, WithBaseTapscriptVersion(blankCodeSepValue, tapLeafHash[:]),
-	)
-	opts = append(opts, sigHashOpts...)
-
-	return calcTaprootSignatureHashRaw(
-		sigHashes, hType, tx, idx, prevOutFetcher, opts...,
-	)
+	return nil, errTaprootUnsupported
 }

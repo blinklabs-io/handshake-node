@@ -149,11 +149,10 @@ func TestHaveBlock(t *testing.T) {
 func TestCalcSequenceLock(t *testing.T) {
 	netParams := &chaincfg.RegressionNetParams
 
-	// We need to activate CSV in order to test the processing logic, so
-	// manually craft the block version that's used to signal the soft-fork
-	// activation.
+	// Use the CSV deployment bit directly. Handshake block versions are
+	// plain deployment-bit masks, without Bitcoin's versionbits top bits.
 	csvBit := netParams.Deployments[chaincfg.DeploymentCSV].BitNumber
-	blockVersion := int32(0x20000000 | (uint32(1) << csvBit))
+	blockVersion := int32(uint32(1) << csvBit)
 
 	// Generate enough synthetic blocks to activate CSV.
 	chain := newFakeChain(netParams)
