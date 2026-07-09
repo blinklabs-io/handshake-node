@@ -60,6 +60,9 @@ func TestVerifyName(t *testing.T) {
 		if !verifyName(name) {
 			t.Fatalf("verifyName(%q) = false, want true", name)
 		}
+		if !VerifyName(name) {
+			t.Fatalf("VerifyName(%q) = false, want true", name)
+		}
 	}
 
 	invalid := [][]byte{
@@ -73,6 +76,9 @@ func TestVerifyName(t *testing.T) {
 	for _, name := range invalid {
 		if verifyName(name) {
 			t.Fatalf("verifyName(%q) = true, want false", name)
+		}
+		if VerifyName(name) {
+			t.Fatalf("VerifyName(%q) = true, want false", name)
 		}
 	}
 }

@@ -8,11 +8,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/wire"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -90,6 +92,43 @@ func TestCalcUrkelRootInsertionOrderIndependent(t *testing.T) {
 	got := calcUrkelRoot(reverse)
 	if got != want {
 		t.Fatalf("root depends on insertion order: got %v, want %v", got, want)
+	}
+}
+
+func TestMainnetNameRootFixtures(t *testing.T) {
+	const emptyNameRoot = "0000000000000000000000000000000000000000000000000000000000000000"
+	tests := []struct {
+		file string
+		root string
+	}{
+		{file: "block_0.raw", root: emptyNameRoot},
+		{file: "block_1.raw", root: emptyNameRoot},
+		{file: "block_2.raw", root: emptyNameRoot},
+		{file: "block_3.raw", root: emptyNameRoot},
+		{file: "block_4.raw", root: emptyNameRoot},
+	}
+
+	for _, test := range tests {
+		t.Run(test.file, func(t *testing.T) {
+			want, err := chainhash.NewHashFromStr(test.root)
+			if err != nil {
+				t.Fatalf("NewHashFromStr: %v", err)
+			}
+			rawBlock, err := os.ReadFile("testdata/handshake/" +
+				test.file)
+			if err != nil {
+				t.Fatalf("ReadFile: %v", err)
+			}
+
+			var block wire.MsgBlock
+			if err := block.Deserialize(bytes.NewReader(rawBlock)); err != nil {
+				t.Fatalf("Deserialize: %v", err)
+			}
+			if got := block.Header.NameRoot; got != *want {
+				t.Fatalf("NameRoot = %v, want %v", got,
+					*want)
+			}
+		})
 	}
 }
 
@@ -280,6 +319,59 @@ func TestFetchNameProofUsesStoredSnapshot(t *testing.T) {
 	}
 }
 
+func TestVerifyNameUsesStoredSnapshot(t *testing.T) {
+	chain, teardown, err := chainSetup("verifyname",
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	key := hashName([]byte("alpha"))
+	ns := newNameState(key)
+	ns.set([]byte("alpha"), 1)
+	ns.data = []byte("resource")
+
+	var root chainhash.Hash
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		if err := dbPutNameState(dbTx, ns); err != nil {
+			return err
+		}
+		leaves, treeRoot, err := dbCalcNameTree(dbTx)
+		if err != nil {
+			return err
+		}
+		root = treeRoot
+		if err := dbPutNameRoot(dbTx, root); err != nil {
+			return err
+		}
+		return dbPutNameSnapshot(dbTx, root, leaves)
+	})
+	if err != nil {
+		t.Fatalf("db update: %v", err)
+	}
+
+	state, proof, err := chain.VerifyName([]byte("alpha"), root)
+	if err != nil {
+		t.Fatalf("VerifyName: %v", err)
+	}
+	if proof == nil {
+		t.Fatal("VerifyName returned nil proof")
+	}
+	assertNameStateView(t, state, ns)
+
+	state, proof, err = chain.VerifyName([]byte("missing"), root)
+	if err != nil {
+		t.Fatalf("VerifyName missing: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("VerifyName missing state = %+v, want nil", state)
+	}
+	if proof == nil {
+		t.Fatal("VerifyName missing returned nil proof")
+	}
+}
+
 func TestStoreCurrentNameRootDoesNotWriteSnapshot(t *testing.T) {
 	chain, teardown, err := chainSetup("namerootonly",
 		&chaincfg.RegressionNetParams)
@@ -314,6 +406,72 @@ func TestStoreCurrentNameRootDoesNotWriteSnapshot(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("db update: %v", err)
+	}
+}
+
+func TestPruneNameSnapshotsRetainsCurrentAndRequestedRoots(t *testing.T) {
+	chain, teardown, err := chainSetup("nameprunesnapshots",
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	currentRoot := chainhash.Hash{0x01}
+	retainedRoot := chainhash.Hash{0x02}
+	prunedRoot := chainhash.Hash{0x03}
+	leaves := []urkelLeaf{{
+		key:   hashName([]byte("alpha")),
+		value: []byte("resource"),
+	}}
+
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		if err := dbPutNameRoot(dbTx, currentRoot); err != nil {
+			return err
+		}
+		for _, root := range []chainhash.Hash{
+			currentRoot,
+			retainedRoot,
+			prunedRoot,
+		} {
+			if err := dbPutNameSnapshot(dbTx, root, leaves); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("db setup: %v", err)
+	}
+
+	pruned, err := chain.PruneNameSnapshots(retainedRoot)
+	if err != nil {
+		t.Fatalf("PruneNameSnapshots: %v", err)
+	}
+	if pruned != 1 {
+		t.Fatalf("PruneNameSnapshots pruned %d snapshots, want 1",
+			pruned)
+	}
+
+	err = chain.db.View(func(dbTx database.Tx) error {
+		for _, root := range []chainhash.Hash{currentRoot, retainedRoot} {
+			if _, found, err := dbFetchNameSnapshot(dbTx, root); err != nil {
+				return err
+			} else if !found {
+				return fmt.Errorf("snapshot %v was pruned", root)
+			}
+		}
+
+		if _, found, err := dbFetchNameSnapshot(dbTx, prunedRoot); err != nil {
+			return err
+		} else if found {
+			return fmt.Errorf("snapshot %v was retained", prunedRoot)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("db verify: %v", err)
 	}
 }
 

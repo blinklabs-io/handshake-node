@@ -336,6 +336,46 @@ func dbFetchNameSnapshot(dbTx database.Tx, root chainhash.Hash) (
 	return leaves, true, nil
 }
 
+func dbPruneNameSnapshots(dbTx database.Tx,
+	retain map[chainhash.Hash]struct{}) (int, error) {
+
+	bucket := dbTx.Metadata().Bucket(nameSnapshotBucketName)
+	if bucket == nil {
+		return 0, nil
+	}
+
+	var keys [][]byte
+	err := bucket.ForEach(func(k, v []byte) error {
+		if len(k) != chainhash.HashSize {
+			return database.Error{
+				ErrorCode: database.ErrCorruption,
+				Description: fmt.Sprintf("corrupt name snapshot key "+
+					"length %d", len(k)),
+			}
+		}
+
+		var root chainhash.Hash
+		copy(root[:], k)
+		if _, ok := retain[root]; ok {
+			return nil
+		}
+
+		keys = append(keys, append([]byte(nil), k...))
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	for _, key := range keys {
+		if err := bucket.Delete(key); err != nil {
+			return 0, err
+		}
+	}
+
+	return len(keys), nil
+}
+
 func dbSerializeNameUndo(entries []nameUndoEntry) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := wire.WriteVarInt(&buf, 0, uint64(len(entries))); err != nil {
@@ -561,6 +601,58 @@ func (b *BlockChain) FetchNameStateByHash(nameHash chainhash.Hash) (
 	return state, found, nil
 }
 
+// FetchNamesInAuction returns all persisted names that are currently in the
+// OPEN, BID, or REVEAL auction phases at the provided height.
+func (b *BlockChain) FetchNamesInAuction(height uint32) ([]*NameState, error) {
+	var states []*NameState
+	err := b.db.View(func(dbTx database.Tx) error {
+		allStates, err := dbFetchAllNameStates(dbTx)
+		if err != nil {
+			return err
+		}
+
+		for _, ns := range allStates {
+			if ns.inAuction(height, b.chainParams) {
+				states = append(states, newNameStateView(ns))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sortNameStateViews(states)
+	return states, nil
+}
+
+// FetchExpiringNameStates returns all persisted names that are not expired at
+// height but would expire within the provided block window.
+func (b *BlockChain) FetchExpiringNameStates(height, within uint32) (
+	[]*NameState, error) {
+
+	var states []*NameState
+	err := b.db.View(func(dbTx database.Tx) error {
+		allStates, err := dbFetchAllNameStates(dbTx)
+		if err != nil {
+			return err
+		}
+
+		for _, ns := range allStates {
+			if ns.expiresBy(height, within, b.chainParams) {
+				states = append(states, newNameStateView(ns))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sortNameStateViews(states)
+	return states, nil
+}
+
 // FetchAllNameStates returns read-only snapshots for all currently persisted
 // Handshake name states.  Results are sorted by name hash for deterministic
 // RPC responses.
@@ -581,12 +673,16 @@ func (b *BlockChain) FetchAllNameStates() ([]*NameState, error) {
 		return nil, err
 	}
 
+	sortNameStateViews(states)
+	return states, nil
+}
+
+func sortNameStateViews(states []*NameState) {
 	sort.Slice(states, func(i, j int) bool {
 		left := states[i].NameHash()
 		right := states[j].NameHash()
 		return bytes.Compare(left[:], right[:]) < 0
 	})
-	return states, nil
 }
 
 // FetchNameProof returns an hsd-compatible Urkel proof for the provided name
@@ -602,4 +698,73 @@ func (b *BlockChain) FetchNameProof(root, key chainhash.Hash) ([]byte, error) {
 		return nil, err
 	}
 	return proof, nil
+}
+
+// VerifyName verifies an hsd-compatible Urkel proof for the provided raw name
+// at the provided tree root.  It returns the immutable name state and decoded
+// proof for inclusion proofs, or nil state plus a valid exclusion proof when
+// the name is absent at that root.
+func (b *BlockChain) VerifyName(name []byte, root chainhash.Hash) (
+	*NameState, *UrkelProof, error) {
+
+	if !verifyName(name) {
+		return nil, nil, fmt.Errorf("invalid Handshake name %q", name)
+	}
+
+	key := hashName(name)
+	serialized, err := b.FetchNameProof(root, key)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	proof, err := DecodeUrkelProof(serialized)
+	if err != nil {
+		return nil, nil, err
+	}
+	value, exists, err := proof.Verify(root, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !exists {
+		return nil, proof, nil
+	}
+
+	ns, err := decodeNameState(key, value)
+	if err != nil {
+		return nil, nil, err
+	}
+	return newNameStateView(ns), proof, nil
+}
+
+// PruneNameSnapshots deletes historical Urkel proof snapshots except for the
+// current committed name root and any roots explicitly retained by the caller.
+//
+// The current Urkel implementation stores the live tree as compact name-state
+// leaves, so there are no internal tree nodes to garbage collect.  This helper
+// bounds optional historical proof snapshots without touching current name
+// state, name undo data, or the committed root.
+func (b *BlockChain) PruneNameSnapshots(retainRoots ...chainhash.Hash) (
+	int, error) {
+
+	var pruned int
+	err := b.db.Update(func(dbTx database.Tx) error {
+		currentRoot, err := dbFetchNameRoot(dbTx)
+		if err != nil {
+			return err
+		}
+
+		retain := make(map[chainhash.Hash]struct{},
+			len(retainRoots)+1)
+		retain[currentRoot] = struct{}{}
+		for _, root := range retainRoots {
+			retain[root] = struct{}{}
+		}
+
+		pruned, err = dbPruneNameSnapshots(dbTx, retain)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return pruned, nil
 }
