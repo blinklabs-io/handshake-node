@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/handshake-node/brontide"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/peer"
@@ -545,7 +546,7 @@ func TestPeerListeners(t *testing.T) {
 		},
 		{
 			"OnMerkleBlock",
-			&wire.HnsMsgMerkleBlock{Payload: []byte{0x01}},
+			&wire.HnsMsgMerkleBlock{MerkleBlock: *testPeerMerkleBlock()},
 		},
 		// only one version message is allowed
 		// only one verack message is allowed
@@ -1165,6 +1166,204 @@ func setupPeerConnection(in, out *peer.Peer) error {
 	case <-time.After(time.Second * 2):
 		return errors.New("failed to create connection")
 	}
+}
+
+type brontidePeerConnResult struct {
+	conn net.Conn
+	err  error
+}
+
+func setupBrontidePeerConnection(t *testing.T, in, out *peer.Peer) {
+	t.Helper()
+
+	serverPriv, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey server: %v", err)
+	}
+	clientPriv, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey client: %v", err)
+	}
+
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ResolveTCPAddr: %v", err)
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		t.Fatalf("ListenTCP: %v", err)
+	}
+	defer l.Close()
+
+	serverCh := make(chan brontidePeerConnResult, 1)
+	go func() {
+		rawConn, err := l.Accept()
+		if err != nil {
+			serverCh <- brontidePeerConnResult{err: err}
+			return
+		}
+
+		conn, _, err := brontide.ServerHandshake(rawConn, serverPriv)
+		if err != nil {
+			_ = rawConn.Close()
+			serverCh <- brontidePeerConnResult{err: err}
+			return
+		}
+		serverCh <- brontidePeerConnResult{conn: conn}
+	}()
+
+	rawClient, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	clientConn, err := brontide.ClientHandshake(
+		rawClient, clientPriv, serverPriv.PubKey().SerializeCompressed(),
+	)
+	if err != nil {
+		_ = rawClient.Close()
+		t.Fatalf("ClientHandshake: %v", err)
+	}
+
+	var server brontidePeerConnResult
+	select {
+	case server = <-serverCh:
+	case <-time.After(2 * time.Second):
+		_ = clientConn.Close()
+		t.Fatal("ServerHandshake timed out")
+	}
+	if server.err != nil {
+		_ = clientConn.Close()
+		t.Fatalf("ServerHandshake: %v", server.err)
+	}
+
+	in.SetBrontideConnection(true)
+	out.SetBrontideConnection(true)
+	in.AssociateConnection(server.conn)
+	out.AssociateConnection(clientConn)
+}
+
+func TestEncryptedPeerTransportFlow(t *testing.T) {
+	verack := make(chan struct{}, 2)
+	received := make(chan wire.HnsMsgType, 4)
+
+	inCfg := &peer.Config{
+		Listeners: peer.MessageListeners{
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
+				verack <- struct{}{}
+			},
+			OnInv: func(p *peer.Peer, msg *wire.HnsMsgInv) {
+				received <- msg.Type()
+			},
+			OnBlock: func(p *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
+				received <- msg.Type()
+			},
+			OnTx: func(p *peer.Peer, msg *wire.HnsMsgTx) {
+				received <- msg.Type()
+			},
+			OnHeaders: func(p *peer.Peer, msg *wire.HnsMsgHeaders) {
+				received <- msg.Type()
+			},
+		},
+		AllowSelfConns:      true,
+		ChainParams:         &chaincfg.MainNetParams,
+		DisableStallHandler: true,
+		TrickleInterval:     time.Second * 10,
+		UserAgentName:       "peer",
+		UserAgentVersion:    "1.0",
+	}
+	outCfg := &peer.Config{
+		Listeners: peer.MessageListeners{
+			OnVerAck: func(p *peer.Peer, msg *wire.HnsMsgVerack) {
+				verack <- struct{}{}
+			},
+		},
+		AllowSelfConns:      true,
+		ChainParams:         &chaincfg.MainNetParams,
+		DisableStallHandler: true,
+		TrickleInterval:     time.Second * 10,
+		UserAgentName:       "peer",
+		UserAgentVersion:    "1.0",
+	}
+
+	inPeer := peer.NewInboundPeer(inCfg)
+	outPeer, err := peer.NewOutboundPeer(outCfg, "127.0.0.1:12038")
+	if err != nil {
+		t.Fatalf("NewOutboundPeer: %v", err)
+	}
+	setupBrontidePeerConnection(t, inPeer, outPeer)
+	defer func() {
+		inPeer.Disconnect()
+		outPeer.Disconnect()
+		inPeer.WaitForDisconnect()
+		outPeer.WaitForDisconnect()
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-verack:
+		case <-time.After(time.Second):
+			t.Fatal("verack timeout")
+		}
+	}
+	if !inPeer.VerAckReceived() || !outPeer.VerAckReceived() {
+		t.Fatalf("verack not recorded: inbound=%v outbound=%v",
+			inPeer.VerAckReceived(), outPeer.VerAckReceived())
+	}
+	if !inPeer.StatsSnapshot().V2Connection || !outPeer.StatsSnapshot().V2Connection {
+		t.Fatalf("encrypted connection not recorded: inbound=%v outbound=%v",
+			inPeer.StatsSnapshot().V2Connection,
+			outPeer.StatsSnapshot().V2Connection)
+	}
+
+	inv := wire.NewHnsMsgInv()
+	if err := inv.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &chainhash.Hash{})); err != nil {
+		t.Fatalf("AddInvVect: %v", err)
+	}
+	msgs := []wire.HandshakeMessage{
+		inv,
+		&wire.HnsMsgBlock{Block: *wire.NewMsgBlock(testPeerHeader())},
+		&wire.HnsMsgTx{Tx: *wire.NewMsgTx(wire.TxVersion)},
+		&wire.HnsMsgHeaders{Headers: []*wire.BlockHeader{testPeerHeader()}},
+	}
+	for _, msg := range msgs {
+		done := make(chan struct{}, 1)
+		outPeer.QueueHnsMessage(msg, done)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("send %s timeout", msg.Type())
+		}
+	}
+
+	expected := map[wire.HnsMsgType]bool{
+		wire.HnsMsgTypeInv:     true,
+		wire.HnsMsgTypeBlock:   true,
+		wire.HnsMsgTypeTx:      true,
+		wire.HnsMsgTypeHeaders: true,
+	}
+	for i := 0; i < len(msgs); i++ {
+		select {
+		case msgType := <-received:
+			if !expected[msgType] {
+				t.Fatalf("unexpected message callback: %s", msgType)
+			}
+			delete(expected, msgType)
+		case <-time.After(time.Second):
+			t.Fatalf("message callback timeout; still waiting for %v", expected)
+		}
+	}
+}
+
+func testPeerHeader() *wire.BlockHeader {
+	return wire.NewBlockHeader(1, &chainhash.Hash{}, &chainhash.Hash{},
+		&chainhash.Hash{}, &chainhash.Hash{}, 1, 1)
+}
+
+func testPeerMerkleBlock() *wire.MsgMerkleBlock {
+	msg := wire.NewMsgMerkleBlock(testPeerHeader())
+	msg.Transactions = 1
+	msg.Flags = []byte{0x01}
+	return msg
 }
 
 // TestNoSendAddrV2Handshake tests that the Handshake version-verack exchange

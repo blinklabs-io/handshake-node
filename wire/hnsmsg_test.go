@@ -71,7 +71,7 @@ func TestHnsMsgEnvelopeRoundTrip(t *testing.T) {
 		{"filterload", &HnsMsgFilterLoad{Filter: []byte{0x01, 0x02, 0x03}, HashFuncs: 10, Tweak: 20, Flags: BloomUpdateAll}},
 		{"filteradd", &HnsMsgFilterAdd{Data: []byte{1, 2, 3}}},
 		{"filterclear", &HnsMsgFilterClear{}},
-		{"merkleblock", &HnsMsgMerkleBlock{Payload: []byte{0xaa, 0xbb, 0xcc}}},
+		{"merkleblock", &HnsMsgMerkleBlock{MerkleBlock: *testHnsMerkleBlock()}},
 		{"feefilter", &HnsMsgFeeFilter{Rate: 1000}},
 		{"sendcmpct", &HnsMsgSendCmpct{Mode: 1, Version: 2}},
 		{"cmpctblock", &HnsMsgCmpctBlock{Payload: []byte{0x01, 0x02}}},
@@ -896,17 +896,23 @@ func TestHnsMsgFilterClearRejectsPayload(t *testing.T) {
 	}
 }
 
-func TestHnsMsgMerkleBlockRoundTripOpaquePayload(t *testing.T) {
-	payload := []byte{0xaa, 0xbb, 0xcc}
-	in := HnsMsgMerkleBlock{Payload: payload}
+func TestHnsMsgMerkleBlockRoundTrip(t *testing.T) {
+	in := HnsMsgMerkleBlock{MerkleBlock: *testHnsMerkleBlock()}
 	encoded := in.Encode()
 
 	var out HnsMsgMerkleBlock
 	if err := out.Decode(encoded); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if !bytes.Equal(out.Payload, payload) {
-		t.Fatalf("payload mismatch:\n got % x\nwant % x", out.Payload, payload)
+	if !bytes.Equal(out.Encode(), encoded) {
+		t.Fatalf("round-trip mismatch:\n got % x\nwant % x", out.Encode(), encoded)
+	}
+}
+
+func TestHnsMsgMerkleBlockDecodeErrors(t *testing.T) {
+	var msg HnsMsgMerkleBlock
+	if err := msg.Decode(nil); err == nil {
+		t.Fatal("expected error for empty merkleblock payload")
 	}
 }
 
@@ -1213,6 +1219,15 @@ func testHnsHeader() *BlockHeader {
 		WitnessRoot:  chainhash.Hash(hashOfBytes(0x05)),
 		Mask:         chainhash.Hash(hashOfBytes(0x06)),
 	}
+}
+
+func testHnsMerkleBlock() *MsgMerkleBlock {
+	msg := NewMsgMerkleBlock(testHnsHeader())
+	msg.Transactions = 2
+	hash := chainhash.Hash(hashOfBytes(0x33))
+	_ = msg.AddTxHash(&hash)
+	msg.Flags = []byte{0x01}
+	return msg
 }
 
 func serializeHnsHeader(t *testing.T, header *BlockHeader) []byte {

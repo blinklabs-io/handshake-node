@@ -797,12 +797,12 @@ func (s *server) pushInventory(sp *serverPeer, iv *wire.InvVect,
 
 	case wire.InvTypeFilteredWitnessBlock:
 		return s.pushMerkleBlockMsg(
-			sp, &iv.Hash, doneChan, wire.WitnessEncoding,
+			sp, &iv.Hash, doneChan,
 		)
 
 	case wire.InvTypeFilteredBlock:
 		return s.pushMerkleBlockMsg(
-			sp, &iv.Hash, doneChan, wire.BaseEncoding,
+			sp, &iv.Hash, doneChan,
 		)
 
 	default:
@@ -1347,7 +1347,7 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 // loaded, this call will simply be ignored if there is no filter loaded.  An
 // error is returned if the block hash is not known.
 func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
-	doneChan chan<- struct{}, encoding wire.MessageEncoding) error {
+	doneChan chan<- struct{}) error {
 
 	// Do not send a response if the peer doesn't have a filter loaded.
 	if !sp.filter.IsLoaded() {
@@ -1379,16 +1379,7 @@ func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	if len(matchedTxIndices) == 0 {
 		dc = doneChan
 	}
-	var merklePayload bytes.Buffer
-	if err := merkle.BtcEncode(&merklePayload, sp.ProtocolVersion(), encoding); err != nil {
-		peerLog.Tracef("Unable to encode merkleblock for requested block hash "+
-			"%v: %v", hash, err)
-		if doneChan != nil {
-			doneChan <- struct{}{}
-		}
-		return err
-	}
-	sp.QueueMessage(&wire.HnsMsgMerkleBlock{Payload: merklePayload.Bytes()}, dc)
+	sp.QueueMessage(&wire.HnsMsgMerkleBlock{MerkleBlock: *merkle}, dc)
 
 	// Finally, send any matched transactions.
 	blkTransactions := blk.MsgBlock().Transactions
