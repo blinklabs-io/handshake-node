@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"sort"
@@ -159,6 +160,7 @@ type config struct {
 	RelayNonStd          bool          `long:"relaynonstd" description:"Relay non-standard transactions regardless of the default settings for the active network."`
 	RPCCert              string        `long:"rpccert" description:"File containing the certificate file"`
 	RPCKey               string        `long:"rpckey" description:"File containing the certificate key"`
+	RPCAllowIPs          []string      `long:"rpcallowip" description:"Add an IP network or IP that is allowed to connect to the RPC server. Empty allows all clients."`
 	RPCLimitPass         string        `long:"rpclimitpass" default-mask:"-" description:"Password for limited RPC connections"`
 	RPCLimitUser         string        `long:"rpclimituser" description:"Username for limited RPC connections"`
 	RPCListeners         []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port for the active network)"`
@@ -185,6 +187,7 @@ type config struct {
 	assumeValid          *chainhash.Hash
 	miningAddrs          []hnsutil.Address
 	minRelayTxFee        hnsutil.Amount
+	rpcAllowNets         []*net.IPNet
 	whitelists           []*net.IPNet
 }
 
@@ -206,6 +209,118 @@ func cleanAndExpandPath(path string) string {
 	// NOTE: The os.ExpandEnv doesn't work with Windows-style %VARIABLE%,
 	// but they variables can still be expanded via POSIX-style $VARIABLE.
 	return filepath.Clean(os.ExpandEnv(path))
+}
+
+func configEnvName(option string) string {
+	option = strings.ReplaceAll(option, "-", "_")
+	return "HANDSHAKE_NODE_" + strings.ToUpper(option)
+}
+
+func configEnvOverrideAllowed(option string) bool {
+	switch option {
+	case "configfile", "version":
+		return false
+	default:
+		return true
+	}
+}
+
+func applyConfigEnvOverrides(cfg *config,
+	lookup func(string) (string, bool)) error {
+
+	rv := reflect.ValueOf(cfg).Elem()
+	rt := rv.Type()
+	durationType := reflect.TypeOf(time.Duration(0))
+	for i := 0; i < rt.NumField(); i++ {
+		fieldType := rt.Field(i)
+		option := fieldType.Tag.Get("long")
+		if option == "" {
+			continue
+		}
+		if !configEnvOverrideAllowed(option) {
+			continue
+		}
+
+		envName := configEnvName(option)
+		value, ok := lookup(envName)
+		if !ok {
+			continue
+		}
+
+		field := rv.Field(i)
+		if !field.CanSet() {
+			continue
+		}
+
+		if field.Type() == durationType {
+			parsed, err := time.ParseDuration(value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", envName, err)
+			}
+			field.SetInt(int64(parsed))
+			continue
+		}
+
+		switch field.Kind() {
+		case reflect.Bool:
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", envName, err)
+			}
+			field.SetBool(parsed)
+
+		case reflect.String:
+			field.SetString(value)
+
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
+			reflect.Int64:
+
+			parsed, err := strconv.ParseInt(value, 10, field.Type().Bits())
+			if err != nil {
+				return fmt.Errorf("%s: %w", envName, err)
+			}
+			field.SetInt(parsed)
+
+		case reflect.Uint, reflect.Uint8, reflect.Uint16,
+			reflect.Uint32, reflect.Uint64:
+
+			parsed, err := strconv.ParseUint(value, 10,
+				field.Type().Bits())
+			if err != nil {
+				return fmt.Errorf("%s: %w", envName, err)
+			}
+			field.SetUint(parsed)
+
+		case reflect.Float32, reflect.Float64:
+			parsed, err := strconv.ParseFloat(value,
+				field.Type().Bits())
+			if err != nil {
+				return fmt.Errorf("%s: %w", envName, err)
+			}
+			field.SetFloat(parsed)
+
+		case reflect.Slice:
+			if field.Type().Elem().Kind() != reflect.String {
+				return fmt.Errorf("%s: unsupported slice type %s",
+					envName, field.Type())
+			}
+			if value == "" {
+				field.Set(reflect.MakeSlice(field.Type(), 0, 0))
+				continue
+			}
+			parts := strings.Split(value, ",")
+			for i := range parts {
+				parts[i] = strings.TrimSpace(parts[i])
+			}
+			field.Set(reflect.ValueOf(parts))
+
+		default:
+			return fmt.Errorf("%s: unsupported config type %s",
+				envName, field.Type())
+		}
+	}
+
+	return nil
 }
 
 // validLogLevel returns whether or not logLevel is a valid debug log level.
@@ -331,6 +446,38 @@ func normalizeAddresses(addrs []string, defaultPort string) []string {
 	return removeDuplicateAddresses(addrs)
 }
 
+func parseIPNets(values []string, option string) ([]*net.IPNet, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	nets := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		ip, ipnet, err := net.ParseCIDR(value)
+		if err != nil {
+			ip = net.ParseIP(value)
+			if ip == nil {
+				return nil, fmt.Errorf("the %s value of %q is invalid",
+					option, value)
+			}
+
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			ipnet = &net.IPNet{
+				IP:   ip,
+				Mask: net.CIDRMask(bits, bits),
+			}
+		} else {
+			ipnet.IP = ip
+		}
+		nets = append(nets, ipnet)
+	}
+
+	return nets, nil
+}
+
 // newCheckpointFromStr parses checkpoints in the '<height>:<hash>' format.
 func newCheckpointFromStr(checkpoint string) (chaincfg.Checkpoint, error) {
 	parts := strings.Split(checkpoint, ":")
@@ -417,7 +564,8 @@ func newConfigParser(cfg *config, so *serviceOptions, options flags.Options) *fl
 //  1. Start with a default config with sane settings
 //  2. Pre-parse the command line to check for an alternative config file
 //  3. Load configuration file overwriting defaults with any specified options
-//  4. Parse CLI options and overwrite/add any specified options
+//  4. Load environment variables overwriting config-file settings
+//  5. Parse CLI options and overwrite/add any specified options
 //
 // The above results in handshake-node functioning properly without any config settings
 // while still allowing the user to override settings with config files and
@@ -516,6 +664,14 @@ func loadConfig() (*config, []string, error) {
 			}
 			configFileError = err
 		}
+	}
+
+	if err := applyConfigEnvOverrides(&cfg, os.LookupEnv); err != nil {
+		err := fmt.Errorf("loadConfig: environment override error: %w",
+			err)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
 	}
 
 	// Don't add peers from the config file when in regression test mode,
@@ -653,33 +809,24 @@ func loadConfig() (*config, []string, error) {
 
 	// Validate any given whitelisted IP addresses and networks.
 	if len(cfg.Whitelists) > 0 {
-		var ip net.IP
-		cfg.whitelists = make([]*net.IPNet, 0, len(cfg.Whitelists))
+		cfg.whitelists, err = parseIPNets(cfg.Whitelists, "whitelist")
+		if err != nil {
+			err := fmt.Errorf("%s: %w", funcName, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
+	}
 
-		for _, addr := range cfg.Whitelists {
-			_, ipnet, err := net.ParseCIDR(addr)
-			if err != nil {
-				ip = net.ParseIP(addr)
-				if ip == nil {
-					str := "%s: The whitelist value of '%s' is invalid"
-					err = fmt.Errorf(str, funcName, addr)
-					fmt.Fprintln(os.Stderr, err)
-					fmt.Fprintln(os.Stderr, usageMessage)
-					return nil, nil, err
-				}
-				var bits int
-				if ip.To4() == nil {
-					// IPv6
-					bits = 128
-				} else {
-					bits = 32
-				}
-				ipnet = &net.IPNet{
-					IP:   ip,
-					Mask: net.CIDRMask(bits, bits),
-				}
-			}
-			cfg.whitelists = append(cfg.whitelists, ipnet)
+	// Validate any given RPC allowlist IP addresses and networks.
+	if len(cfg.RPCAllowIPs) > 0 {
+		cfg.rpcAllowNets, err = parseIPNets(cfg.RPCAllowIPs,
+			"rpcallowip")
+		if err != nil {
+			err := fmt.Errorf("%s: %w", funcName, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
 		}
 	}
 

@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/database"
@@ -30,10 +29,15 @@ func ExampleCreate() {
 	// Typically you wouldn't want to remove the database right away like
 	// this, nor put it in the temp directory, but it's done here to ensure
 	// the example cleans up after itself.
-	dbPath := filepath.Join(os.TempDir(), "examplecreate")
+	dbPath, err := os.MkdirTemp("", "examplecreate")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	db, err := database.Create("ffldb", dbPath, wire.MainNet)
 	if err != nil {
 		fmt.Println(err)
+		os.RemoveAll(dbPath)
 		return
 	}
 	defer os.RemoveAll(dbPath)
@@ -56,10 +60,15 @@ func Example_basicUsage() {
 	// Typically you wouldn't want to remove the database right away like
 	// this, nor put it in the temp directory, but it's done here to ensure
 	// the example cleans up after itself.
-	dbPath := filepath.Join(os.TempDir(), "exampleusage")
+	dbPath, err := os.MkdirTemp("", "exampleusage")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	db, err := database.Create("ffldb", dbPath, wire.MainNet)
 	if err != nil {
 		fmt.Println(err)
+		os.RemoveAll(dbPath)
 		return
 	}
 	defer os.RemoveAll(dbPath)

@@ -8,6 +8,14 @@ import (
 	"github.com/blinklabs-io/handshake-node/database"
 )
 
+var tstNoSync bool
+
+// TstSetNoSync configures newly opened databases to disable fsync.  Callers
+// should only use this for testing with throwaway databases.
+func TstSetNoSync(enabled bool) {
+	tstNoSync = enabled
+}
+
 // TstRunWithMaxBlockFileSize runs the passed function with the maximum allowed
 // file size for the database set to the provided value.  The value will be set
 // back to the original value upon completion.

@@ -75,6 +75,10 @@ const (
 	// from the chain server that inform a client that a transaction that
 	// matches the loaded filter was accepted by the mempool.
 	RelevantTxAcceptedNtfnMethod = "relevanttxaccepted"
+
+	// NameUpdatedNtfnMethod is the method used for notifications from the
+	// chain server that a transaction contains a Handshake name covenant.
+	NameUpdatedNtfnMethod = "nameupdated"
 )
 
 // BlockConnectedNtfn defines the blockconnected JSON-RPC notification.
@@ -291,6 +295,33 @@ func NewRelevantTxAcceptedNtfn(txHex string) *RelevantTxAcceptedNtfn {
 	return &RelevantTxAcceptedNtfn{Transaction: txHex}
 }
 
+// NameUpdatedNtfn defines the nameupdated JSON-RPC notification.
+type NameUpdatedNtfn struct {
+	Name         string        `json:"name,omitempty"`
+	NameHash     string        `json:"namehash"`
+	Covenant     string        `json:"covenant"`
+	CovenantType uint8         `json:"covenanttype"`
+	TxID         string        `json:"txid"`
+	Vout         uint32        `json:"vout"`
+	Block        *BlockDetails `json:"block,omitempty"`
+}
+
+// NewNameUpdatedNtfn returns a new instance which can be used to issue a
+// nameupdated JSON-RPC notification.
+func NewNameUpdatedNtfn(name, nameHash, covenant string, covenantType uint8,
+	txID string, vout uint32, block *BlockDetails) *NameUpdatedNtfn {
+
+	return &NameUpdatedNtfn{
+		Name:         name,
+		NameHash:     nameHash,
+		Covenant:     covenant,
+		CovenantType: covenantType,
+		TxID:         txID,
+		Vout:         vout,
+		Block:        block,
+	}
+}
+
 func init() {
 	// The commands in this file are only usable by websockets and are
 	// notifications.
@@ -307,4 +338,5 @@ func init() {
 	MustRegisterCmd(TxAcceptedNtfnMethod, (*TxAcceptedNtfn)(nil), flags)
 	MustRegisterCmd(TxAcceptedVerboseNtfnMethod, (*TxAcceptedVerboseNtfn)(nil), flags)
 	MustRegisterCmd(RelevantTxAcceptedNtfnMethod, (*RelevantTxAcceptedNtfn)(nil), flags)
+	MustRegisterCmd(NameUpdatedNtfnMethod, (*NameUpdatedNtfn)(nil), flags)
 }

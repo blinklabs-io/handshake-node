@@ -14,10 +14,10 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/database/internal/treap"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/comparer"
@@ -2138,6 +2138,7 @@ func openDB(dbPath string, network wire.BitcoinNet, create bool) (database.DB, e
 		Strict:       opt.DefaultStrict,
 		Compression:  opt.NoCompression,
 		Filter:       filter.NewBloomFilter(10),
+		NoSync:       tstNoSync,
 	}
 	ldb, err := leveldb.OpenFile(metadataDbPath, &opts)
 	if err != nil {

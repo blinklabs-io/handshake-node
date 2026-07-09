@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/rpcclient"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
@@ -37,11 +37,11 @@ const (
 
 	// DefaultMaxConnectionRetries is the default number of times we re-try
 	// to connect to the node after starting it.
-	DefaultMaxConnectionRetries = 20
+	DefaultMaxConnectionRetries = 600
 
 	// DefaultConnectionRetryTimeout is the default duration we wait between
 	// two connection attempts.
-	DefaultConnectionRetryTimeout = 50 * time.Millisecond
+	DefaultConnectionRetryTimeout = 100 * time.Millisecond
 )
 
 var (
@@ -347,24 +347,22 @@ func (h *Harness) connectRPCClient() error {
 	batchConf.HTTPPostMode = true
 	for i := 0; i < h.MaxConnRetries; i++ {
 		fail := false
-		timeout := time.Duration(i) * h.ConnectionRetryTimeout
 		if client == nil {
 			client, err = rpcclient.New(&rpcConf, h.handlers)
 			if err != nil {
-				time.Sleep(timeout)
 				fail = true
 			}
 		}
 		if batchClient == nil {
 			batchClient, err = rpcclient.NewBatch(&batchConf)
 			if err != nil {
-				time.Sleep(timeout)
 				fail = true
 			}
 		}
 		if !fail {
 			break
 		}
+		time.Sleep(h.ConnectionRetryTimeout)
 	}
 
 	if client == nil || batchClient == nil {

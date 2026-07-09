@@ -64,6 +64,47 @@ func TestChainSvrWsCmds(t *testing.T) {
 			unmarshalled: &hnsjson.StopNotifyBlocksCmd{},
 		},
 		{
+			name: "notifynames",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("notifynames")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewNotifyNamesCmd(nil, nil)
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"notifynames","params":[],"id":1}`,
+			unmarshalled: &hnsjson.NotifyNamesCmd{
+				Names:      &[]string{},
+				NameHashes: &[]string{},
+			},
+		},
+		{
+			name: "notifynames optional",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("notifynames", `["example"]`, `["0000000000000000000000000000000000000000000000000000000000000001"]`)
+			},
+			staticCmd: func() interface{} {
+				names := []string{"example"}
+				nameHashes := []string{"0000000000000000000000000000000000000000000000000000000000000001"}
+				return hnsjson.NewNotifyNamesCmd(&names, &nameHashes)
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"notifynames","params":[["example"],["0000000000000000000000000000000000000000000000000000000000000001"]],"id":1}`,
+			unmarshalled: &hnsjson.NotifyNamesCmd{
+				Names:      &[]string{"example"},
+				NameHashes: &[]string{"0000000000000000000000000000000000000000000000000000000000000001"},
+			},
+		},
+		{
+			name: "stopnotifynames",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("stopnotifynames")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewStopNotifyNamesCmd()
+			},
+			marshalled:   `{"jsonrpc":"1.0","method":"stopnotifynames","params":[],"id":1}`,
+			unmarshalled: &hnsjson.StopNotifyNamesCmd{},
+		},
+		{
 			name: "notifynewtransactions",
 			newCmd: func() (interface{}, error) {
 				return hnsjson.NewCmd("notifynewtransactions")

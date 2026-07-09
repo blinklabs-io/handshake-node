@@ -36,6 +36,51 @@ func TestHnsutilAddressToWireRejectsTaprootShapedAddress(t *testing.T) {
 	}
 }
 
+func TestRPCClientAllowed(t *testing.T) {
+	nets, err := parseIPNets([]string{"127.0.0.1", "10.0.0.0/8"},
+		"rpcallowip")
+	if err != nil {
+		t.Fatalf("parseIPNets: %v", err)
+	}
+
+	server := &rpcServer{cfg: rpcserverConfig{RPCAllowNets: nets}}
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{addr: "127.0.0.1:12037", want: true},
+		{addr: "10.1.2.3:12037", want: true},
+		{addr: "192.0.2.1:12037", want: false},
+		{addr: "not-an-address", want: false},
+	}
+	for _, test := range tests {
+		if got := server.rpcClientAllowed(test.addr); got != test.want {
+			t.Errorf("rpcClientAllowed(%q): got %v, want %v",
+				test.addr, got, test.want)
+		}
+	}
+
+	allowAll := &rpcServer{}
+	if !allowAll.rpcClientAllowed("192.0.2.1:12037") {
+		t.Fatalf("empty allowlist rejected RPC client")
+	}
+}
+
+func TestHnsToDooZeroAmount(t *testing.T) {
+	if value, rpcErr := hnsToDoo(0, true); rpcErr != nil || value != 0 {
+		t.Fatalf("hnsToDoo zero allowed: got value %d err %v, want 0 nil",
+			value, rpcErr)
+	}
+
+	if _, rpcErr := hnsToDoo(0, false); rpcErr == nil {
+		t.Fatalf("hnsToDoo zero disallowed succeeded")
+	}
+
+	if _, rpcErr := hnsToDoo(-1, true); rpcErr == nil {
+		t.Fatalf("hnsToDoo negative amount succeeded")
+	}
+}
+
 type gbtTestTxSource struct {
 	updated time.Time
 }
