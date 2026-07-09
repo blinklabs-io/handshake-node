@@ -630,6 +630,11 @@ func hashName(name []byte) chainhash.Hash {
 	return chainhash.Hash(sha3.Sum256(name))
 }
 
+// VerifyName returns whether the provided raw name is a valid Handshake name.
+func VerifyName(name []byte) bool {
+	return verifyName(name)
+}
+
 func verifyName(name []byte) bool {
 	if len(name) == 0 || len(name) > maxNameSize {
 		return false
@@ -650,6 +655,49 @@ func verifyName(name []byte) bool {
 
 	_, blacklisted := nameBlacklist[string(name)]
 	return !blacklisted
+}
+
+func (ns *nameState) inAuction(height uint32, params *chaincfg.Params) bool {
+	if ns.isExpired(height, params) {
+		return false
+	}
+
+	switch ns.state(height, params) {
+	case nameStateOpening, nameStateBidding, nameStateReveal:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ns *nameState) expiresBy(height, within uint32,
+	params *chaincfg.Params) bool {
+
+	if ns.isExpired(height, params) {
+		return false
+	}
+
+	deadline := addUint32Saturating(height, within)
+	if ns.revoked != 0 {
+		return addUint32Saturating(ns.revoked,
+			params.NameAuctionMaturity) <= deadline
+	}
+
+	if !ns.isClosed(height, params) || ns.isClaimable(height, params) ||
+		isNullNameOwner(ns.owner) {
+
+		return false
+	}
+
+	return addUint32Saturating(ns.renewal,
+		params.NameRenewalWindow) <= deadline
+}
+
+func addUint32Saturating(value, delta uint32) uint32 {
+	if math.MaxUint32-value < delta {
+		return math.MaxUint32
+	}
+	return value + delta
 }
 
 func checkCovenantSanity(tx *hnsutil.Tx) error {

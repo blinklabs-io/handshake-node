@@ -166,6 +166,66 @@ func TestFetchNameStateInvalidName(t *testing.T) {
 	}
 }
 
+func TestHighLevelNameStateQueries(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.NameNoRollout = true
+	params.NameNoReserved = true
+	params.NameRenewalWindow = 20
+	params.NameAuctionMaturity = 4
+
+	chain, teardown, err := chainSetup("namehighlevelqueries", &params)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	auction := newNameState(HashName([]byte("auction")))
+	auction.set([]byte("auction"), 24)
+
+	expiring := closedNameState("expiring",
+		wire.OutPoint{Hash: chainhash.Hash{0x01}, Index: 0}, 100)
+	expiring.renewal = 10
+
+	revoked := closedNameState("revoked",
+		wire.OutPoint{Hash: chainhash.Hash{0x02}, Index: 0}, 100)
+	revoked.revoked = 24
+
+	later := closedNameState("later",
+		wire.OutPoint{Hash: chainhash.Hash{0x03}, Index: 0}, 100)
+	later.renewal = 30
+
+	alreadyExpired := closedNameState("expired",
+		wire.OutPoint{Hash: chainhash.Hash{0x04}, Index: 0}, 100)
+	alreadyExpired.renewal = 1
+
+	for _, ns := range []*nameState{
+		auction,
+		expiring,
+		revoked,
+		later,
+		alreadyExpired,
+	} {
+		storeNameStateForQuery(t, chain, ns)
+	}
+
+	auctions, err := chain.FetchNamesInAuction(25)
+	if err != nil {
+		t.Fatalf("FetchNamesInAuction: %v", err)
+	}
+	if got, want := stateNames(auctions), []string{"auction"}; !sameStrings(got, want) {
+		t.Fatalf("FetchNamesInAuction names = %v, want %v", got, want)
+	}
+
+	expiringStates, err := chain.FetchExpiringNameStates(25, 5)
+	if err != nil {
+		t.Fatalf("FetchExpiringNameStates: %v", err)
+	}
+	if got, want := stateNames(expiringStates), []string{"expiring", "revoked"}; !sameStrings(got, want) {
+		t.Fatalf("FetchExpiringNameStates names = %v, want %v",
+			got, want)
+	}
+}
+
 func TestNameStateViewImmutableCopies(t *testing.T) {
 	ns := testNameStateForQuery("mutable")
 	view := newNameStateView(ns)
@@ -304,4 +364,30 @@ func assertNameStateView(t *testing.T, got *NameState, want *nameState) {
 	if got.Weak() != want.weak {
 		t.Fatalf("Weak = %v, want %v", got.Weak(), want.weak)
 	}
+}
+
+func stateNames(states []*NameState) []string {
+	names := make([]string, 0, len(states))
+	for _, state := range states {
+		names = append(names, state.Name())
+	}
+	return names
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+
+	seen := make(map[string]int, len(got))
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		if seen[value] == 0 {
+			return false
+		}
+		seen[value]--
+	}
+	return true
 }
