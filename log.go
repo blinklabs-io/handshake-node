@@ -18,6 +18,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/mining/cpuminer"
+	"github.com/blinklabs-io/handshake-node/mining/stratum"
 	"github.com/blinklabs-io/handshake-node/netsync"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
@@ -58,7 +59,7 @@ var (
 	amgrLog = backendLog.Logger("AMGR")
 	cmgrLog = backendLog.Logger("CMGR")
 	bcdbLog = backendLog.Logger("BCDB")
-	hnsLog = backendLog.Logger("HNSN")
+	hnsLog  = backendLog.Logger("HNSN")
 	chanLog = backendLog.Logger("CHAN")
 	discLog = backendLog.Logger("DISC")
 	indxLog = backendLog.Logger("INDX")
@@ -67,6 +68,7 @@ var (
 	rpcsLog = backendLog.Logger("RPCS")
 	scrpLog = backendLog.Logger("SCRP")
 	srvrLog = backendLog.Logger("SRVR")
+	strmLog = backendLog.Logger("STRM")
 	syncLog = backendLog.Logger("SYNC")
 	txmpLog = backendLog.Logger("TXMP")
 )
@@ -80,6 +82,7 @@ func init() {
 	indexers.UseLogger(indxLog)
 	mining.UseLogger(minrLog)
 	cpuminer.UseLogger(minrLog)
+	stratum.UseLogger(strmLog)
 	peer.UseLogger(peerLog)
 	txscript.UseLogger(scrpLog)
 	netsync.UseLogger(syncLog)
@@ -88,21 +91,22 @@ func init() {
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
 var subsystemLoggers = map[string]btclog.Logger{
-	"ADXR":                adxrLog,
-	"AMGR":                amgrLog,
-	"CMGR":                cmgrLog,
-	"BCDB":                bcdbLog,
-	"HNSN":                hnsLog,
-	"CHAN":                chanLog,
-	"DISC":                discLog,
-	"INDX":                indxLog,
-	"MINR":                minrLog,
-	"PEER":                peerLog,
-	"RPCS":                rpcsLog,
-	"SCRP":                scrpLog,
-	"SRVR":                srvrLog,
-	"SYNC":                syncLog,
-	"TXMP":                txmpLog,
+	"ADXR": adxrLog,
+	"AMGR": amgrLog,
+	"CMGR": cmgrLog,
+	"BCDB": bcdbLog,
+	"HNSN": hnsLog,
+	"CHAN": chanLog,
+	"DISC": discLog,
+	"INDX": indxLog,
+	"MINR": minrLog,
+	"PEER": peerLog,
+	"RPCS": rpcsLog,
+	"SCRP": scrpLog,
+	"SRVR": srvrLog,
+	"STRM": strmLog,
+	"SYNC": syncLog,
+	"TXMP": txmpLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and

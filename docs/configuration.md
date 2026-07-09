@@ -125,6 +125,36 @@ The following config file would configure the handshake-node RPC server to liste
 rpclisten=
 ```
 
+## Operations endpoints
+
+The Prometheus metrics endpoint and Stratum server are disabled by default.
+Bind them to loopback or an internal management network unless there is a
+specific reason to expose them.
+
+```text
+[Application Options]
+
+metricslisten=127.0.0.1:12039
+```
+
+`--metricslisten` serves Prometheus text format at `/metrics`. It is not
+authenticated. Binding it to a non-loopback interface requires
+`--metricsallowpublic`.
+
+```text
+[Application Options]
+
+miningaddr=hs1qyourhandshakeaddress
+stratumlisten=127.0.0.1:12040
+stratumuser=worker
+stratumpass=secret
+```
+
+`--stratumlisten` enables the Handshake Stratum v1 MVP server. It requires at
+least one `--miningaddr`. Binding it to a non-loopback interface requires
+`--stratumallowpublic`, and public Stratum binds also require
+`--stratumuser` and `--stratumpass`.
+
 ## Default ports
 
 While handshake-node is highly configurable when it comes to the network configuration,
@@ -142,6 +172,8 @@ configurations.
 |----|----|
 |Default peer-to-peer port|TCP 12038|
 |Default RPC port|TCP 12037|
+|Default Prometheus metrics port|TCP 12039|
+|Default Stratum port|TCP 12040|
 
 ## Using bootstrap.dat
 
