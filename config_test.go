@@ -73,6 +73,16 @@ func TestDefaultRPCPorts(t *testing.T) {
 		t.Fatalf("regtest RPC port: got %q, want %q",
 			regressionNetParams.rpcPort, "18334")
 	}
+
+	if defaultMetricsPort != "12039" {
+		t.Fatalf("metrics port: got %q, want %q",
+			defaultMetricsPort, "12039")
+	}
+
+	if defaultStratumPort != "12040" {
+		t.Fatalf("stratum port: got %q, want %q",
+			defaultStratumPort, "12040")
+	}
 }
 
 func TestApplyConfigEnvOverrides(t *testing.T) {

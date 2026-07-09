@@ -81,6 +81,12 @@ var (
 	defaultLogDir      = filepath.Join(defaultHomeDir, defaultLogDirname)
 )
 
+const (
+	defaultMetricsPort       = "12039"
+	defaultStratumPort       = "12040"
+	defaultStratumDifficulty = 1.0
+)
+
 // runServiceCommand is only set to a real function on Windows.  It is used
 // to parse and execute service commands specified via the -s flag.
 var runServiceCommand func(string) error
@@ -132,6 +138,8 @@ type config struct {
 	LogDir               string        `long:"logdir" description:"Directory to log output."`
 	MaxOrphanTxs         int           `long:"maxorphantx" description:"Max number of orphan transactions to keep in memory"`
 	MaxPeers             int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
+	MetricsListeners     []string      `long:"metricslisten" description:"Enable the Prometheus metrics endpoint on the specified interface/port (disabled by default; default port 12039 when no port is specified)"`
+	MetricsAllowPublic   bool          `long:"metricsallowpublic" description:"Allow the Prometheus metrics endpoint to bind to non-loopback interfaces"`
 	MiningAddrs          []string      `long:"miningaddr" description:"Add the specified payment address to the list of addresses to use for generated blocks -- At least one address is required if the generate option is set"`
 	MinRelayTxFee        float64       `long:"minrelaytxfee" description:"The minimum transaction fee in HNS/kB to be considered a non-zero fee."`
 	DisableBanning       bool          `long:"nobanning" description:"Disable banning of misbehaving peers"`
@@ -171,6 +179,11 @@ type config struct {
 	RPCPass              string        `short:"P" long:"rpcpass" default-mask:"-" description:"Password for RPC connections"`
 	RPCUser              string        `short:"u" long:"rpcuser" description:"Username for RPC connections"`
 	SigCacheMaxSize      uint          `long:"sigcachemaxsize" description:"The maximum number of entries in the signature verification cache"`
+	StratumAllowPublic   bool          `long:"stratumallowpublic" description:"Allow the Stratum server to bind to non-loopback interfaces"`
+	StratumDifficulty    float64       `long:"stratumdifficulty" description:"Initial Stratum share difficulty"`
+	StratumListeners     []string      `long:"stratumlisten" description:"Enable the Stratum v1 mining server on the specified interface/port (disabled by default; default port 12040 when no port is specified)"`
+	StratumPass          string        `long:"stratumpass" default-mask:"-" description:"Optional Stratum worker password; required when binding Stratum to non-loopback interfaces"`
+	StratumUser          string        `long:"stratumuser" description:"Optional Stratum worker username; required when binding Stratum to non-loopback interfaces"`
 	TorIsolation         bool          `long:"torisolation" description:"Enable Tor stream isolation by randomizing user credentials for each connection."`
 	TrickleInterval      time.Duration `long:"trickleinterval" description:"Minimum time between attempts to send new inventory to a connected peer"`
 	UtxoCacheMaxSizeMiB  uint          `long:"utxocachemaxsize" description:"The maximum size in MiB of the UTXO cache"`
@@ -446,6 +459,31 @@ func normalizeAddresses(addrs []string, defaultPort string) []string {
 	return removeDuplicateAddresses(addrs)
 }
 
+func isLoopbackListener(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func validateLocalListeners(addrs []string, option, allowOption string) error {
+	for _, addr := range addrs {
+		if !isLoopbackListener(addr) {
+			return fmt.Errorf(
+				"%s listener %q is not loopback; set --%s to acknowledge exposure",
+				option, addr, allowOption,
+			)
+		}
+	}
+	return nil
+}
+
 func parseIPNets(values []string, option string) ([]*net.IPNet, error) {
 	if len(values) == 0 {
 		return nil, nil
@@ -601,6 +639,7 @@ func loadConfig() (*config, []string, error) {
 		TxIndex:              defaultTxIndex,
 		AddrIndex:            defaultAddrIndex,
 		BrontideTransport:    true,
+		StratumDifficulty:    defaultStratumDifficulty,
 	}
 
 	// Service options which are only added on Windows.
@@ -1064,6 +1103,23 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
+	if len(cfg.StratumListeners) > 0 && len(cfg.MiningAddrs) == 0 {
+		str := "%s: the stratumlisten option is set, but there are no " +
+			"mining addresses specified"
+		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	if cfg.StratumDifficulty <= 0 {
+		str := "%s: the stratumdifficulty option must be greater than 0"
+		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
 	// Add default port to all listener addresses if needed and remove
 	// duplicate addresses.
 	cfg.Listeners = normalizeAddresses(cfg.Listeners,
@@ -1073,6 +1129,42 @@ func loadConfig() (*config, []string, error) {
 	// duplicate addresses.
 	cfg.RPCListeners = normalizeAddresses(cfg.RPCListeners,
 		activeNetParams.rpcPort)
+
+	cfg.MetricsListeners = normalizeAddresses(cfg.MetricsListeners,
+		defaultMetricsPort)
+	if len(cfg.MetricsListeners) > 0 && !cfg.MetricsAllowPublic {
+		if err := validateLocalListeners(cfg.MetricsListeners,
+			"metricslisten", "metricsallowpublic"); err != nil {
+
+			err := fmt.Errorf("%s: %w", funcName, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
+	}
+
+	cfg.StratumListeners = normalizeAddresses(cfg.StratumListeners,
+		defaultStratumPort)
+	if len(cfg.StratumListeners) > 0 && !cfg.StratumAllowPublic {
+		if err := validateLocalListeners(cfg.StratumListeners,
+			"stratumlisten", "stratumallowpublic"); err != nil {
+
+			err := fmt.Errorf("%s: %w", funcName, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
+	}
+	if len(cfg.StratumListeners) > 0 && cfg.StratumAllowPublic &&
+		(cfg.StratumUser == "" || cfg.StratumPass == "") {
+
+		str := "%s: stratumuser and stratumpass are required when " +
+			"stratumallowpublic is set"
+		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
 
 	// Only allow TLS to be disabled if the RPC is bound to localhost
 	// addresses.

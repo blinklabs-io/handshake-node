@@ -36,6 +36,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/mining"
 	"github.com/blinklabs-io/handshake-node/mining/cpuminer"
+	"github.com/blinklabs-io/handshake-node/mining/stratum"
 	"github.com/blinklabs-io/handshake-node/netsync"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
@@ -218,6 +219,9 @@ type server struct {
 	chain                *blockchain.BlockChain
 	txMemPool            *mempool.TxPool
 	cpuMiner             *cpuminer.CPUMiner
+	metrics              *nodeMetrics
+	metricsServer        *metricsServer
+	stratumServer        *stratum.Server
 	brontideIdentity     *btcec.PrivateKey
 	brontideStaticKey    [brontide.PublicKeySize]byte
 	modifyRebroadcastInv chan interface{}
@@ -616,6 +620,8 @@ func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.HnsMsgTx) {
 // OnBlock is invoked when a peer receives a block message. It blocks until the
 // block has been fully processed.
 func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
+	start := time.Now()
+
 	// Convert the raw MsgBlock to a hnsutil.Block which provides some
 	// convenience methods and things such as hash caching.
 	block := hnsutil.NewBlockFromBlockAndBytes(&msg.Block, buf)
@@ -637,6 +643,7 @@ func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
 	// the bitcoin block has been fully processed.
 	sp.server.syncManager.QueueBlock(block, sp.Peer, sp.blockProcessed)
 	<-sp.blockProcessed
+	sp.server.metrics.observeBlockValidation(time.Since(start))
 }
 
 // OnInv is invoked when a peer receives an inv message and is
@@ -1121,6 +1128,7 @@ func (sp *serverPeer) OnRead(_ *peer.Peer, bytesRead int,
 	msg wire.HandshakeMessage, err error) {
 
 	sp.server.AddBytesReceived(uint64(bytesRead))
+	sp.server.metrics.observeP2PMessage("inbound", msg)
 }
 
 // OnWrite is invoked when a peer sends a message and it is used to update
@@ -1129,6 +1137,7 @@ func (sp *serverPeer) OnWrite(_ *peer.Peer, bytesWritten int,
 	msg wire.HandshakeMessage, err error) {
 
 	sp.server.AddBytesSent(uint64(bytesWritten))
+	sp.server.metrics.observeP2PMessage("outbound", msg)
 }
 
 // OnNotFound is invoked when a peer sends a notfound message.
@@ -2316,6 +2325,14 @@ func (s *server) Start() {
 		s.rpcServer.Start()
 	}
 
+	if s.metricsServer != nil {
+		s.metricsServer.Start()
+	}
+
+	if s.stratumServer != nil {
+		s.stratumServer.Start()
+	}
+
 	// Start the CPU miner if generation is enabled.
 	if cfg.Generate {
 		s.cpuMiner.Start()
@@ -2332,6 +2349,14 @@ func (s *server) Stop() error {
 	}
 
 	srvrLog.Warnf("Server shutting down")
+
+	if s.stratumServer != nil {
+		s.stratumServer.Stop()
+	}
+
+	if s.metricsServer != nil {
+		s.metricsServer.Stop()
+	}
 
 	// Stop the CPU miner if needed
 	s.cpuMiner.Stop()
@@ -2546,6 +2571,31 @@ func setupRPCListeners() ([]net.Listener, error) {
 	return listeners, nil
 }
 
+func setupPlainListeners(addrs []string, service string) ([]net.Listener, error) {
+	netAddrs, err := parseListeners(addrs)
+	if err != nil {
+		return nil, err
+	}
+
+	listeners := make([]net.Listener, 0, len(netAddrs))
+	for _, addr := range netAddrs {
+		listener, err := net.Listen(addr.Network(), addr.String())
+		if err != nil {
+			for _, existing := range listeners {
+				_ = existing.Close()
+			}
+			return nil, fmt.Errorf("%s listen on %s: %w",
+				service, addr, err)
+		}
+		listeners = append(listeners, listener)
+	}
+	if len(listeners) == 0 {
+		return nil, fmt.Errorf("no valid %s listen address", service)
+	}
+
+	return listeners, nil
+}
+
 // newServer returns a new handshake-node server configured to listen on addr for the
 // bitcoin network type specified by chainParams.  Use start to begin accepting
 // connections from peers.
@@ -2632,6 +2682,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		cfCheckptCaches:      make(map[wire.FilterType][]cfHeaderKV),
 		agentBlacklist:       agentBlacklist,
 		agentWhitelist:       agentWhitelist,
+		metrics:              newNodeMetrics(),
 	}
 
 	// Create the transaction and address indexes if needed.
@@ -2926,6 +2977,48 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 			<-s.rpcServer.RequestedProcessShutdown()
 			shutdownRequestChannel <- struct{}{}
 		}()
+	}
+
+	if len(cfg.MetricsListeners) > 0 {
+		s.metricsServer, err = newMetricsServer(cfg.MetricsListeners, &s)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(cfg.StratumListeners) > 0 {
+		listeners, err := setupPlainListeners(cfg.StratumListeners,
+			"stratum")
+		if err != nil {
+			if s.metricsServer != nil {
+				s.metricsServer.Stop()
+			}
+			return nil, err
+		}
+		authorize := func(user, pass string) bool {
+			if cfg.StratumUser == "" && cfg.StratumPass == "" {
+				return true
+			}
+			return user == cfg.StratumUser && pass == cfg.StratumPass
+		}
+		s.stratumServer, err = stratum.New(&stratum.Config{
+			ChainParams:            chainParams,
+			BlockTemplateGenerator: blockTemplateGenerator,
+			MiningAddrs:            cfg.miningAddrs,
+			Listeners:              listeners,
+			ProcessBlock:           s.syncManager.ProcessBlock,
+			Authorize:              authorize,
+			Difficulty:             cfg.StratumDifficulty,
+		})
+		if err != nil {
+			for _, listener := range listeners {
+				_ = listener.Close()
+			}
+			if s.metricsServer != nil {
+				s.metricsServer.Stop()
+			}
+			return nil, err
+		}
 	}
 
 	return &s, nil
