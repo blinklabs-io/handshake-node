@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	// maxAddrV2Size is the maximum size an address may be in the addrv2
-	// message.
+	// maxAddrV2Size is the maximum size retained by the BIP-155 address
+	// compatibility helper.
 	maxAddrV2Size = 512
 )
 
@@ -36,8 +36,8 @@ var (
 	ErrSkippedNetworkID = fmt.Errorf("skipped networkID")
 )
 
-// maxNetAddressV2Payload returns the max payload size for an address used in
-// the addrv2 message.
+// maxNetAddressV2Payload returns the max payload size for one BIP-155 address
+// compatibility entry.
 func maxNetAddressV2Payload() uint32 {
 	// The timestamp takes up four bytes.
 	plen := uint32(4)
@@ -81,9 +81,9 @@ func isIPv4Mapped(addr []byte) bool {
 }
 
 // NetAddressV2 defines information about a peer on the network including the
-// last time it was seen, the services it supports, its address, and port. This
-// struct is used in the addrv2 message (MsgAddrV2) and can contain larger
-// addresses, like Tor. Additionally, it can contain any NetAddress address.
+// last time it was seen, the services it supports, its address, and port. The
+// type is retained for address-manager and RPC compatibility; Handshake P2P
+// addr packets use HnsNetAddress on the wire.
 type NetAddressV2 struct {
 	// Last time the address was seen. This is, unfortunately, encoded as a
 	// uint32 on the wire and therefore is limited to 2106. This field is

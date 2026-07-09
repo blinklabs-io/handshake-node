@@ -1135,19 +1135,27 @@ func (*HnsMsgFilterClear) Decode(data []byte) error {
 	return nil
 }
 
-// HnsMsgMerkleBlock is the Handshake "merkleblock" message. The payload is
-// kept opaque while the Phase 3/5 SPV and merkle proof callers are migrated
-// off the remaining btcd-shaped filtered block code.
+// HnsMsgMerkleBlock is the Handshake "merkleblock" message. It reuses the
+// existing filtered block serializer while the surrounding codebase still
+// exposes the btcd-shaped merkle block type.
 type HnsMsgMerkleBlock struct {
-	Payload []byte
+	MerkleBlock MsgMerkleBlock
 }
 
 func (*HnsMsgMerkleBlock) Type() HnsMsgType { return HnsMsgTypeMerkleBlock }
 func (m *HnsMsgMerkleBlock) Encode() []byte {
-	return hnsEncodeOpaquePayload(m.Payload)
+	var buf bytes.Buffer
+	_ = m.MerkleBlock.BtcEncode(&buf, ProtocolVersion, BaseEncoding)
+	return buf.Bytes()
 }
 func (m *HnsMsgMerkleBlock) Decode(data []byte) error {
-	m.Payload = hnsDecodeOpaquePayload(m.Payload, data)
+	if len(data) == 0 {
+		return errors.New("merkleblock: empty payload")
+	}
+	if err := m.MerkleBlock.BtcDecode(bytes.NewReader(data),
+		ProtocolVersion, BaseEncoding); err != nil {
+		return fmt.Errorf("merkleblock: %w", err)
+	}
 	return nil
 }
 
