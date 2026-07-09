@@ -205,6 +205,20 @@ func CalcBlockSubsidy(height int32, chainParams *chaincfg.Params) int64 {
 	return baseSubsidy >> uint(height/chainParams.SubsidyReductionInterval)
 }
 
+func mandatoryScriptVerifyFlags() txscript.ScriptFlags {
+	return txscript.ScriptBip16 |
+		txscript.ScriptStrictMultiSig |
+		txscript.ScriptVerifyCheckLockTimeVerify |
+		txscript.ScriptVerifyCheckSequenceVerify |
+		txscript.ScriptVerifyDERSignatures |
+		txscript.ScriptVerifyLowS |
+		txscript.ScriptVerifyMinimalData |
+		txscript.ScriptVerifyNullFail |
+		txscript.ScriptVerifyStrictEncoding |
+		txscript.ScriptVerifyWitness |
+		txscript.ScriptVerifyMinimalIf
+}
+
 // CheckTransactionSanity performs some preliminary checks on a transaction to
 // ensure it is sane.  These checks are context free.
 func CheckTransactionSanity(tx *hnsutil.Tx) error {
@@ -923,25 +937,10 @@ func (b *BlockChain) checkBlockContext(block *hnsutil.Block, prevNode *blockNode
 
 	fastAdd := flags&BFFastAdd == BFFastAdd
 	if !fastAdd {
-		// Obtain the latest state of the deployed CSV soft-fork in
-		// order to properly guard the new validation behavior based on
-		// the current BIP 9 version bits state.
-		csvState, err := b.deploymentState(prevNode, chaincfg.DeploymentCSV)
-		if err != nil {
-			return err
-		}
-
-		// Once the CSV soft-fork is fully active, we'll switch to
-		// using the current median time past of the past block's
-		// timestamps for all lock-time based checks.
-		blockTime := header.Timestamp
-		if csvState == ThresholdActive {
-			blockTime = CalcPastMedianTime(prevNode)
-		}
-
 		// The height of this block is one more than the referenced
 		// previous block.
 		blockHeight := prevNode.height + 1
+		blockTime := CalcPastMedianTime(prevNode)
 
 		// Ensure all transactions in the block are finalized.
 		for _, tx := range block.Transactions() {
@@ -1328,70 +1327,20 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 
 	runScripts := b.shouldValidateScripts(node)
 
-	// Blocks created after the BIP0016 activation time need to have the
-	// pay-to-script-hash checks enabled.
-	var scriptFlags txscript.ScriptFlags
-	if enforceBIP0016 {
-		scriptFlags |= txscript.ScriptBip16
-	}
-
-	// Enforce DER signatures for block versions 3+ once the historical
-	// activation threshold has been reached.  This is part of BIP0066.
-	blockHeader := &block.MsgBlock().Header
-	if blockHeader.Version >= 3 && node.height >= b.chainParams.BIP0066Height {
-		scriptFlags |= txscript.ScriptVerifyDERSignatures
-	}
-
-	// Enforce CHECKLOCKTIMEVERIFY for block versions 4+ once the historical
-	// activation threshold has been reached.  This is part of BIP0065.
-	if blockHeader.Version >= 4 && node.height >= b.chainParams.BIP0065Height {
-		scriptFlags |= txscript.ScriptVerifyCheckLockTimeVerify
-	}
-
-	// Enforce CHECKSEQUENCEVERIFY during all block validation checks once
-	// the soft-fork deployment is fully active.
-	csvState, err := b.deploymentState(node.parent, chaincfg.DeploymentCSV)
-	if err != nil {
-		return err
-	}
-	if csvState == ThresholdActive {
-		// If the CSV soft-fork is now active, then modify the
-		// scriptFlags to ensure that the CSV op code is properly
-		// validated during the script checks below.
-		scriptFlags |= txscript.ScriptVerifyCheckSequenceVerify
-
-		// We obtain the MTP of the *previous* block in order to
-		// determine if transactions in the current block are final.
-		medianTime := CalcPastMedianTime(node.parent)
-
-		// Additionally, if the CSV soft-fork package is now active,
-		// then we also enforce the relative sequence number based
-		// lock-times within the inputs of all transactions in this
-		// candidate block.
-		for _, tx := range block.Transactions() {
-			// A transaction can only be included within a block
-			// once the sequence locks of *all* its inputs are
-			// active.
-			sequenceLock, err := b.calcSequenceLock(node, tx, view,
-				false)
-			if err != nil {
-				return err
-			}
-			if !SequenceLockActive(sequenceLock, node.height,
-				medianTime) {
-				str := fmt.Sprintf("block contains " +
-					"transaction whose input sequence " +
-					"locks are not met")
-				return ruleError(ErrUnfinalizedTx, str)
-			}
+	scriptFlags := mandatoryScriptVerifyFlags()
+	medianTime := CalcPastMedianTime(node.parent)
+	for _, tx := range block.Transactions() {
+		// A transaction can only be included within a block once the
+		// sequence locks of all its inputs are active.
+		sequenceLock, err := b.calcSequenceLock(node, tx, view, false)
+		if err != nil {
+			return err
 		}
-	}
-
-	// Enforce the segwit soft-fork package once the soft-fork has shifted
-	// into the "active" version bits state.
-	if enforceSegWit {
-		scriptFlags |= txscript.ScriptVerifyWitness
-		scriptFlags |= txscript.ScriptStrictMultiSig
+		if !SequenceLockActive(sequenceLock, node.height, medianTime) {
+			str := "block contains transaction whose input sequence " +
+				"locks are not met"
+			return ruleError(ErrUnfinalizedTx, str)
+		}
 	}
 
 	// Now that the inexpensive checks are done and have passed, verify the
