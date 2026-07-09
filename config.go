@@ -216,6 +216,15 @@ func configEnvName(option string) string {
 	return "HANDSHAKE_NODE_" + strings.ToUpper(option)
 }
 
+func configEnvOverrideAllowed(option string) bool {
+	switch option {
+	case "configfile", "version":
+		return false
+	default:
+		return true
+	}
+}
+
 func applyConfigEnvOverrides(cfg *config,
 	lookup func(string) (string, bool)) error {
 
@@ -226,6 +235,9 @@ func applyConfigEnvOverrides(cfg *config,
 		fieldType := rt.Field(i)
 		option := fieldType.Tag.Get("long")
 		if option == "" {
+			continue
+		}
+		if !configEnvOverrideAllowed(option) {
 			continue
 		}
 
@@ -263,7 +275,7 @@ func applyConfigEnvOverrides(cfg *config,
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 			reflect.Int64:
 
-			parsed, err := strconv.ParseInt(value, 0, field.Type().Bits())
+			parsed, err := strconv.ParseInt(value, 10, field.Type().Bits())
 			if err != nil {
 				return fmt.Errorf("%s: %w", envName, err)
 			}
@@ -272,7 +284,7 @@ func applyConfigEnvOverrides(cfg *config,
 		case reflect.Uint, reflect.Uint8, reflect.Uint16,
 			reflect.Uint32, reflect.Uint64:
 
-			parsed, err := strconv.ParseUint(value, 0,
+			parsed, err := strconv.ParseUint(value, 10,
 				field.Type().Bits())
 			if err != nil {
 				return fmt.Errorf("%s: %w", envName, err)

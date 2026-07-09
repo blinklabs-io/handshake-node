@@ -454,13 +454,14 @@ func (c *Client) handleMessage(msg []byte) {
 		return
 	}
 
-	// Since the command was successful, examine it to see if it's a
-	// notification, and if is, add it to the notification state so it
-	// can automatically be re-established on reconnect.
-	c.trackRegisteredNtfns(request.cmd)
-
 	// Deliver the response.
 	result, err := in.result()
+	if err == nil {
+		// Since the command was successful, examine it to see if it's a
+		// notification, and if it is, add it to the notification state so
+		// it can automatically be re-established on reconnect.
+		c.trackRegisteredNtfns(request.cmd)
+	}
 	request.responseChan <- &Response{result: result, err: err}
 }
 

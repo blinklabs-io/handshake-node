@@ -55,7 +55,7 @@ func TestRPCClientAllowed(t *testing.T) {
 	}
 	for _, test := range tests {
 		if got := server.rpcClientAllowed(test.addr); got != test.want {
-			t.Fatalf("rpcClientAllowed(%q): got %v, want %v",
+			t.Errorf("rpcClientAllowed(%q): got %v, want %v",
 				test.addr, got, test.want)
 		}
 	}
@@ -63,6 +63,21 @@ func TestRPCClientAllowed(t *testing.T) {
 	allowAll := &rpcServer{}
 	if !allowAll.rpcClientAllowed("192.0.2.1:12037") {
 		t.Fatalf("empty allowlist rejected RPC client")
+	}
+}
+
+func TestHnsToDooZeroAmount(t *testing.T) {
+	if value, rpcErr := hnsToDoo(0, true); rpcErr != nil || value != 0 {
+		t.Fatalf("hnsToDoo zero allowed: got value %d err %v, want 0 nil",
+			value, rpcErr)
+	}
+
+	if _, rpcErr := hnsToDoo(0, false); rpcErr == nil {
+		t.Fatalf("hnsToDoo zero disallowed succeeded")
+	}
+
+	if _, rpcErr := hnsToDoo(-1, true); rpcErr == nil {
+		t.Fatalf("hnsToDoo negative amount succeeded")
 	}
 }
 

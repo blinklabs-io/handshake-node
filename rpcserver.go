@@ -938,8 +938,8 @@ func parseOutputAddress(s *rpcServer, encodedAddr string) (wire.Address, *hnsjso
 	return wireAddr, nil
 }
 
-func hnsToDoo(amount float64) (int64, *hnsjson.RPCError) {
-	if amount <= 0 {
+func hnsToDoo(amount float64, allowZero bool) (int64, *hnsjson.RPCError) {
+	if amount < 0 || (!allowZero && amount == 0) {
 		return 0, &hnsjson.RPCError{
 			Code:    hnsjson.ErrRPCType,
 			Message: "Invalid amount",
@@ -960,7 +960,7 @@ func hnsToDoo(amount float64) (int64, *hnsjson.RPCError) {
 
 func createCovenantTxHex(s *rpcServer, inputs []hnsjson.TransactionInput,
 	address string, amount float64, covenant wire.Covenant,
-	lockTime *int64) (interface{}, error) {
+	lockTime *int64, allowZeroAmount bool) (interface{}, error) {
 
 	if rpcErr := validateTxLockTime(lockTime); rpcErr != nil {
 		return nil, rpcErr
@@ -975,7 +975,7 @@ func createCovenantTxHex(s *rpcServer, inputs []hnsjson.TransactionInput,
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	value, rpcErr := hnsToDoo(amount)
+	value, rpcErr := hnsToDoo(amount, allowZeroAmount)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1083,7 +1083,7 @@ func handleCreateOpen(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) 
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, true)
 }
 
 // handleCreateBid handles createbid commands.
@@ -1107,7 +1107,7 @@ func handleCreateBid(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateReveal handles createreveal commands.
@@ -1130,7 +1130,7 @@ func handleCreateReveal(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateRedeem handles createredeem commands.
@@ -1148,7 +1148,7 @@ func handleCreateRedeem(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateRegister handles createregister commands.
@@ -1176,7 +1176,7 @@ func handleCreateRegister(s *rpcServer, cmd interface{}, closeChan <-chan struct
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateUpdate handles createupdate commands.
@@ -1199,7 +1199,7 @@ func handleCreateUpdate(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateRenew handles createrenew commands.
@@ -1222,7 +1222,7 @@ func handleCreateRenew(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateTransfer handles createtransfer commands.
@@ -1246,7 +1246,7 @@ func handleCreateTransfer(s *rpcServer, cmd interface{}, closeChan <-chan struct
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateFinalize handles createfinalize commands.
@@ -1273,7 +1273,7 @@ func handleCreateFinalize(s *rpcServer, cmd interface{}, closeChan <-chan struct
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateRevoke handles createrevoke commands.
@@ -1291,7 +1291,7 @@ func handleCreateRevoke(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 		},
 	}
 	return createCovenantTxHex(s, c.Inputs, c.Address, c.Amount,
-		covenant, c.LockTime)
+		covenant, c.LockTime, false)
 }
 
 // handleCreateRawTransaction handles createrawtransaction commands.
@@ -1317,7 +1317,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		if rpcErr != nil {
 			return nil, rpcErr
 		}
-		value, rpcErr := hnsToDoo(amount)
+		value, rpcErr := hnsToDoo(amount, false)
 		if rpcErr != nil {
 			return nil, rpcErr
 		}

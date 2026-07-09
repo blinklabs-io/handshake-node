@@ -14,7 +14,9 @@ Environment variables use the `HANDSHAKE_NODE_` prefix followed by the long
 option name in uppercase.  Dashes are converted to underscores.  For example,
 `--rpcuser` can be set with `HANDSHAKE_NODE_RPCUSER`, and `--blockmaxweight`
 can be set with `HANDSHAKE_NODE_BLOCKMAXWEIGHT`.  Slice options such as
-`--addpeer` accept comma-separated values.
+`--addpeer` accept comma-separated values.  Bootstrap-only flags that must be
+handled before the config file is loaded, such as `--configfile` and
+`--version`, are not applied from environment variables.
 
 ```bash
 HANDSHAKE_NODE_RPCUSER=myuser \

@@ -1,6 +1,7 @@
 package rpcclient
 
 import (
+	"container/list"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -54,5 +55,55 @@ func TestParseNameUpdatedNtfnParams(t *testing.T) {
 	}
 	if ntfn.Block != nil {
 		t.Fatalf("mempool event block details: got %+v, want nil", ntfn.Block)
+	}
+}
+
+func TestNotificationRegistrationTrackedOnlyAfterSuccess(t *testing.T) {
+	t.Parallel()
+
+	client := &Client{
+		requestMap:   make(map[uint64]*list.Element),
+		requestList:  list.New(),
+		ntfnHandlers: &NotificationHandlers{},
+		ntfnState:    newNotificationState(),
+		shutdown:     make(chan struct{}),
+	}
+
+	badNames := []string{"bad"}
+	badResponse := make(chan *Response, 1)
+	err := client.addRequest(&jsonRequest{
+		id:           1,
+		cmd:          hnsjson.NewNotifyNamesCmd(&badNames, nil),
+		responseChan: badResponse,
+	})
+	if err != nil {
+		t.Fatalf("addRequest failed: %v", err)
+	}
+	client.handleMessage([]byte(
+		`{"jsonrpc":"1.0","result":null,"error":{"code":-8,"message":"bad filter"},"id":1}`))
+	if resp := <-badResponse; resp.err == nil {
+		t.Fatalf("failed registration returned nil error")
+	}
+	if _, ok := client.ntfnState.notifyNames["bad"]; ok {
+		t.Fatalf("failed registration was tracked")
+	}
+
+	goodNames := []string{"good"}
+	goodResponse := make(chan *Response, 1)
+	err = client.addRequest(&jsonRequest{
+		id:           2,
+		cmd:          hnsjson.NewNotifyNamesCmd(&goodNames, nil),
+		responseChan: goodResponse,
+	})
+	if err != nil {
+		t.Fatalf("addRequest failed: %v", err)
+	}
+	client.handleMessage([]byte(
+		`{"jsonrpc":"1.0","result":null,"error":null,"id":2}`))
+	if resp := <-goodResponse; resp.err != nil {
+		t.Fatalf("successful registration returned error: %v", resp.err)
+	}
+	if _, ok := client.ntfnState.notifyNames["good"]; !ok {
+		t.Fatalf("successful registration was not tracked")
 	}
 }

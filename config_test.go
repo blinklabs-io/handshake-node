@@ -82,13 +82,18 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 		BanDuration:  time.Second,
 		AddPeers:     []string{"from-file"},
 		BlockMaxSize: 1,
+		Prune:        1,
+		ConfigFile:   "from-file.conf",
 	}
 	env := map[string]string{
 		"HANDSHAKE_NODE_RPCUSER":      "envuser",
 		"HANDSHAKE_NODE_GENERATE":     "true",
 		"HANDSHAKE_NODE_BANDURATION":  "2m",
 		"HANDSHAKE_NODE_ADDPEER":      "127.0.0.1,127.0.0.2",
-		"HANDSHAKE_NODE_BLOCKMAXSIZE": "2048",
+		"HANDSHAKE_NODE_BLOCKMAXSIZE": "010",
+		"HANDSHAKE_NODE_PRUNE":        "010",
+		"HANDSHAKE_NODE_CONFIGFILE":   "from-env.conf",
+		"HANDSHAKE_NODE_VERSION":      "true",
 	}
 	lookup := func(key string) (string, bool) {
 		value, ok := env[key]
@@ -112,9 +117,19 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 	if got, want := cfg.AddPeers, []string{"127.0.0.1", "127.0.0.2"}; !slices.Equal(got, want) {
 		t.Fatalf("AddPeers: got %v, want %v", got, want)
 	}
-	if cfg.BlockMaxSize != 2048 {
+	if cfg.BlockMaxSize != 10 {
 		t.Fatalf("BlockMaxSize: got %d, want %d", cfg.BlockMaxSize,
-			2048)
+			10)
+	}
+	if cfg.Prune != 10 {
+		t.Fatalf("Prune: got %d, want %d", cfg.Prune, uint64(10))
+	}
+	if cfg.ConfigFile != "from-file.conf" {
+		t.Fatalf("ConfigFile: got %q, want %q", cfg.ConfigFile,
+			"from-file.conf")
+	}
+	if cfg.ShowVersion {
+		t.Fatalf("ShowVersion: got true, want false")
 	}
 }
 

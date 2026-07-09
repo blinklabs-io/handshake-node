@@ -998,7 +998,7 @@ func (c *Client) notifyNamesInternal(names, nameHashes []string) FutureNotifyNam
 	}
 
 	var namesPtr *[]string
-	if names != nil || len(nameHashes) > 0 {
+	if names != nil {
 		namesPtr = &names
 	}
 	var nameHashesPtr *[]string
