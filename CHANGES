@@ -3,6 +3,46 @@ User visible changes for handshake-node
   A Handshake full node implementation written in Go (forked from btcd)
 ============================================================================
 
+Changes in 0.1.0-rc1 (release candidate)
+  - Handshake protocol and consensus changes:
+    - Replace Bitcoin chain parameters, block headers, proof-of-work, network
+      magic, transaction outputs, and covenant handling with Handshake
+      mainnet/regtest semantics.
+    - Validate Handshake block headers, Blake2b/SHA3 proof-of-work, covenant
+      state transitions, name roots, witness roots, and coinbase airdrop
+      proofs.
+    - Maintain Urkel-backed name state with rollback support for reorgs and
+      hsd-compatible name proof generation for retained roots.
+  - Peer-to-peer and sync changes:
+    - Implement Handshake packet framing, header/block messages, inventory
+      handling, name proof messages, and Brontide transport support with
+      plaintext compatibility during migration.
+    - Preserve advertised Brontide static keys through address relay,
+      addrmanager persistence, getaddr responses, and outbound dialing.
+    - Harden IBD request accounting and peer handling around malformed or
+      missing block data.
+  - Mempool and mining changes:
+    - Validate name covenants in the mempool and block-template selection
+      path against Handshake consensus rules.
+    - Implement Handshake getblocktemplate fields including tree root, witness
+      root, mask, proof arrays, coinbase proof sourcing, and hsd-style merkle
+      roots.
+    - Add an opt-in Handshake Stratum v1 MVP server for local mining
+      integration.
+  - RPC, CLI, and wallet integration changes:
+    - Add Handshake name query RPCs, websocket name notifications,
+      rpcclient helpers, hnsctl exposure, and unsigned covenant-construction
+      RPCs for external wallets.
+    - Keep wallet state out of the node; bursa owns wallet signing and
+      wallet-facing state.
+    - Harden RPC authentication, listener defaults, allowlist handling, and
+      environment-variable configuration.
+  - Release and operator changes:
+    - Update module paths, binaries, documentation, Docker images, CI,
+      release publishing, and license headers for the Blink Labs
+      handshake-node fork.
+    - Require Go 1.25 or newer for source builds.
+
 Changes in 0.22.0 (Tue Jun 01 2021)
   - Protocol and network-related changes:
     - Add support for witness tx and block in notfound msg (#1625)

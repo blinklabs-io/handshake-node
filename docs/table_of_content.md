@@ -7,6 +7,7 @@
 * [Controlling](controlling.md)
 * [Mining](mining.md)
 * [Wallet](wallet.md)
+* [cdnsd integration](cdnsd.md)
 * [Developer resources](developer_resources.md)
 * [JSON RPC API](json_rpc_api.md)
 * [Code contribution guidelines](code_contribution_guidelines.md)

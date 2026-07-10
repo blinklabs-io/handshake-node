@@ -8,7 +8,7 @@
     - [Preamble](#preamble)
     - [Full node without RPC port](#full-node-without-rpc-port)
     - [Full node with RPC port](#full-node-with-rpc-port)
-    - [Full node with RPC port running on TESTNET](#full-node-with-rpc-port-running-on-testnet)
+    - [Full node with RPC port running on regtest](#full-node-with-rpc-port-running-on-regtest)
 
 ## Introduction
 
@@ -36,7 +36,7 @@ We pass all needed arguments to *handshake-node* as command line parameters in o
 ```bash
 Error creating a default config file: open /sample-handshake-node.conf: no such file or directory
 ...
-[WRN] BTCD: open /root/.handshake-node/handshake-node.conf: no such file or directory
+[WRN] BTCD: open /home/handshake/.handshake-node/handshake-node.conf: no such file or directory
 ```
 
 ## Examples
@@ -96,7 +96,7 @@ services:
     build: https://github.com/blinklabs-io/handshake-node.git#master
     restart: unless-stopped
     volumes:
-      - handshake-node-data:/root/.handshake-node
+      - handshake-node-data:/home/handshake/.handshake-node
     ports:
       - 12038:12038
 
@@ -118,7 +118,7 @@ services:
     build: https://github.com/blinklabs-io/handshake-node.git#master
     restart: unless-stopped
     volumes:
-      - handshake-node-data:/root/.handshake-node
+      - handshake-node-data:/home/handshake/.handshake-node
     ports:
       - 12038:12038
       - 12037:12037
@@ -131,9 +131,10 @@ volumes:
   handshake-node-data:
 ```
 
-### Full node with RPC port running on TESTNET
+### Full node with RPC port running on regtest
 
-To run a node on testnet, you need to provide the *--testnet* argument. The ports for testnet are 18333 (p2p) and 18334 (RPC):
+To run a node on regtest, provide the `--regtest` argument. The default ports
+for regtest are 14038 (P2P) and 18334 (RPC):
 
 ```yaml
 version: "2"
@@ -145,12 +146,12 @@ services:
     build: https://github.com/blinklabs-io/handshake-node.git#master
     restart: unless-stopped
     volumes:
-      - handshake-node-data:/root/.handshake-node
+      - handshake-node-data:/home/handshake/.handshake-node
     ports:
-      - 18333:18333
+      - 14038:14038
       - 18334:18334
     command: [
-        "--testnet",
+        "--regtest",
         "--rpcuser=[CHOOSE_A_USERNAME]",
         "--rpcpass=[CREATE_A_VERY_HARD_PASSWORD]"
     ]
