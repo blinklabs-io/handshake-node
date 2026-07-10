@@ -17,8 +17,8 @@ require (
 	github.com/miekg/dns v1.1.69
 	github.com/stretchr/testify v1.8.4
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
-	golang.org/x/crypto v0.45.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/crypto v0.51.0
+	golang.org/x/sys v0.45.0
 	pgregory.net/rapid v1.2.0
 )
 
@@ -31,7 +31,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.0 // indirect
 	golang.org/x/mod v0.30.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -42,4 +42,4 @@ replace (
 	github.com/blinklabs-io/handshake-node/hnsutil => ./hnsutil
 )
 
-go 1.24.0
+go 1.25.0
