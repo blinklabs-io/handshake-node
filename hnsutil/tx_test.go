@@ -79,7 +79,7 @@ func TestNewTxFromBytes(t *testing.T) {
 	assertCachedTxHashes(t, tx, testTx)
 }
 
-func TestNewTxFromBytesCachesConsumedCopy(t *testing.T) {
+func TestNewTxFromBytesRejectsTrailingBytesAndCachesCopy(t *testing.T) {
 	testTx := Block100000.Transactions[0]
 	var testTxBuf bytes.Buffer
 	if err := testTx.Serialize(&testTxBuf); err != nil {
@@ -87,7 +87,6 @@ func TestNewTxFromBytesCachesConsumedCopy(t *testing.T) {
 	}
 
 	serializedTx := append([]byte(nil), testTxBuf.Bytes()...)
-	serializedTx = append(serializedTx, 0xff, 0x00, 0x01)
 	tx, err := hnsutil.NewTxFromBytes(serializedTx)
 	if err != nil {
 		t.Fatalf("NewTxFromBytes: %v", err)
@@ -98,6 +97,11 @@ func TestNewTxFromBytesCachesConsumedCopy(t *testing.T) {
 	}
 
 	assertCachedTxHashes(t, tx, testTx)
+
+	trailingTx := append(testTxBuf.Bytes(), 0xff, 0x00, 0x01)
+	if _, err := hnsutil.NewTxFromBytes(trailingTx); err == nil {
+		t.Fatalf("expected trailing bytes to be rejected")
+	}
 }
 
 func assertCachedTxHashes(t *testing.T, tx *hnsutil.Tx, msgTx *wire.MsgTx) {

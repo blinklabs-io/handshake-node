@@ -200,6 +200,11 @@ func TestNewBlockFromBytes(t *testing.T) {
 	}
 
 	assertCachedBlockTxHashes(t, b)
+
+	trailingBlock := append(block100000Bytes, 0xff)
+	if _, err := hnsutil.NewBlockFromBytes(trailingBlock); err == nil {
+		t.Fatalf("expected trailing bytes to be rejected")
+	}
 }
 
 // TestNewBlockFromBlockAndBytes tests creation of a Block from a MsgBlock and

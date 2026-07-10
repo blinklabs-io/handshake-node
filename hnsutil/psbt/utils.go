@@ -296,6 +296,31 @@ func getKey(r io.Reader) (int, []byte, error) {
 	return int(keyType), keyData, nil
 }
 
+// assertFullyConsumed returns ErrInvalidPsbtFormat if r still has bytes
+// available after parsing.
+func assertFullyConsumed(r io.Reader) error {
+	if lr, ok := r.(interface{ Len() int }); ok {
+		if lr.Len() > 0 {
+			return ErrInvalidPsbtFormat
+		}
+
+		return nil
+	}
+
+	var trailing [1]byte
+	_, err := io.ReadFull(r, trailing[:])
+	switch {
+	case err == nil:
+		return ErrInvalidPsbtFormat
+
+	case errors.Is(err, io.EOF):
+		return nil
+
+	default:
+		return err
+	}
+}
+
 // readTxOut decodes a Handshake transaction output stored in a PSBT witness
 // UTXO field.
 func readTxOut(txout []byte) (*wire.TxOut, error) {
@@ -309,6 +334,30 @@ func readTxOut(txout []byte) (*wire.TxOut, error) {
 	}
 
 	return out, nil
+}
+
+// readTransaction parses a transaction value and requires the full value to be
+// consumed. PSBT transaction-valued fields contain exactly one network
+// serialized transaction, not a transaction prefix with arbitrary trailing data.
+func readTransaction(txBytes []byte, noWitness bool) (*wire.MsgTx, error) {
+	tx := wire.NewMsgTx(2)
+	reader := bytes.NewReader(txBytes)
+
+	var err error
+	if noWitness {
+		err = tx.DeserializeNoWitness(reader)
+	} else {
+		err = tx.Deserialize(reader)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if err := assertFullyConsumed(reader); err != nil {
+		return nil, err
+	}
+
+	return tx, nil
 }
 
 // SumUtxoInputValues tries to extract the sum of all inputs specified in the

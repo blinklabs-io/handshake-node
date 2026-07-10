@@ -1524,8 +1524,7 @@ func (b *BlockChain) initChainState() error {
 		if err != nil {
 			return err
 		}
-		var block wire.MsgBlock
-		err = block.Deserialize(bytes.NewReader(blockBytes))
+		block, err := hnsutil.NewBlockFromBytes(blockBytes)
 		if err != nil {
 			return err
 		}
@@ -1551,8 +1550,8 @@ func (b *BlockChain) initChainState() error {
 
 		// Initialize the state related to the best block.
 		blockSize := uint64(len(blockBytes))
-		blockWeight := uint64(GetBlockWeight(hnsutil.NewBlock(&block)))
-		numTxns := uint64(len(block.Transactions))
+		blockWeight := uint64(GetBlockWeight(block))
+		numTxns := uint64(len(block.MsgBlock().Transactions))
 		b.stateSnapshot = newBestState(tip, blockSize, blockWeight,
 			numTxns, state.totalTxns, CalcPastMedianTime(tip))
 

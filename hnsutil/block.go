@@ -252,6 +252,9 @@ func NewBlockFromBytes(serializedBlock []byte) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
+	if br.Len() > 0 {
+		return nil, fmt.Errorf("block has %d trailing bytes", br.Len())
+	}
 	b.serializedBlock = serializedBlock
 
 	// This initializes []hnsutil.Tx to have the serialized raw

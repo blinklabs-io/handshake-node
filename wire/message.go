@@ -415,6 +415,11 @@ func readMessageWithEncodingNInternal(r io.Reader, pver uint32,
 	if err != nil {
 		return totalBytes, nil, nil, err
 	}
+	if pr.Len() > 0 {
+		str := fmt.Sprintf("message payload has %d extra bytes "+
+			"after decode", pr.Len())
+		return totalBytes, nil, nil, messageError("ReadMessage", str)
+	}
 
 	return totalBytes, msg, payload, nil
 }
