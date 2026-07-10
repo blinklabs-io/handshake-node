@@ -15,8 +15,8 @@ functionality belongs in [bursa](https://github.com/blinklabs-io/bursa).
 
 ## Current Status
 
-The node is being prepared as a mainnet release candidate. Current development
-includes:
+The 0.1.0-rc1 line is being prepared as a mainnet release candidate. Current
+development includes:
 
 - Handshake mainnet and regtest chain parameters.
 - Blake2b/SHA3 Handshake proof-of-work and 236-byte block headers.
@@ -27,6 +27,7 @@ includes:
   v1 MVP server.
 - Authenticated JSON-RPC, websocket notifications, unsigned covenant
   constructors, `hnsctl`, and `rpcclient` support.
+- Full-block Handshake P2P service suitable for cdnsd indexing.
 
 ## Requirements
 
@@ -99,6 +100,7 @@ go test -p 1 -v -tags=rpctest ./integration/...
 - [JSON-RPC API](docs/json_rpc_api.md)
 - [Mining](docs/mining.md)
 - [Wallet integration](docs/wallet.md)
+- [cdnsd integration](docs/cdnsd.md)
 - [Docker](docs/using_docker.md)
 
 ## License

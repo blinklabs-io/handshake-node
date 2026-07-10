@@ -40,9 +40,9 @@ Command Line Examples:
 
 |Flags|Comment|
 |----------|------------|
-|--listen=|all interfaces on default port which is changed by `--testnet` and `--regtest` (**default**)|
-|--listen=0.0.0.0|all IPv4 interfaces on default port which is changed by `--testnet` and `--regtest`|
-|--listen=::|all IPv6 interfaces on default port which is changed by `--testnet` and `--regtest`|
+|--listen=|all interfaces on default port which is changed by `--regtest` (**default**)|
+|--listen=0.0.0.0|all IPv4 interfaces on default port which is changed by `--regtest`|
+|--listen=::|all IPv6 interfaces on default port which is changed by `--regtest`|
 |--listen=:12038|all interfaces on port 12038|
 |--listen=0.0.0.0:12038|all IPv4 interfaces on port 12038|
 |--listen=[::]:12038|all IPv6 interfaces on port 12038|
@@ -103,9 +103,9 @@ Command Line Examples:
 
 |Flags|Comment|
 |----------|------------|
-|--rpclisten=|all interfaces on default port which is changed by `--testnet`|
-|--rpclisten=0.0.0.0|all IPv4 interfaces on default port which is changed by `--testnet`|
-|--rpclisten=::|all IPv6 interfaces on default port which is changed by `--testnet`|
+|--rpclisten=|all interfaces on default port which is changed by `--regtest`|
+|--rpclisten=0.0.0.0|all IPv4 interfaces on default port which is changed by `--regtest`|
+|--rpclisten=::|all IPv6 interfaces on default port which is changed by `--regtest`|
 |--rpclisten=:12037|all interfaces on port 12037|
 |--rpclisten=0.0.0.0:12037|all IPv4 interfaces on port 12037|
 |--rpclisten=[::]:12037|all IPv6 interfaces on port 12037|

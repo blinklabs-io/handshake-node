@@ -34,7 +34,7 @@ jobs:
                 generate_release_notes: true,
                 name: process.env.RELEASE_TAG,
                 owner: context.repo.owner,
-                prerelease: false,
+                prerelease: process.env.RELEASE_TAG.includes('-'),
                 repo: context.repo.repo,
                 tag_name: process.env.RELEASE_TAG,
               });
@@ -155,8 +155,6 @@ jobs:
             latest=false
             suffix=-${{ matrix.arch }}
           tags: |
-            # Only version, no revision
-            type=match,pattern=v(.*)-(.*),group=1
             # branch
             type=ref,event=branch
             # semver
@@ -214,8 +212,6 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # Only version, no revision
-            type=match,pattern=v(.*)-(.*),group=1
             # branch
             type=ref,event=branch
             # semver

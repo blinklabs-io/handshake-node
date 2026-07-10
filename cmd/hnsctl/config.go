@@ -259,7 +259,7 @@ func loadConfig() (*config, []string, error) {
 	// Handle environment variable expansion in the RPC certificate path.
 	cfg.RPCCert = cleanAndExpandPath(cfg.RPCCert)
 
-	// Add default port to RPC server based on --testnet and --wallet flags
+	// Add default port to RPC server based on --regtest and --wallet flags
 	// if needed.
 	cfg.RPCServer, err = normalizeAddress(cfg.RPCServer, network, cfg.Wallet)
 	if err != nil {

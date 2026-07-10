@@ -1,9 +1,9 @@
 # `handshake-node`'s Reproducible Build System
 
-This package contains the build script that the `handshake-node` project uses in order to
-build binaries for each new release. As of `go1.13`, with some new build flags,
-binaries are now reproducible, allowing developers to build the binary on
-distinct machines, and end up with a byte-for-byte identical binary.
+This package contains the build script that the `handshake-node` project uses in
+order to build binaries for each new release. Release builds use trimmed,
+static Go binaries so developers can rebuild the same tagged source on distinct
+machines and compare the resulting artifacts.
 Every release should note which Go version was used to build the release, so
 that version should be used for verifying the release.
 
@@ -46,7 +46,7 @@ After committing changes to the CHANGES file, the tagged release commit
 should be created.
 
 The tagged commit should be a commit that bumps version numbers in `version.go`
-and `cmd/hnsctl/version.go`.
+and `cmd/hnsctl/version.go` to the same semantic version.
 For example (taken from [f3ec130](https://github.com/btcsuite/btcd/commit/f3ec13030e4e828869954472cbc51ac36bee5c1d)):
 ```diff
 diff --git a/cmd/hnsctl/version.go b/cmd/hnsctl/version.go
@@ -56,7 +56,7 @@ index 2195175c71..f65cacef7e 100644
 @@ -18,7 +18,7 @@ const semanticAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr
  const (
  	appMajor uint = 0
- 	appMinor uint = 20
+  appMinor uint = 1
 -	appPatch uint = 0
 +	appPatch uint = 1
  
@@ -69,7 +69,7 @@ index 92fd60fdd4..fba55b5a37 100644
 @@ -18,7 +18,7 @@ const semanticAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr
  const (
  	appMajor uint = 0
- 	appMinor uint = 20
+  appMinor uint = 1
 -	appPatch uint = 0
 +	appPatch uint = 1
  
@@ -77,16 +77,18 @@ index 92fd60fdd4..fba55b5a37 100644
  	// per the semantic versioning spec.
 ```
 
-Next, this commit should be signed by the maintainer using `git commit -S`.
-The commit should be tagged and signed with `git tag <TAG> -s`, and should be
-pushed using `git push origin TAG`.
+Next, this commit should be signed by the maintainer using `git commit -S` when
+the maintainer's environment supports it.  The commit should be tagged and
+signed with `git tag <TAG> -s`, and the tag should be pushed using
+`git push origin TAG`.
 
 ### Building a release on macOS/Linux/Windows (WSL)
 
-No prior set up is needed on Linux or macOS is required in order to build the
-release binaries. However, on Windows, the only way to build the release
-binaries at the moment is by using the Windows Subsystem Linux. One can build
-the release binaries following these steps:
+No prior setup is needed on Linux or macOS in order to build the release
+binaries beyond the same Go version noted in the release notes. However, on
+Windows, the only supported way to build the release binaries at the moment is
+by using the Windows Subsystem for Linux. One can build the release binaries
+following these steps:
 
 1. `git clone https://github.com/blinklabs-io/handshake-node.git`
 2. `cd handshake-node`
@@ -98,8 +100,11 @@ and a manifest file containing the hash of each archive.
 
 ### Pushing a release (for maintainers)
 
-Now that the directory `handshake-node-<TAG>` is created, the manifest file needs to be
-signed by a maintainer and the release files need to be published to GitHub.
+When a `v*.*.*` tag is pushed, GitHub Actions also creates release binaries,
+container images, attestations, and a GitHub release draft.  If using the local
+release script, the directory `handshake-node-<TAG>` is created and the manifest
+file needs to be signed by a maintainer before the release files are published
+to GitHub.
 
 Sign the `manifest-<TAG>.txt` file like so:
 ```sh
