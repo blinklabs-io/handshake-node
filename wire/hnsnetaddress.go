@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+// HnsBrontideKeySize is the compressed secp256k1 static key size carried in a
+// Handshake NetAddress for Brontide transport.
+const HnsBrontideKeySize = 33
+
 // HnsNetAddressSize is the on-wire size in bytes of a Handshake NetAddress.
 // Layout (little-endian unless noted):
 //
@@ -40,7 +44,7 @@ type HnsNetAddress struct {
 	Host     net.IP
 	Reserved [20]byte
 	Port     uint16
-	Key      [33]byte
+	Key      [HnsBrontideKeySize]byte
 }
 
 // Encode serializes the address into HnsNetAddressSize bytes. IPv4 hosts are
@@ -127,6 +131,25 @@ func (n *HnsNetAddress) NetAddress() *NetAddress {
 		IP:        append(net.IP(nil), n.Host...),
 		Port:      n.Port,
 	}
+}
+
+// NetAddressV2 converts the Handshake wire address into the in-memory
+// NetAddressV2 representation while preserving the advertised Brontide static
+// key.
+func (n *HnsNetAddress) NetAddressV2() *NetAddressV2 {
+	sec := n.Time
+	if sec > uint64(1<<63-1) {
+		sec = uint64(1<<63 - 1)
+	}
+
+	na := NetAddressV2FromBytes(
+		time.Unix(int64(sec), 0),
+		ServiceFlag(n.Services),
+		n.Host,
+		n.Port,
+	)
+	na.SetBrontideKey(n.Key[:])
+	return na
 }
 
 func isHnsIPv4Mapped(ip net.IP) bool {

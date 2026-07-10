@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"net"
 	"testing"
@@ -73,6 +74,35 @@ func TestWrapInboundConnPlaintext(t *testing.T) {
 	}
 	if err := <-writeErr; err != nil {
 		t.Fatalf("WriteHnsMessageN: %v", err)
+	}
+}
+
+func TestWithBrontideKey(t *testing.T) {
+	addr := &net.TCPAddr{
+		IP:   net.IPv4(203, 0, 113, 9),
+		Port: 12038,
+	}
+	key := make([]byte, wire.HnsBrontideKeySize)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+
+	wrapped := withBrontideKey(addr, key)
+	keyed, ok := wrapped.(brontideKeyAddr)
+	if !ok {
+		t.Fatal("wrapped address does not expose a brontide key")
+	}
+	if !bytes.Equal(keyed.BrontideKey(), key) {
+		t.Fatalf("key: got %x, want %x", keyed.BrontideKey(), key)
+	}
+	if wrapped.Network() != addr.Network() || wrapped.String() != addr.String() {
+		t.Fatalf("wrapped address changed identity: got %s %s, want %s %s",
+			wrapped.Network(), wrapped.String(), addr.Network(), addr.String())
+	}
+
+	key[0] ^= 0xff
+	if bytes.Equal(keyed.BrontideKey(), key) {
+		t.Fatal("wrapped address retained mutable key storage")
 	}
 }
 

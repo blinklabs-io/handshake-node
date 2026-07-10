@@ -119,6 +119,35 @@ func TestHnsNetAddressDecodeRejectsNonZeroType(t *testing.T) {
 	}
 }
 
+func TestHnsNetAddressNetAddressV2PreservesBrontideKey(t *testing.T) {
+	in := HnsNetAddress{
+		Time:     42,
+		Services: uint64(SFNodeNetwork),
+		Host:     net.IPv4(198, 51, 100, 7).To4(),
+		Port:     12038,
+		Key:      keyOfBytes(0x88),
+	}
+
+	got := in.NetAddressV2()
+	if got.Timestamp.Unix() != int64(in.Time) {
+		t.Fatalf("timestamp: got %d, want %d",
+			got.Timestamp.Unix(), in.Time)
+	}
+	if got.Services != SFNodeNetwork {
+		t.Fatalf("services: got %v, want %v", got.Services,
+			SFNodeNetwork)
+	}
+	if got.Addr.String() != "198.51.100.7" {
+		t.Fatalf("addr: got %v, want 198.51.100.7", got.Addr)
+	}
+	if got.Port != in.Port {
+		t.Fatalf("port: got %d, want %d", got.Port, in.Port)
+	}
+	if !bytes.Equal(got.BrontideKey(), in.Key[:]) {
+		t.Fatal("brontide key was not preserved")
+	}
+}
+
 func keyOfBytes(b byte) [33]byte {
 	var k [33]byte
 	for i := range k {

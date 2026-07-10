@@ -383,6 +383,8 @@ func (sp *serverPeer) pushAddrMsg(addresses []*wire.NetAddressV2,
 		hnsAddr := wire.NewHnsNetAddress(legacy)
 		if identity != nil {
 			copy(hnsAddr.Key[:], identity[:])
+		} else if key := addr.BrontideKey(); len(key) == wire.HnsBrontideKeySize {
+			copy(hnsAddr.Key[:], key)
 		}
 		msg.Peers = append(msg.Peers, hnsAddr)
 		knownAddrs = append(knownAddrs, addr)
@@ -1107,9 +1109,8 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.HnsMsgAddr) {
 		// Add address to known addresses for this peer. This is
 		// converted to NetAddressV2 since that's what the address
 		// manager uses.
-		currentNa := wire.NetAddressV2FromBytes(
-			timestamp, wire.ServiceFlag(na.Services), na.Host, na.Port,
-		)
+		currentNa := na.NetAddressV2()
+		currentNa.Timestamp = timestamp
 		addrs = append(addrs, currentNa)
 		sp.addKnownAddresses([]*wire.NetAddressV2{currentNa})
 	}
@@ -1890,6 +1891,26 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 type brontideKeyAddr interface {
 	net.Addr
 	BrontideKey() []byte
+}
+
+type brontideAddr struct {
+	net.Addr
+	key []byte
+}
+
+func (a brontideAddr) BrontideKey() []byte {
+	return append([]byte(nil), a.key...)
+}
+
+func withBrontideKey(addr net.Addr, key []byte) net.Addr {
+	if len(key) != wire.HnsBrontideKeySize {
+		return addr
+	}
+
+	return brontideAddr{
+		Addr: addr,
+		key:  append([]byte(nil), key...),
+	}
 }
 
 func (s *server) dialPeer(addr net.Addr) (net.Conn, error) {
@@ -2881,11 +2902,18 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 					continue
 				}
 
-				// Mark an attempt for the valid address.
-				s.addrManager.Attempt(addr.NetAddress())
+				netAddr := addr.NetAddress()
 
-				addrString := addrmgr.NetAddressKey(addr.NetAddress())
-				return addrStringToNetAddr(addrString)
+				// Mark an attempt for the valid address.
+				s.addrManager.Attempt(netAddr)
+
+				addrString := addrmgr.NetAddressKey(netAddr)
+				dialAddr, err := addrStringToNetAddr(addrString)
+				if err != nil {
+					return nil, err
+				}
+
+				return withBrontideKey(dialAddr, netAddr.BrontideKey()), nil
 			}
 
 			return nil, errors.New("no valid connect address")

@@ -74,6 +74,37 @@ func TestIsIPv4Mapped(t *testing.T) {
 	}
 }
 
+func TestNetAddressV2BrontideKey(t *testing.T) {
+	na := NetAddressV2FromBytes(
+		time.Now(), SFNodeNetwork, []byte{127, 0, 0, 1}, 12038,
+	)
+
+	if key := na.BrontideKey(); key != nil {
+		t.Fatalf("initial key: got %x, want nil", key)
+	}
+
+	var key [HnsBrontideKeySize]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	na.SetBrontideKey(key[:])
+
+	got := na.BrontideKey()
+	if !bytes.Equal(got, key[:]) {
+		t.Fatalf("key: got %x, want %x", got, key)
+	}
+
+	got[0] ^= 0xff
+	if bytes.Equal(na.BrontideKey(), got) {
+		t.Fatal("BrontideKey returned mutable internal storage")
+	}
+
+	na.SetBrontideKey(make([]byte, HnsBrontideKeySize))
+	if key := na.BrontideKey(); key != nil {
+		t.Fatalf("zero key: got %x, want nil", key)
+	}
+}
+
 // TestNetAddressV2FromBytes tests that NetAddressV2FromBytes works as
 // expected.
 func TestNetAddressV2FromBytes(t *testing.T) {
