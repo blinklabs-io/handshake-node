@@ -15,8 +15,7 @@ functionality belongs in [bursa](https://github.com/blinklabs-io/bursa).
 
 ## Current Status
 
-The 0.1.0-rc1 line is being prepared as a mainnet release candidate. Current
-development includes:
+The current release is 0.1.0-rc1, a mainnet release candidate. It includes:
 
 - Handshake mainnet and regtest chain parameters.
 - Blake2b/SHA3 Handshake proof-of-work and 236-byte block headers.

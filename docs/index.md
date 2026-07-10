@@ -19,8 +19,8 @@ project.
 
 ## Documentation
 
-Documentation is a work-in-progress and is being updated for the 0.1.0-rc1
-mainnet release candidate.
+Documentation is a work-in-progress for the current 0.1.0-rc1 mainnet release
+candidate.
 
 ## Contents
 
