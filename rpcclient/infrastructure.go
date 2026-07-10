@@ -1679,15 +1679,18 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 	}
 
 	// We'll start by calling GetInfo. This method doesn't exist for
-	// bitcoind nodes as of v0.16.0, so we'll assume the client is connected
-	// to a btcd backend if it does exist.
+	// bitcoind nodes as of v0.16.0. Backends that still expose it include
+	// btcd and handshake-node.
 	info, err := c.GetInfo()
 
 	switch err := err.(type) {
-	// Parse the btcd version and cache it.
+	// Parse the getinfo version and cache it.
 	case nil:
-		log.Debugf("Detected btcd version: %v", info.Version)
-		version := parseBtcdVersion(info.Version)
+		version := parseGetInfoBackendVersion(info.Version,
+			info.ProtocolVersion)
+		log.Debugf("Detected backend version from getinfo: %s "+
+			"(rpc version %v, protocol version %v)", version,
+			info.Version, info.ProtocolVersion)
 		c.backendVersion = version
 		return c.backendVersion, nil
 
@@ -1695,12 +1698,12 @@ func (c *Client) BackendVersion() (BackendVersion, error) {
 	// we actually ran into an error.
 	case *hnsjson.RPCError:
 		if err.Code != hnsjson.ErrRPCMethodNotFound.Code {
-			return nil, fmt.Errorf("unable to detect btcd version: "+
+			return nil, fmt.Errorf("unable to detect backend version: "+
 				"%v", err)
 		}
 
 	default:
-		return nil, fmt.Errorf("unable to detect btcd version: %v", err)
+		return nil, fmt.Errorf("unable to detect backend version: %v", err)
 	}
 
 	// Since the GetInfo method was not found, we assume the client is
