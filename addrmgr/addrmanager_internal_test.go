@@ -5,12 +5,14 @@
 package addrmgr
 
 import (
+	"bytes"
 	"math/rand"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // randAddr generates a *wire.NetAddressV2 backed by a random IPv4/IPv6
@@ -76,6 +78,10 @@ func assertAddr(t *testing.T, got, expected *wire.NetAddressV2) {
 		t.Fatalf("expected address port %d, got %d", expected.Port,
 			got.Port)
 	}
+	if !bytes.Equal(got.BrontideKey(), expected.BrontideKey()) {
+		t.Fatalf("expected brontide key %x, got %x",
+			expected.BrontideKey(), got.BrontideKey())
+	}
 }
 
 // assertAddrs ensures that the manager's address cache matches the given
@@ -120,6 +126,9 @@ func TestAddrManagerSerialization(t *testing.T) {
 	expectedAddrs := make(map[string]*wire.NetAddressV2, numAddrs)
 	for i := 0; i < numAddrs; i++ {
 		addr := routableRandAddr(t)
+		if i%2 == 0 {
+			addr.SetBrontideKey(testBrontideKey(byte(i + 1)))
+		}
 		expectedAddrs[NetAddressKey(addr)] = addr
 		addrMgr.AddAddress(addr, routableRandAddr(t))
 	}
@@ -137,6 +146,32 @@ func TestAddrManagerSerialization(t *testing.T) {
 	// match as expected.
 	addrMgr.loadPeers()
 	assertAddrs(t, addrMgr, expectedAddrs)
+}
+
+func TestAddrManagerUpdatesBrontideKeyForKnownAddress(t *testing.T) {
+	t.Parallel()
+
+	addrMgr := New(t.TempDir(), nil)
+	addr := routableRandAddr(t)
+	addr.Timestamp = time.Now()
+	srcAddr := routableRandAddr(t)
+	addrMgr.AddAddress(addr, srcAddr)
+
+	update := *addr
+	update.Timestamp = addr.Timestamp.Add(-time.Hour)
+	wantKey := testBrontideKey(0x42)
+	update.SetBrontideKey(wantKey)
+	addrMgr.AddAddress(&update, srcAddr)
+
+	got := addrMgr.find(addr).NetAddress()
+	if !bytes.Equal(got.BrontideKey(), wantKey) {
+		t.Fatalf("brontide key: got %x, want %x",
+			got.BrontideKey(), wantKey)
+	}
+	if !got.Timestamp.Equal(addr.Timestamp) {
+		t.Fatalf("timestamp: got %v, want %v",
+			got.Timestamp, addr.Timestamp)
+	}
 }
 
 // TestAddrManagerV1ToV2 ensures that we can properly upgrade the serialized
@@ -208,4 +243,10 @@ func TestAddrManagerV1ToV2(t *testing.T) {
 	addrMgr = New(tempDir, nil)
 	addrMgr.loadPeers()
 	assertAddrs(t, addrMgr, expectedAddrs)
+}
+
+func testBrontideKey(seed byte) []byte {
+	privBytes := bytes.Repeat([]byte{seed}, 32)
+	priv, _ := btcec.PrivKeyFromBytes(privBytes)
+	return priv.PubKey().SerializeCompressed()
 }

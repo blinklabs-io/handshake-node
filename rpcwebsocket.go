@@ -1076,7 +1076,7 @@ func (m *wsNotificationManager) notifyForNameTx(clients map[chan struct{}]*wsNam
 			if marshalledJSON == nil {
 				m.resolveNameForNotification(&event)
 				ntfn := hnsjson.NewNameUpdatedNtfn(
-					event.name, event.nameHash.String(),
+					event.name, rawHashString(event.nameHash),
 					event.covenant, event.covenantType,
 					event.txID, event.vout, event.block,
 				)
@@ -2261,7 +2261,7 @@ func handleNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
 	if cmd.NameHashes != nil {
 		nameHashes = make([]chainhash.Hash, 0, len(*cmd.NameHashes))
 		for _, hashStr := range *cmd.NameHashes {
-			nameHash, rpcErr := parseRPCHash(hashStr, "name hash")
+			nameHash, rpcErr := parseRPCRawHash(hashStr, "name hash")
 			if rpcErr != nil {
 				return nil, rpcErr
 			}

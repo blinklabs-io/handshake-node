@@ -85,6 +85,56 @@ func TestHnsToDooZeroAmount(t *testing.T) {
 	}
 }
 
+func TestHandshakeRawHashRPCEncoding(t *testing.T) {
+	var hash chainhash.Hash
+	for i := range hash {
+		hash[i] = byte(i + 1)
+	}
+	wantRaw := hex.EncodeToString(hash[:])
+	if got := rawHashString(hash); got != wantRaw {
+		t.Fatalf("rawHashString = %q, want %q", got, wantRaw)
+	}
+	if hash.String() == wantRaw {
+		t.Fatal("test hash does not distinguish raw and chainhash string encodings")
+	}
+
+	parsed, rpcErr := parseRPCRawHash(wantRaw, "name hash")
+	if rpcErr != nil {
+		t.Fatalf("parseRPCRawHash: %v", rpcErr)
+	}
+	if parsed != hash {
+		t.Fatalf("parseRPCRawHash = %x, want %x", parsed, hash)
+	}
+
+	item, rpcErr := parseRawHashCovenantItem(wantRaw, "name hash")
+	if rpcErr != nil {
+		t.Fatalf("parseRawHashCovenantItem: %v", rpcErr)
+	}
+	if !bytes.Equal(item, hash[:]) {
+		t.Fatalf("covenant item = %x, want %x", item, hash[:])
+	}
+
+	if _, rpcErr := parseRPCRawHash(wantRaw[:len(wantRaw)-2],
+		"name hash"); rpcErr == nil {
+		t.Fatal("parseRPCRawHash accepted short hash")
+	}
+}
+
+func TestNameAuctionInfoUsesRawNameHash(t *testing.T) {
+	const name = "rawhash"
+	nameHash := blockchain.HashName([]byte(name))
+
+	got := nameAuctionInfoToJSON(name, 0, &chaincfg.RegressionNetParams,
+		nil, false)
+	want := rawHashString(nameHash)
+	if got.NameHash != want {
+		t.Fatalf("NameHash = %q, want %q", got.NameHash, want)
+	}
+	if got.NameHash == nameHash.String() {
+		t.Fatal("NameHash used byte-reversed chainhash string encoding")
+	}
+}
+
 type gbtTestTxSource struct {
 	updated time.Time
 }
@@ -241,7 +291,7 @@ func requireGBTHandshakeHeaderFields(t *testing.T,
 	t.Helper()
 
 	header := &template.Block.Header
-	if got, want := result.TreeRoot, header.NameRoot.String(); got != want {
+	if got, want := result.TreeRoot, rawHashString(header.NameRoot); got != want {
 		t.Fatalf("treeroot = %q, want %q", got, want)
 	}
 	if got, want := result.ReservedRoot, header.ReservedRoot.String(); got != want {

@@ -6,10 +6,12 @@
 package addrmgr
 
 import (
+	"bytes"
 	"container/list"
 	crand "crypto/rand" // for seeding
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,6 +60,7 @@ type serializedKnownAddress struct {
 	LastSuccess int64
 	Services    wire.ServiceFlag
 	SrcServices wire.ServiceFlag
+	BrontideKey string
 	// no refcount or tried, that is available from context.
 }
 
@@ -179,13 +182,22 @@ func (a *AddrManager) updateAddress(netAddr, srcAddr *wire.NetAddressV2) {
 		// messages the netaddresses in addrmanager are *immutable*,
 		// if we need to change them then we replace the pointer with a
 		// new copy so that we don't have to copy every na for getaddr.
+		newKey := netAddr.BrontideKey()
+		oldKey := ka.na.BrontideKey()
+		keyChanged := len(newKey) == wire.HnsBrontideKeySize &&
+			!bytes.Equal(oldKey, newKey)
 		if netAddr.Timestamp.After(ka.na.Timestamp) ||
 			(ka.na.Services&netAddr.Services) !=
-				netAddr.Services {
+				netAddr.Services || keyChanged {
 
 			naCopy := *ka.na
-			naCopy.Timestamp = netAddr.Timestamp
+			if netAddr.Timestamp.After(naCopy.Timestamp) {
+				naCopy.Timestamp = netAddr.Timestamp
+			}
 			naCopy.AddService(netAddr.Services)
+			if keyChanged {
+				naCopy.SetBrontideKey(newKey)
+			}
 			ka.mtx.Lock()
 			ka.na = &naCopy
 			ka.mtx.Unlock()
@@ -384,6 +396,9 @@ func (a *AddrManager) savePeers() {
 			ska.Services = v.na.Services
 			ska.SrcServices = v.srcAddr.Services
 		}
+		if key := v.na.BrontideKey(); len(key) == wire.HnsBrontideKeySize {
+			ska.BrontideKey = hex.EncodeToString(key)
+		}
 		// Tried and refs are implicit in the rest of the structure
 		// and will be worked out from context on unserialisation.
 		sam.Addresses[i] = ska
@@ -483,6 +498,19 @@ func (a *AddrManager) deserializePeers(filePath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to deserialize netaddress "+
 				"%s: %v", v.Addr, err)
+		}
+		if v.BrontideKey != "" {
+			key, err := hex.DecodeString(v.BrontideKey)
+			if err != nil {
+				return fmt.Errorf("failed to deserialize brontide key "+
+					"for netaddress %s: %v", v.Addr, err)
+			}
+			if len(key) != wire.HnsBrontideKeySize {
+				return fmt.Errorf("failed to deserialize brontide key "+
+					"for netaddress %s: expected %d bytes, got %d",
+					v.Addr, wire.HnsBrontideKeySize, len(key))
+			}
+			ka.na.SetBrontideKey(key)
 		}
 
 		// The first version of the serialized address manager was not

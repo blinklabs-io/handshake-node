@@ -15,6 +15,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 const (
@@ -107,6 +109,9 @@ type NetAddressV2 struct {
 	// Port is the port of the address. This is 0 if the network doesn't
 	// use ports.
 	Port uint16
+
+	brontideKey    [HnsBrontideKeySize]byte
+	hasBrontideKey bool
 }
 
 // HasService returns whether the specified service is supported by the
@@ -118,6 +123,52 @@ func (na *NetAddressV2) HasService(service ServiceFlag) bool {
 // AddService adds a service to the Services bitfield.
 func (na *NetAddressV2) AddService(service ServiceFlag) {
 	na.Services |= service
+}
+
+// SetBrontideKey stores a copy of a Handshake Brontide static public key on
+// this address. Invalid lengths or all-zero keys clear the stored key.
+func (na *NetAddressV2) SetBrontideKey(key []byte) {
+	if !isValidBrontideKey(key) {
+		na.hasBrontideKey = false
+		for i := range na.brontideKey {
+			na.brontideKey[i] = 0
+		}
+		return
+	}
+
+	copy(na.brontideKey[:], key)
+	na.hasBrontideKey = true
+}
+
+func isValidBrontideKey(key []byte) bool {
+	if len(key) != HnsBrontideKeySize || allZero(key) ||
+		!btcec.IsCompressedPubKey(key) {
+
+		return false
+	}
+
+	pub, err := btcec.ParsePubKey(key)
+	return err == nil && pub.IsOnCurve()
+}
+
+// BrontideKey returns a copy of the Handshake Brontide static public key
+// learned for this address, or nil when no usable key is known.
+func (na *NetAddressV2) BrontideKey() []byte {
+	if na == nil || !na.hasBrontideKey {
+		return nil
+	}
+
+	return append([]byte(nil), na.brontideKey[:]...)
+}
+
+func allZero(key []byte) bool {
+	for _, b := range key {
+		if b != 0 {
+			return false
+		}
+	}
+
+	return true
 }
 
 // ToLegacy attempts to convert a NetAddressV2 to a legacy NetAddress. This

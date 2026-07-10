@@ -9,6 +9,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // TestIsIPv4Mapped tests that isIPv4Mapped correctly identifies IPv4-mapped
@@ -71,6 +73,45 @@ func TestIsIPv4Mapped(t *testing.T) {
 					test.addr, result, test.expected)
 			}
 		})
+	}
+}
+
+func TestNetAddressV2BrontideKey(t *testing.T) {
+	na := NetAddressV2FromBytes(
+		time.Now(), SFNodeNetwork, []byte{127, 0, 0, 1}, 12038,
+	)
+
+	if key := na.BrontideKey(); key != nil {
+		t.Fatalf("initial key: got %x, want nil", key)
+	}
+
+	priv, _ := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{0x01}, 32))
+	key := priv.PubKey().SerializeCompressed()
+	na.SetBrontideKey(key)
+
+	got := na.BrontideKey()
+	if !bytes.Equal(got, key) {
+		t.Fatalf("key: got %x, want %x", got, key)
+	}
+
+	got[0] ^= 0xff
+	if bytes.Equal(na.BrontideKey(), got) {
+		t.Fatal("BrontideKey returned mutable internal storage")
+	}
+
+	na.SetBrontideKey(make([]byte, HnsBrontideKeySize))
+	if key := na.BrontideKey(); key != nil {
+		t.Fatalf("zero key: got %x, want nil", key)
+	}
+
+	malformed := make([]byte, HnsBrontideKeySize)
+	malformed[0] = 0x02
+	for i := 1; i < len(malformed); i++ {
+		malformed[i] = 0xff
+	}
+	na.SetBrontideKey(malformed)
+	if key := na.BrontideKey(); key != nil {
+		t.Fatalf("malformed key: got %x, want nil", key)
 	}
 }
 

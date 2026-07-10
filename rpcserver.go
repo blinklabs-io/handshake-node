@@ -1013,6 +1013,14 @@ func parseHashCovenantItem(value, field string) ([]byte, *hnsjson.RPCError) {
 	return hashCovenantItem(hash), nil
 }
 
+func parseRawHashCovenantItem(value, field string) ([]byte, *hnsjson.RPCError) {
+	hash, rpcErr := parseRPCRawHash(value, field)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return hashCovenantItem(hash), nil
+}
+
 func parseHexCovenantItem(value, field string, maxLen int) ([]byte, *hnsjson.RPCError) {
 	item, err := hex.DecodeString(value)
 	if err != nil {
@@ -1113,7 +1121,7 @@ func handleCreateBid(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (
 // handleCreateReveal handles createreveal commands.
 func handleCreateReveal(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateRevealCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1136,7 +1144,7 @@ func handleCreateReveal(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 // handleCreateRedeem handles createredeem commands.
 func handleCreateRedeem(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateRedeemCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1154,7 +1162,7 @@ func handleCreateRedeem(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 // handleCreateRegister handles createregister commands.
 func handleCreateRegister(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateRegisterCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1182,7 +1190,7 @@ func handleCreateRegister(s *rpcServer, cmd interface{}, closeChan <-chan struct
 // handleCreateUpdate handles createupdate commands.
 func handleCreateUpdate(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateUpdateCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1205,7 +1213,7 @@ func handleCreateUpdate(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 // handleCreateRenew handles createrenew commands.
 func handleCreateRenew(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateRenewCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1228,7 +1236,7 @@ func handleCreateRenew(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 // handleCreateTransfer handles createtransfer commands.
 func handleCreateTransfer(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateTransferCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1279,7 +1287,7 @@ func handleCreateFinalize(s *rpcServer, cmd interface{}, closeChan <-chan struct
 // handleCreateRevoke handles createrevoke commands.
 func handleCreateRevoke(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.CreateRevokeCmd)
-	nameHash, rpcErr := parseHashCovenantItem(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRawHashCovenantItem(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -2513,7 +2521,7 @@ func (state *gbtWorkState) blockTemplateResult(useCoinbaseValue bool, submitOld 
 		SizeLimit:    wire.MaxBlockPayload,
 		Transactions: transactions,
 		Version:      header.Version,
-		TreeRoot:     header.NameRoot.String(),
+		TreeRoot:     rawHashString(header.NameRoot),
 		ReservedRoot: header.ReservedRoot.String(),
 		Mask:         header.Mask.String(),
 		Claims:       claims,
@@ -3042,11 +3050,36 @@ func parseRPCHash(value, field string) (chainhash.Hash, *hnsjson.RPCError) {
 	return *hash, nil
 }
 
+func rawHashString(hash chainhash.Hash) string {
+	return hex.EncodeToString(hash[:])
+}
+
+func parseRPCRawHash(value, field string) (chainhash.Hash, *hnsjson.RPCError) {
+	if len(value) != chainhash.HashSize*2 {
+		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
+			"Invalid %s %q", field, value))
+	}
+
+	hashBytes, err := hex.DecodeString(value)
+	if err != nil {
+		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
+			"Invalid %s %q", field, value))
+	}
+
+	var hash chainhash.Hash
+	if err := hash.SetBytes(hashBytes); err != nil {
+		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
+			"Invalid %s %q", field, value))
+	}
+
+	return hash, nil
+}
+
 func nameStateToJSON(ns *blockchain.NameState) *hnsjson.NameStateResult {
 	owner := ns.Owner()
 	return &hnsjson.NameStateResult{
 		Name:       ns.Name(),
-		NameHash:   ns.NameHash().String(),
+		NameHash:   rawHashString(ns.NameHash()),
 		Height:     ns.Height(),
 		Renewal:    ns.Renewal(),
 		OwnerHash:  owner.Hash.String(),
@@ -3154,7 +3187,7 @@ func nameAuctionInfoToJSON(name string, currentHeight uint32,
 	nameHash := blockchain.HashName([]byte(name))
 	result := &hnsjson.GetAuctionInfoResult{
 		Name:          name,
-		NameHash:      nameHash.String(),
+		NameHash:      rawHashString(nameHash),
 		Found:         found,
 		Phase:         "available",
 		CurrentHeight: currentHeight,
@@ -3168,7 +3201,7 @@ func nameAuctionInfoToJSON(name string, currentHeight uint32,
 	if result.Name == "" {
 		result.Name = name
 	}
-	result.NameHash = state.NameHash().String()
+	result.NameHash = rawHashString(state.NameHash())
 	result.StartHeight = state.Height()
 	result.OwnerHash = owner.Hash.String()
 	result.OwnerIndex = owner.Index
@@ -3252,7 +3285,7 @@ func handleGetNameInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 // handleGetNameByHash implements the getnamebyhash command.
 func handleGetNameByHash(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.GetNameByHashCmd)
-	nameHash, rpcErr := parseRPCHash(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRPCRawHash(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -3319,7 +3352,7 @@ func handleGetNamesByHash(s *rpcServer, cmd interface{}, closeChan <-chan struct
 	c := cmd.(*hnsjson.GetNamesByHashCmd)
 	results := make([]*hnsjson.GetNameInfoResult, 0, len(c.NameHashes))
 	for _, hashStr := range c.NameHashes {
-		nameHash, rpcErr := parseRPCHash(hashStr, "name hash")
+		nameHash, rpcErr := parseRPCRawHash(hashStr, "name hash")
 		if rpcErr != nil {
 			return nil, rpcErr
 		}
@@ -3349,7 +3382,7 @@ func handleGetNameResource(s *rpcServer, cmd interface{}, closeChan <-chan struc
 	nameHash := blockchain.HashName([]byte(c.Name))
 	result := &hnsjson.GetNameResourceResult{
 		Name:     c.Name,
-		NameHash: nameHash.String(),
+		NameHash: rawHashString(nameHash),
 	}
 
 	state, found, err := s.cfg.Chain.FetchNameState([]byte(c.Name))
@@ -3402,7 +3435,7 @@ func handleGetNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 
 	var root chainhash.Hash
 	if c.Root != nil {
-		parsedRoot, rpcErr := parseRPCHash(*c.Root, "name root")
+		parsedRoot, rpcErr := parseRPCRawHash(*c.Root, "name root")
 		if rpcErr != nil {
 			return nil, rpcErr
 		}
@@ -3423,8 +3456,8 @@ func handleGetNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 	}
 	return &hnsjson.GetNameProofResult{
 		Name:     c.Name,
-		NameHash: nameHash.String(),
-		Root:     root.String(),
+		NameHash: rawHashString(nameHash),
+		Root:     rawHashString(root),
 		Proof:    hex.EncodeToString(proof),
 	}, nil
 }
@@ -3432,11 +3465,11 @@ func handleGetNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 // handleVerifyNameProof implements the verifynameproof command.
 func handleVerifyNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.VerifyNameProofCmd)
-	root, rpcErr := parseRPCHash(c.Root, "name root")
+	root, rpcErr := parseRPCRawHash(c.Root, "name root")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	nameHash, rpcErr := parseRPCHash(c.NameHash, "name hash")
+	nameHash, rpcErr := parseRPCRawHash(c.NameHash, "name hash")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -3450,8 +3483,8 @@ func handleVerifyNameProof(s *rpcServer, cmd interface{}, closeChan <-chan struc
 		return nil, rpcInvalidParameterError(err.Error())
 	}
 	result := &hnsjson.VerifyNameProofResult{
-		Root:     root.String(),
-		NameHash: nameHash.String(),
+		Root:     rawHashString(root),
+		NameHash: rawHashString(nameHash),
 		Exists:   exists,
 	}
 	if exists {
