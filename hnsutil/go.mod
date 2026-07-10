@@ -1,6 +1,6 @@
 module github.com/blinklabs-io/handshake-node/hnsutil
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/aead/siphash v1.0.1
@@ -10,7 +10,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/kkdai/bstream v0.0.0-20161212061736-f391b8402d23
-	golang.org/x/crypto v0.45.0
+	golang.org/x/crypto v0.51.0
 )
 
 require (
@@ -19,9 +19,9 @@ require (
 	github.com/decred/dcrd/crypto/blake256 v1.0.0 // indirect
 	github.com/miekg/dns v1.1.69 // indirect
 	golang.org/x/mod v0.30.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
 )
 
