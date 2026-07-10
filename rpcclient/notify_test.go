@@ -6,10 +6,12 @@ package rpcclient
 
 import (
 	"container/list"
+	"encoding/hex"
 	"encoding/json"
 	"reflect"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
@@ -59,6 +61,23 @@ func TestParseNameUpdatedNtfnParams(t *testing.T) {
 	}
 	if ntfn.Block != nil {
 		t.Fatalf("mempool event block details: got %+v, want nil", ntfn.Block)
+	}
+}
+
+func TestRawHashStringUsesHandshakeByteOrder(t *testing.T) {
+	t.Parallel()
+
+	var hash chainhash.Hash
+	for i := range hash {
+		hash[i] = byte(i + 1)
+	}
+	want := hex.EncodeToString(hash[:])
+
+	if got := rawHashString(hash); got != want {
+		t.Fatalf("rawHashString = %q, want %q", got, want)
+	}
+	if hash.String() == want {
+		t.Fatal("test hash does not distinguish raw and chainhash string encodings")
 	}
 }
 
