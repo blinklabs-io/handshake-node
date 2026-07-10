@@ -9,6 +9,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // TestIsIPv4Mapped tests that isIPv4Mapped correctly identifies IPv4-mapped
@@ -83,14 +85,12 @@ func TestNetAddressV2BrontideKey(t *testing.T) {
 		t.Fatalf("initial key: got %x, want nil", key)
 	}
 
-	var key [HnsBrontideKeySize]byte
-	for i := range key {
-		key[i] = byte(i + 1)
-	}
-	na.SetBrontideKey(key[:])
+	priv, _ := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{0x01}, 32))
+	key := priv.PubKey().SerializeCompressed()
+	na.SetBrontideKey(key)
 
 	got := na.BrontideKey()
-	if !bytes.Equal(got, key[:]) {
+	if !bytes.Equal(got, key) {
 		t.Fatalf("key: got %x, want %x", got, key)
 	}
 
@@ -102,6 +102,16 @@ func TestNetAddressV2BrontideKey(t *testing.T) {
 	na.SetBrontideKey(make([]byte, HnsBrontideKeySize))
 	if key := na.BrontideKey(); key != nil {
 		t.Fatalf("zero key: got %x, want nil", key)
+	}
+
+	malformed := make([]byte, HnsBrontideKeySize)
+	malformed[0] = 0x02
+	for i := 1; i < len(malformed); i++ {
+		malformed[i] = 0xff
+	}
+	na.SetBrontideKey(malformed)
+	if key := na.BrontideKey(); key != nil {
+		t.Fatalf("malformed key: got %x, want nil", key)
 	}
 }
 

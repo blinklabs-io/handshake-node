@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/wire"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // randAddr generates a *wire.NetAddressV2 backed by a random IPv4/IPv6
@@ -245,9 +246,7 @@ func TestAddrManagerV1ToV2(t *testing.T) {
 }
 
 func testBrontideKey(seed byte) []byte {
-	key := make([]byte, wire.HnsBrontideKeySize)
-	for i := range key {
-		key[i] = seed + byte(i)
-	}
-	return key
+	privBytes := bytes.Repeat([]byte{seed}, 32)
+	priv, _ := btcec.PrivKeyFromBytes(privBytes)
+	return priv.PubKey().SerializeCompressed()
 }

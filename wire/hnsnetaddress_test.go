@@ -9,6 +9,8 @@ import (
 	"net"
 	"reflect"
 	"testing"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 func TestHnsNetAddressRoundTripIPv4(t *testing.T) {
@@ -125,7 +127,7 @@ func TestHnsNetAddressNetAddressV2PreservesBrontideKey(t *testing.T) {
 		Services: uint64(SFNodeNetwork),
 		Host:     net.IPv4(198, 51, 100, 7).To4(),
 		Port:     12038,
-		Key:      keyOfBytes(0x88),
+		Key:      validBrontideKeyOfByte(0x08),
 	}
 
 	got := in.NetAddressV2()
@@ -148,10 +150,30 @@ func TestHnsNetAddressNetAddressV2PreservesBrontideKey(t *testing.T) {
 	}
 }
 
+func TestHnsNetAddressNetAddressV2HandlesNilHost(t *testing.T) {
+	got := (&HnsNetAddress{}).NetAddressV2()
+	if got == nil {
+		t.Fatal("NetAddressV2 returned nil")
+	}
+	if got.Addr == nil {
+		t.Fatal("NetAddressV2 returned nil Addr")
+	}
+	if got.Addr.String() != "::" {
+		t.Fatalf("addr: got %q, want %q", got.Addr.String(), "::")
+	}
+}
+
 func keyOfBytes(b byte) [33]byte {
 	var k [33]byte
 	for i := range k {
 		k[i] = b
 	}
 	return k
+}
+
+func validBrontideKeyOfByte(b byte) [HnsBrontideKeySize]byte {
+	priv, _ := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{b}, 32))
+	var key [HnsBrontideKeySize]byte
+	copy(key[:], priv.PubKey().SerializeCompressed())
+	return key
 }

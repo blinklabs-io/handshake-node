@@ -15,6 +15,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 const (
@@ -126,7 +128,7 @@ func (na *NetAddressV2) AddService(service ServiceFlag) {
 // SetBrontideKey stores a copy of a Handshake Brontide static public key on
 // this address. Invalid lengths or all-zero keys clear the stored key.
 func (na *NetAddressV2) SetBrontideKey(key []byte) {
-	if len(key) != HnsBrontideKeySize || allZero(key) {
+	if !isValidBrontideKey(key) {
 		na.hasBrontideKey = false
 		for i := range na.brontideKey {
 			na.brontideKey[i] = 0
@@ -136,6 +138,17 @@ func (na *NetAddressV2) SetBrontideKey(key []byte) {
 
 	copy(na.brontideKey[:], key)
 	na.hasBrontideKey = true
+}
+
+func isValidBrontideKey(key []byte) bool {
+	if len(key) != HnsBrontideKeySize || allZero(key) ||
+		!btcec.IsCompressedPubKey(key) {
+
+		return false
+	}
+
+	pub, err := btcec.ParsePubKey(key)
+	return err == nil && pub.IsOnCurve()
 }
 
 // BrontideKey returns a copy of the Handshake Brontide static public key

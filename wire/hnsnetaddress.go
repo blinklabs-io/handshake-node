@@ -141,11 +141,15 @@ func (n *HnsNetAddress) NetAddressV2() *NetAddressV2 {
 	if sec > uint64(1<<63-1) {
 		sec = uint64(1<<63 - 1)
 	}
+	host := n.Host
+	if host == nil || host.To16() == nil {
+		host = net.IPv6zero
+	}
 
 	na := NetAddressV2FromBytes(
 		time.Unix(int64(sec), 0),
 		ServiceFlag(n.Services),
-		n.Host,
+		host,
 		n.Port,
 	)
 	na.SetBrontideKey(n.Key[:])
