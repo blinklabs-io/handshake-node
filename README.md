@@ -1,7 +1,7 @@
 handshake-node
 ==============
 
-[![Build Status](https://github.com/blinklabs-io/handshake-node/workflows/Build%20and%20Test/badge.svg)](https://github.com/blinklabs-io/handshake-node/actions)
+[![Build Status](https://github.com/blinklabs-io/handshake-node/actions/workflows/go-test.yml/badge.svg)](https://github.com/blinklabs-io/handshake-node/actions/workflows/go-test.yml)
 [![ISC License](https://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
 [![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/blinklabs-io/handshake-node)
 
@@ -12,7 +12,7 @@ This project is currently under active development.
 
 ## Requirements
 
-[Go](http://golang.org) 1.23 or newer.
+[Go](http://golang.org) 1.24 or newer.
 
 ## Installation
 
