@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The blinklabs-io developers
+// Copyright (c) 2026 Blink Labs Software
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 

@@ -1,3 +1,7 @@
+// Copyright (c) 2024-2026 Blink Labs Software
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 // Package rpctest provides a handshake-node-specific RPC testing harness crafting and
 // executing integration tests by driving a `handshake-node` instance via the `RPC`
 // interface. Each instance of an active harness comes equipped with a simple

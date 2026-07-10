@@ -1,3 +1,7 @@
+// Copyright (c) 2024-2026 Blink Labs Software
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 // Package chaincfg defines chain configuration parameters.
 //
 // In addition to the main Bitcoin network, which is intended for the transfer
