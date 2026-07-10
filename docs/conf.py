@@ -1,3 +1,7 @@
+# Copyright (c) 2024-2026 Blink Labs Software
+# Use of this source code is governed by an ISC
+# license that can be found in the LICENSE file.
+
 # Configuration file for the Sphinx documentation builder.
 #
 # This file only contains a selection of the most common options. For a full
@@ -19,8 +23,8 @@ from recommonmark.transform import AutoStructify
 # -- Project information -----------------------------------------------------
 
 project = 'handshake-node'
-copyright = '2020, handshake-node'
-author = 'blinklabs-io developers'
+copyright = '2020-2026, Blink Labs Software'
+author = 'Blink Labs Software'
 
 # The full version, including alpha/beta/rc tags
 release = 'beta'

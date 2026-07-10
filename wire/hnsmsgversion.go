@@ -3,9 +3,8 @@
 // license that can be found in the LICENSE file.
 //
 // Portions of this file are derived from cdnsd
-// (https://github.com/blinklabs-io/cdnsd) handshake/messages.go, which is
-// Copyright 2025 Blink Labs Software and licensed under the MIT license.
-// The cdnsd code was itself ported from hsd/hnsd.
+// (https://github.com/blinklabs-io/cdnsd) handshake/messages.go, Copyright (c) 2025
+// Blink Labs Software. The cdnsd code was itself ported from hsd/hnsd.
 
 package wire
 

@@ -1,11 +1,10 @@
-// Copyright (c) 2024-2025 The blinklabs-io developers
+// Copyright (c) 2024-2025 Blink Labs Software
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 //
 // Portions of this file are derived from cdnsd
-// (https://github.com/blinklabs-io/cdnsd) handshake/domain.go, which is
-// Copyright 2025 Blink Labs Software and licensed under the MIT license.
-// The cdnsd code was itself ported from hsd/hnsd.
+// (https://github.com/blinklabs-io/cdnsd) handshake/domain.go, Copyright (c) 2025
+// Blink Labs Software. The cdnsd code was itself ported from hsd/hnsd.
 
 package wire
 
