@@ -123,6 +123,35 @@ func TestNewFromRawBytesRejectsNonStrictBase64(t *testing.T) {
 	}
 }
 
+type base64ReadLimit struct {
+	read  int
+	limit int
+}
+
+func (r *base64ReadLimit) Read(p []byte) (int, error) {
+	if r.read >= r.limit {
+		return 0, ErrInvalidPsbtFormat
+	}
+
+	remaining := r.limit - r.read
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	for i := range p {
+		p[i] = 'A'
+	}
+	r.read += len(p)
+	return len(p), nil
+}
+
+func TestNewFromRawBytesBase64ValidationStreams(t *testing.T) {
+	reader := &base64ReadLimit{limit: 4096}
+	if _, err := NewFromRawBytes(reader, true); err != ErrInvalidMagicBytes {
+		t.Fatalf("expected invalid magic before draining encoded stream, "+
+			"got %v after reading %d bytes", err, reader.read)
+	}
+}
+
 // These are all valid PSBTs encoded as hex. The items with a comment are taken
 // from the BIP174 test vectors:
 // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#test-vectors
