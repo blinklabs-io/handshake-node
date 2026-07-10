@@ -4,7 +4,11 @@
 
 package rpcclient
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/blinklabs-io/handshake-node/wire"
+)
 
 // BackendVersion defines an interface to handle the version of the backend
 // used by the client.
@@ -195,6 +199,38 @@ func (b BtcdVersion) SupportGetTxSpendingPrevOut() bool {
 // interface.
 var _ BackendVersion = BtcdVersion(0)
 
+// HandshakeNodeVersion represents a handshake-node backend. handshake-node
+// uses independent versioning from btcd, so its numeric getinfo version must
+// not be compared against btcd release thresholds.
+type HandshakeNodeVersion struct{}
+
+// String returns a human-readable backend version.
+func (HandshakeNodeVersion) String() string {
+	return "handshake-node"
+}
+
+// SupportUnifiedSoftForks returns true if the backend supports the unified
+// softforks format.
+func (HandshakeNodeVersion) SupportUnifiedSoftForks() bool {
+	return true
+}
+
+// SupportTestMempoolAccept returns true if the backend supports the
+// testmempoolaccept RPC.
+func (HandshakeNodeVersion) SupportTestMempoolAccept() bool {
+	return true
+}
+
+// SupportGetTxSpendingPrevOut returns true if the backend supports the
+// gettxspendingprevout RPC.
+func (HandshakeNodeVersion) SupportGetTxSpendingPrevOut() bool {
+	return true
+}
+
+// Compile-time checks to ensure that HandshakeNodeVersion satisfies the
+// BackendVersion interface.
+var _ BackendVersion = HandshakeNodeVersion{}
+
 const (
 	// btcd2401Val is the int representation of btcd v0.24.1.
 	btcd2401Val = 240100
@@ -209,4 +245,15 @@ func parseBtcdVersion(version int32) BtcdVersion {
 	default:
 		return BtcdPost2401
 	}
+}
+
+// parseGetInfoBackendVersion parses the backend version from the getinfo
+// result fields. handshake-node exposes the Handshake protocol version through
+// getinfo, while btcd exposes its legacy Bitcoin protocol version.
+func parseGetInfoBackendVersion(version, protocolVersion int32) BackendVersion {
+	if protocolVersion == int32(wire.HnsProtocolVersion) {
+		return HandshakeNodeVersion{}
+	}
+
+	return parseBtcdVersion(version)
 }

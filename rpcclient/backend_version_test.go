@@ -7,6 +7,7 @@ package rpcclient
 import (
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,6 +110,49 @@ func TestParseBtcdVersion(t *testing.T) {
 	}
 }
 
+// TestParseGetInfoBackendVersion checks that getinfo version fields are
+// interpreted according to the detected backend rather than assuming all
+// getinfo responders use btcd release numbering.
+func TestParseGetInfoBackendVersion(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		rpcVersion      int32
+		protocolVersion int32
+		parsedVersion   BackendVersion
+	}{
+		{
+			name:            "handshake-node 0.1.0",
+			rpcVersion:      10000,
+			protocolVersion: int32(wire.HnsProtocolVersion),
+			parsedVersion:   HandshakeNodeVersion{},
+		},
+		{
+			name:            "btcd 0.24 and below",
+			rpcVersion:      230000,
+			protocolVersion: int32(wire.ProtocolVersion),
+			parsedVersion:   BtcdPre2401,
+		},
+		{
+			name:            "btcd 0.24.1",
+			rpcVersion:      240100,
+			protocolVersion: int32(wire.ProtocolVersion),
+			parsedVersion:   BtcdPost2401,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			version := parseGetInfoBackendVersion(tc.rpcVersion,
+				tc.protocolVersion)
+			require.Equal(t, tc.parsedVersion, version)
+		})
+	}
+}
+
 // TestVersionSupports checks all the versions of bitcoind and btcd to ensure
 // that the RPCs are supported correctly.
 func TestVersionSupports(t *testing.T) {
@@ -149,4 +193,12 @@ func TestVersionSupports(t *testing.T) {
 	// For btcd, `gettxspendingprevout` is supported in 24.1 and above.
 	require.False(BtcdPre2401.SupportGetTxSpendingPrevOut())
 	require.True(BtcdPost2401.SupportGetTxSpendingPrevOut())
+
+	// handshake-node uses its own version series and implements the current
+	// chain-server feature set for 0.1.x.
+	handshakeNode := HandshakeNodeVersion{}
+	require.Equal("handshake-node", handshakeNode.String())
+	require.True(handshakeNode.SupportUnifiedSoftForks())
+	require.True(handshakeNode.SupportTestMempoolAccept())
+	require.True(handshakeNode.SupportGetTxSpendingPrevOut())
 }
