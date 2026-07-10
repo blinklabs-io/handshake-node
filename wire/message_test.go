@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,6 +161,37 @@ func TestMessage(t *testing.T) {
 				spew.Sdump(msg), spew.Sdump(test.out))
 			continue
 		}
+	}
+}
+
+func TestReadMessageRejectsTrailingPayload(t *testing.T) {
+	payload := []byte{
+		0x00, // zero addresses
+		0xff, // trailing byte left after MsgAddr decode
+	}
+
+	var command [CommandSize]byte
+	copy(command[:], CmdAddr)
+
+	var checksum [4]byte
+	copy(checksum[:], chainhash.DoubleHashB(payload))
+
+	var buf bytes.Buffer
+	if err := writeElements(
+		&buf, MainNet, command, uint32(len(payload)), checksum,
+	); err != nil {
+		t.Fatalf("writeElements: %v", err)
+	}
+	if _, err := buf.Write(payload); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	_, _, _, err := ReadMessageN(&buf, ProtocolVersion, MainNet)
+	if err == nil {
+		t.Fatalf("expected trailing payload bytes to be rejected")
+	}
+	if !strings.Contains(err.Error(), "extra bytes after decode") {
+		t.Fatalf("expected trailing payload error, got %v", err)
 	}
 }
 

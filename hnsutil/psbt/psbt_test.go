@@ -64,10 +64,92 @@ func testTxOutFromScript(t *testing.T, value int64, script []byte) *wire.TxOut {
 	return wire.NewTxOut(value, addr, wire.Covenant{})
 }
 
+func testHandshakePsbtBytes(t *testing.T) []byte {
+	t.Helper()
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(wire.NewTxIn(&wire.OutPoint{},
+		wire.MaxTxInSequenceNum, nil))
+	tx.AddTxOut(&wire.TxOut{
+		Value: 1,
+		Address: wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x42}, 20),
+		},
+		Covenant: wire.Covenant{Type: wire.CovenantNone},
+	})
+
+	packet, err := NewFromUnsignedTx(tx)
+	if err != nil {
+		t.Fatalf("NewFromUnsignedTx: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := packet.Serialize(&buf); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
 func skipLegacyBitcoinPSBTFixture(t *testing.T) {
 	t.Helper()
 	t.Skip("legacy Bitcoin PSBT fixture uses PkScript/scriptSig transaction " +
 		"serialization; replace with a Handshake PSBT fixture")
+}
+
+func TestNewFromRawBytesRejectsTrailingPacketData(t *testing.T) {
+	raw := testHandshakePsbtBytes(t)
+	if _, err := NewFromRawBytes(bytes.NewReader(raw), false); err != nil {
+		t.Fatalf("NewFromRawBytes: %v", err)
+	}
+
+	raw = append(raw, 0x00)
+	if _, err := NewFromRawBytes(bytes.NewReader(raw), false); err == nil {
+		t.Fatalf("expected trailing packet data to be rejected")
+	}
+}
+
+func TestNewFromRawBytesRejectsNonStrictBase64(t *testing.T) {
+	raw := testHandshakePsbtBytes(t)
+	encoded := base64.StdEncoding.EncodeToString(raw)
+	if _, err := NewFromRawBytes(strings.NewReader(encoded), true); err != nil {
+		t.Fatalf("NewFromRawBytes: %v", err)
+	}
+
+	withNewline := encoded[:len(encoded)/2] + "\n" + encoded[len(encoded)/2:]
+	if _, err := NewFromRawBytes(strings.NewReader(withNewline), true); err == nil {
+		t.Fatalf("expected non-strict base64 to be rejected")
+	}
+}
+
+type base64ReadLimit struct {
+	read  int
+	limit int
+}
+
+func (r *base64ReadLimit) Read(p []byte) (int, error) {
+	if r.read >= r.limit {
+		return 0, ErrInvalidPsbtFormat
+	}
+
+	remaining := r.limit - r.read
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	for i := range p {
+		p[i] = 'A'
+	}
+	r.read += len(p)
+	return len(p), nil
+}
+
+func TestNewFromRawBytesBase64ValidationStreams(t *testing.T) {
+	reader := &base64ReadLimit{limit: 4096}
+	if _, err := NewFromRawBytes(reader, true); err != ErrInvalidMagicBytes {
+		t.Fatalf("expected invalid magic before draining encoded stream, "+
+			"got %v after reading %d bytes", err, reader.read)
+	}
 }
 
 // These are all valid PSBTs encoded as hex. The items with a comment are taken

@@ -188,12 +188,8 @@ func NewFromUnsignedTx(tx *wire.MsgTx) (*Packet, error) {
 // NOTE: To create a Packet from one's own data, rather than reading in a
 // serialization from a counterparty, one should use a psbt.New.
 func NewFromRawBytes(r io.Reader, b64 bool) (*Packet, error) {
-	// If the PSBT is encoded in bas64, then we'll create a new wrapper
-	// reader that'll allow us to incrementally decode the contents of the
-	// io.Reader.
 	if b64 {
-		based64EncodedReader := r
-		r = base64.NewDecoder(base64.StdEncoding, based64EncodedReader)
+		r = newStrictBase64Decoder(r)
 	}
 
 	// The Packet struct does not store the fixed magic bytes, but they
@@ -225,11 +221,9 @@ func NewFromRawBytes(r io.Reader, b64 bool) (*Packet, error) {
 	if err != nil {
 		return nil, err
 	}
-	msgTx := wire.NewMsgTx(2)
-
 	// BIP-0174 states: "The transaction must be in the old serialization
 	// format (without witnesses)."
-	err = msgTx.DeserializeNoWitness(bytes.NewReader(value))
+	msgTx, err := readTransaction(value, true)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +320,65 @@ func NewFromRawBytes(r io.Reader, b64 bool) (*Packet, error) {
 		return nil, err
 	}
 
+	if err := assertFullyConsumed(r); err != nil {
+		return nil, err
+	}
+
 	return &newPsbt, nil
+}
+
+type strictBase64InputReader struct {
+	r io.Reader
+}
+
+func (r *strictBase64InputReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 && bytes.ContainsAny(p[:n], "\r\n") {
+		return 0, ErrInvalidPsbtFormat
+	}
+
+	return n, err
+}
+
+type strictBase64Decoder struct {
+	r          io.Reader
+	pendingErr error
+}
+
+func newStrictBase64Decoder(r io.Reader) io.Reader {
+	return &strictBase64Decoder{
+		r: base64.NewDecoder(
+			base64.StdEncoding.Strict(),
+			&strictBase64InputReader{r: r},
+		),
+	}
+}
+
+// Read decodes an RFC4648 base64 stream without permitting whitespace and with
+// '=' allowed only as final padding.
+func (d *strictBase64Decoder) Read(p []byte) (int, error) {
+	if d.pendingErr != nil {
+		err := d.pendingErr
+		d.pendingErr = nil
+		return 0, err
+	}
+
+	n, err := d.r.Read(p)
+	if err == nil || errors.Is(err, io.EOF) ||
+		errors.Is(err, ErrInvalidPsbtFormat) {
+		return n, err
+	}
+
+	var corrupt base64.CorruptInputError
+	if errors.As(err, &corrupt) || errors.Is(err, io.ErrUnexpectedEOF) {
+		err = ErrInvalidPsbtFormat
+	}
+	if n > 0 {
+		d.pendingErr = err
+		return n, nil
+	}
+
+	return n, err
 }
 
 // Serialize creates a binary serialization of the referenced Packet struct

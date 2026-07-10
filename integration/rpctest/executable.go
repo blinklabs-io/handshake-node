@@ -6,6 +6,7 @@ package rpctest
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -26,9 +27,7 @@ var (
 // execPath returns a path to the handshake-node executable to be used by
 // rpctests. To ensure the code tests against the most up-to-date version of
 // handshake-node, this method compiles handshake-node the first time it is called. After that, the
-// generated binary is used for subsequent test harnesses. The executable file
-// is not cleaned up, but since it lives at a static path in a temp directory,
-// it is not a big deal.
+// generated binary is used for subsequent test harnesses.
 func execPath() (string, error) {
 	compileMtx.Lock()
 	defer compileMtx.Unlock()
@@ -43,8 +42,12 @@ func execPath() (string, error) {
 		return "", err
 	}
 
-	// Build handshake-node and output an executable in a static temp path.
-	outputPath := filepath.Join(testDir, "handshake-node")
+	// Build handshake-node to a random path so concurrent `go test`
+	// processes do not race on the same output file. Within a process,
+	// the compileMtx-guarded cache keeps this to one build.
+	outputPath := filepath.Join(
+		testDir, fmt.Sprintf("handshake-node-%d", rand.Uint32()),
+	)
 	if runtime.GOOS == "windows" {
 		outputPath += ".exe"
 	}

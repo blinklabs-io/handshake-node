@@ -6,6 +6,7 @@ package hnsutil
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
@@ -141,8 +142,11 @@ func NewTxFromBytes(serializedTx []byte) (*Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	consumed := len(serializedTx) - br.Len()
-	tx.setBytes(append([]byte(nil), serializedTx[:consumed]...))
+	if br.Len() > 0 {
+		return nil, fmt.Errorf("transaction has %d trailing bytes",
+			br.Len())
+	}
+	tx.setBytes(append([]byte(nil), serializedTx...))
 	return tx, nil
 }
 

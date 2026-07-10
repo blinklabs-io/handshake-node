@@ -115,6 +115,33 @@ func TestReadTxOutHandshakeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReadTransactionRejectsTrailingBytes(t *testing.T) {
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(wire.NewTxIn(&wire.OutPoint{},
+		wire.MaxTxInSequenceNum, nil))
+	tx.AddTxOut(&wire.TxOut{
+		Value: 1,
+		Address: wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x24}, 20),
+		},
+		Covenant: wire.Covenant{Type: wire.CovenantNone},
+	})
+
+	var buf bytes.Buffer
+	if err := tx.Serialize(&buf); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	if _, err := readTransaction(buf.Bytes(), false); err != nil {
+		t.Fatalf("readTransaction: %v", err)
+	}
+
+	trailingTx := append(buf.Bytes(), 0x00)
+	if _, err := readTransaction(trailingTx, false); err == nil {
+		t.Fatalf("expected trailing bytes to be rejected")
+	}
+}
+
 func TestAddPartialSignatureRejectsOutOfRangeNonWitnessOutput(t *testing.T) {
 	prevTx := wire.NewMsgTx(2)
 	prevTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{},
