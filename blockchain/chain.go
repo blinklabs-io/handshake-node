@@ -1164,13 +1164,19 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 				if err != nil {
 					return nil, nil, nil, err
 				}
+				deploymentFlags, err := b.handshakeDeploymentFlags(
+					n.parent)
+				if err != nil {
+					return nil, nil, nil, err
+				}
 				for _, tx := range block.Transactions() {
 					prevOutputs, err := prevOutputsFromView(tx, view)
 					if err != nil {
 						return nil, nil, nil, err
 					}
 					if err := nameView.applyTx(nil, tx, uint32(n.height),
-						n.parent.timestamp, prevOutputs); err != nil {
+						n.parent.timestamp, prevOutputs,
+						deploymentFlags); err != nil {
 						return nil, nil, nil, err
 					}
 					if err := view.connectTransaction(tx, n.height, nil); err != nil {

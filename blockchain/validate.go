@@ -1167,6 +1167,11 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 			"of expected %v", view.BestHash(), parentHash))
 	}
 
+	deploymentFlags, err := b.handshakeDeploymentFlags(node.parent)
+	if err != nil {
+		return err
+	}
+
 	// BIP0030 added a rule to prevent blocks which contain duplicate
 	// transactions that 'overwrite' older transactions which are not fully
 	// spent.  See the documentation for checkBIP0030 for more details.
@@ -1195,7 +1200,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 	//
 	// These utxo entries are needed for verification of things such as
 	// transaction inputs, counting pay-to-script-hashes, and scripts.
-	err := view.fetchInputUtxos(b.utxoCache, block)
+	err = view.fetchInputUtxos(b.utxoCache, block)
 	if err != nil {
 		return err
 	}
@@ -1273,7 +1278,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 				return err
 			}
 			err = b.applyTxToNameView(nameView, tx, uint32(node.height),
-				node.parent.timestamp, prevOutputs)
+				node.parent.timestamp, prevOutputs, deploymentFlags)
 			if err != nil {
 				return err
 			}
@@ -1294,7 +1299,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 		var err error
 		coinbaseConjured, err = coinbaseConjuredValue(transactions[0],
 			uint32(node.height), node.parent.timestamp,
-			b.chainParams)
+			b.chainParams, deploymentFlags)
 		if err != nil {
 			return err
 		}

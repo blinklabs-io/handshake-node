@@ -41,8 +41,9 @@ type nameBlockView struct {
 //
 // NameValidationView is not safe for concurrent use.
 type NameValidationView struct {
-	chain *BlockChain
-	view  *nameBlockView
+	chain           *BlockChain
+	view            *nameBlockView
+	deploymentFlags handshakeDeploymentFlags
 }
 
 func newNameBlockView(dbTx database.Tx, chain *BlockChain) (*nameBlockView, error) {
@@ -78,9 +79,15 @@ func newLazyNameBlockView(chain *BlockChain) *nameBlockView {
 // NewNameValidationView returns a stateful name validation view initialized
 // from the current committed name state.
 func (b *BlockChain) NewNameValidationView() (*NameValidationView, error) {
+	deploymentFlags, err := b.currentHandshakeDeploymentFlags()
+	if err != nil {
+		return nil, err
+	}
+
 	return &NameValidationView{
-		chain: b,
-		view:  newLazyNameBlockView(b),
+		chain:           b,
+		view:            newLazyNameBlockView(b),
+		deploymentFlags: deploymentFlags,
 	}, nil
 }
 
@@ -97,7 +104,7 @@ func (v *NameValidationView) ApplyTransaction(tx *hnsutil.Tx, height int32,
 			return err
 		}
 		return v.view.applyTx(dbTx, tx, uint32(height), prevTime,
-			prevOutputs)
+			prevOutputs, v.deploymentFlags)
 	})
 	if err != nil {
 		v.view.restore(snapshot)
@@ -280,7 +287,8 @@ func checkNameRoot(dbTx database.Tx, block *hnsutil.Block) error {
 }
 
 func (v *nameBlockView) applyTx(dbTx database.Tx, tx *hnsutil.Tx,
-	height uint32, prevTime int64, prevOutputs []namePrevOutput) error {
+	height uint32, prevTime int64, prevOutputs []namePrevOutput,
+	deploymentFlags handshakeDeploymentFlags) error {
 
 	if !IsCoinBase(tx) {
 		if err := verifyCovenantSpends(tx, prevOutputs); err != nil {
@@ -295,7 +303,7 @@ func (v *nameBlockView) applyTx(dbTx database.Tx, tx *hnsutil.Tx,
 		}
 
 		if err := v.applyCovenantOutput(dbTx, tx, outputIndex, txOut,
-			height, prevTime, prevOutputs); err != nil {
+			height, prevTime, prevOutputs, deploymentFlags); err != nil {
 
 			return err
 		}
@@ -314,16 +322,18 @@ func txHasNameCovenantOutput(tx *hnsutil.Tx) bool {
 }
 
 func (b *BlockChain) applyTxToNameView(view *nameBlockView, tx *hnsutil.Tx,
-	height uint32, prevTime int64, prevOutputs []namePrevOutput) error {
+	height uint32, prevTime int64, prevOutputs []namePrevOutput,
+	deploymentFlags handshakeDeploymentFlags) error {
 
 	if view.needsDB() && txHasNameCovenantOutput(tx) {
 		return b.db.View(func(dbTx database.Tx) error {
 			return view.applyTx(dbTx, tx, height, prevTime,
-				prevOutputs)
+				prevOutputs, deploymentFlags)
 		})
 	}
 
-	return view.applyTx(nil, tx, height, prevTime, prevOutputs)
+	return view.applyTx(nil, tx, height, prevTime, prevOutputs,
+		deploymentFlags)
 }
 
 // CheckTransactionNames validates the Handshake name covenant transitions in a
@@ -340,7 +350,8 @@ func (b *BlockChain) CheckTransactionNames(tx *hnsutil.Tx, height int32,
 
 func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 	outputIndex int, txOut *wire.TxOut, height uint32,
-	prevTime int64, prevOutputs []namePrevOutput) error {
+	prevTime int64, prevOutputs []namePrevOutput,
+	deploymentFlags handshakeDeploymentFlags) error {
 
 	covenant := txOut.Covenant
 	nameHash, ok := covenantHash(covenant, 0)
@@ -387,6 +398,11 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 			isReservedNameHash(nameHash, height, v.chain.chainParams) {
 
 			return badCovenant("OPEN covenant for reserved name")
+		}
+		if deploymentFlags.icannLockupActive &&
+			isLockedUpNameHash(nameHash, height, v.chain.chainParams) {
+
+			return badCovenant("OPEN covenant for locked name")
 		}
 		if !hasNameRollout(nameHash, height, v.chain.chainParams) {
 			return badCovenant("OPEN covenant before rollout")
@@ -1063,6 +1079,11 @@ func (b *BlockChain) connectNames(dbTx database.Tx, node *blockNode,
 		return err
 	}
 
+	deploymentFlags, err := b.handshakeDeploymentFlags(node.parent)
+	if err != nil {
+		return err
+	}
+
 	view := newLazyNameBlockView(b)
 
 	stxoOffset := 0
@@ -1073,7 +1094,7 @@ func (b *BlockChain) connectNames(dbTx database.Tx, node *blockNode,
 		}
 		if err := view.applyTx(dbTx, tx, uint32(node.height),
 			node.parent.timestamp,
-			prevOutputs); err != nil {
+			prevOutputs, deploymentFlags); err != nil {
 			return err
 		}
 	}
