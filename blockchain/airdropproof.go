@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/big"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"golang.org/x/crypto/blake2b"
@@ -108,8 +109,8 @@ func checkCoinbaseAirdropProofSanity(tx *hnsutil.Tx, outputIndex int) error {
 	return nil
 }
 
-func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int) (uint64,
-	error) {
+func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int, height uint32,
+	params *chaincfg.Params) (uint64, error) {
 
 	msgTx := tx.MsgTx()
 	if outputIndex >= len(msgTx.TxIn) ||
@@ -134,6 +135,15 @@ func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int) (uint64,
 	}
 	if !proof.isSane() {
 		return 0, badCovenant("airdrop proof is not sane")
+	}
+	if params == nil || height >= params.AirdropGooSigStop {
+		key, err := parseAirdropKey(proof.key)
+		if err != nil {
+			return 0, badCovenant("airdrop proof is invalid")
+		}
+		if key.keyType == airdropKeyGoo {
+			return 0, badCovenant("GooSig airdrop proof is disabled")
+		}
 	}
 	if !proof.verifyMerkle() {
 		return 0, badCovenant("airdrop proof merkle root mismatch")

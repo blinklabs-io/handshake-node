@@ -85,10 +85,16 @@ func checkCoinbaseClaimProofSanity(tx *hnsutil.Tx, outputIndex int,
 }
 
 func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
-	params *chaincfg.Params) (uint64, error) {
+	params *chaincfg.Params, deploymentFlags ...handshakeDeploymentFlags) (
+	uint64, error) {
 
 	if !IsCoinBase(tx) {
 		return 0, nil
+	}
+
+	var flags handshakeDeploymentFlags
+	if len(deploymentFlags) > 0 {
+		flags = deploymentFlags[0]
 	}
 
 	msgTx := tx.MsgTx()
@@ -112,7 +118,12 @@ func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
 		}
 
 		if msgTx.TxOut[i].Covenant.Type != wire.CovenantClaim {
-			value, err := verifyCoinbaseAirdropProof(tx, i)
+			if flags.airstopActive {
+				return 0, badCovenant("airdrop proofs are disabled")
+			}
+
+			value, err := verifyCoinbaseAirdropProof(tx, i, height,
+				params)
 			if err != nil {
 				return 0, err
 			}

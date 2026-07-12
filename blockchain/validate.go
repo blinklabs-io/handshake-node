@@ -1138,6 +1138,50 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *hnsutil.Block, vi
 		false, nil)
 }
 
+// checkCoinbaseValue validates the coinbase proof value and final coinbase
+// output value against the block subsidy and collected transaction fees.
+func checkCoinbaseValue(tx *hnsutil.Tx, node *blockNode, totalFees int64,
+	params *chaincfg.Params, deploymentFlags handshakeDeploymentFlags) error {
+
+	var coinbaseConjured uint64
+	if node.parent != nil {
+		var err error
+		coinbaseConjured, err = coinbaseConjuredValue(tx,
+			uint32(node.height), node.parent.timestamp, params,
+			deploymentFlags)
+		if err != nil {
+			return err
+		}
+	}
+
+	// The total output values of the coinbase transaction must not exceed
+	// the expected subsidy value plus total transaction fees gained from
+	// mining the block.  It is safe to ignore overflow and out of range
+	// errors here because those error conditions would have already been
+	// caught by checkTransactionSanity.
+	var totalSatoshiOut int64
+	for _, txOut := range tx.MsgTx().TxOut {
+		totalSatoshiOut += txOut.Value
+	}
+	expectedSatoshiOut := CalcBlockSubsidy(node.height, params) +
+		totalFees
+	if coinbaseConjured > uint64(hnsutil.MaxDoo) ||
+		expectedSatoshiOut > hnsutil.MaxDoo-int64(coinbaseConjured) {
+
+		return ruleError(ErrBadCoinbaseValue,
+			"coinbase expected value overflows max money")
+	}
+	expectedSatoshiOut += int64(coinbaseConjured)
+	if totalSatoshiOut > expectedSatoshiOut {
+		str := fmt.Sprintf("coinbase transaction for block pays %v "+
+			"which is more than expected value of %v",
+			totalSatoshiOut, expectedSatoshiOut)
+		return ruleError(ErrBadCoinbaseValue, str)
+	}
+
+	return nil
+}
+
 // checkConnectBlockWithNameView is the implementation for checkConnectBlock
 // with the name state supplied by the caller.  Reorg preflight uses this to
 // validate against a simulated attach-chain name state.
@@ -1165,6 +1209,11 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 		return AssertError(fmt.Sprintf("inconsistent view when "+
 			"checking block connection: best hash is %v instead "+
 			"of expected %v", view.BestHash(), parentHash))
+	}
+
+	deploymentFlags, err := b.handshakeDeploymentFlags(node.parent)
+	if err != nil {
+		return err
 	}
 
 	// BIP0030 added a rule to prevent blocks which contain duplicate
@@ -1195,7 +1244,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 	//
 	// These utxo entries are needed for verification of things such as
 	// transaction inputs, counting pay-to-script-hashes, and scripts.
-	err := view.fetchInputUtxos(b.utxoCache, block)
+	err = view.fetchInputUtxos(b.utxoCache, block)
 	if err != nil {
 		return err
 	}
@@ -1273,7 +1322,7 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 				return err
 			}
 			err = b.applyTxToNameView(nameView, tx, uint32(node.height),
-				node.parent.timestamp, prevOutputs)
+				node.parent.timestamp, prevOutputs, deploymentFlags)
 			if err != nil {
 				return err
 			}
@@ -1289,40 +1338,10 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 		}
 	}
 
-	var coinbaseConjured uint64
-	if node.parent != nil {
-		var err error
-		coinbaseConjured, err = coinbaseConjuredValue(transactions[0],
-			uint32(node.height), node.parent.timestamp,
-			b.chainParams)
-		if err != nil {
-			return err
-		}
-	}
+	if err := checkCoinbaseValue(transactions[0], node, totalFees,
+		b.chainParams, deploymentFlags); err != nil {
 
-	// The total output values of the coinbase transaction must not exceed
-	// the expected subsidy value plus total transaction fees gained from
-	// mining the block.  It is safe to ignore overflow and out of range
-	// errors here because those error conditions would have already been
-	// caught by checkTransactionSanity.
-	var totalSatoshiOut int64
-	for _, txOut := range transactions[0].MsgTx().TxOut {
-		totalSatoshiOut += txOut.Value
-	}
-	expectedSatoshiOut := CalcBlockSubsidy(node.height, b.chainParams) +
-		totalFees
-	if coinbaseConjured > uint64(hnsutil.MaxDoo) ||
-		expectedSatoshiOut > hnsutil.MaxDoo-int64(coinbaseConjured) {
-
-		return ruleError(ErrBadCoinbaseValue,
-			"coinbase expected value overflows max money")
-	}
-	expectedSatoshiOut += int64(coinbaseConjured)
-	if totalSatoshiOut > expectedSatoshiOut {
-		str := fmt.Sprintf("coinbase transaction for block pays %v "+
-			"which is more than expected value of %v",
-			totalSatoshiOut, expectedSatoshiOut)
-		return ruleError(ErrBadCoinbaseValue, str)
+		return err
 	}
 
 	runScripts := b.shouldValidateScripts(node)

@@ -126,6 +126,15 @@ const (
 	// to always be active.
 	DeploymentTestDummyAlwaysActive
 
+	// DeploymentHardening defines the Handshake RSA-1024 hardening rule.
+	DeploymentHardening
+
+	// DeploymentICANNLockup defines the Handshake ICANN lockup rule.
+	DeploymentICANNLockup
+
+	// DeploymentAirstop defines the Handshake airdrop disablement rule.
+	DeploymentAirstop
+
 	// NOTE: DefinedDeployments must always come last since it is used to
 	// determine how many defined deployments there currently are.
 
@@ -278,6 +287,7 @@ type Params struct {
 	NameClaimPrefix     string
 	NameNoRollout       bool
 	NameNoReserved      bool
+	AirdropGooSigStop   uint32
 }
 
 // MainNetParams defines the network parameters for the Handshake mainnet.
@@ -310,11 +320,49 @@ var MainNetParams = Params{
 	// Checkpoints ordered from oldest to newest.
 	Checkpoints: nil,
 
-	// Consensus rule change deployments.
-	// Handshake does not use BIP9 soft-fork deployments, but the
-	// infrastructure is kept for potential future use.
+	// Consensus rule change deployments. Handshake uses versionbits for
+	// several historical consensus changes while retaining the surrounding
+	// btcd deployment machinery.
 	RuleChangeActivationThreshold: 1916, // 95% of MinerConfirmationWindow
 	MinerConfirmationWindow:       2016,
+	Deployments: [DefinedDeployments]ConsensusDeployment{
+		DeploymentHardening: {
+			BitNumber: 0,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1581638400, 0), // February 14, 2020
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1707868800, 0), // February 14, 2024
+			),
+		},
+		DeploymentICANNLockup: {
+			BitNumber: 1,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1691625600, 0), // August 10, 2023
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1703980800, 0), // December 31, 2023
+			),
+		},
+		DeploymentAirstop: {
+			BitNumber: 2,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1751328000, 0), // July 1, 2025
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1759881600, 0), // October 8, 2025
+			),
+		},
+		DeploymentTestDummy: {
+			BitNumber: 28,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1199145601, 0), // January 1, 2008
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1230767999, 0), // December 31, 2008
+			),
+		},
+	},
 
 	// Mempool parameters
 	RelayNonStdTxs: false,
@@ -354,6 +402,7 @@ var MainNetParams = Params{
 	NameClaimPrefix:     "hns-claim:",
 	NameNoRollout:       false,
 	NameNoReserved:      false,
+	AirdropGooSigStop:   56880,
 }
 
 // RegressionNetParams defines the network parameters for the Handshake
@@ -419,6 +468,33 @@ var RegressionNetParams = Params{
 			),
 			AlwaysActiveHeight: 1,
 		},
+		DeploymentHardening: {
+			BitNumber: 3,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1581638400, 0), // February 14, 2020
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1707868800, 0), // February 14, 2024
+			),
+		},
+		DeploymentICANNLockup: {
+			BitNumber: 4,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1691625600, 0), // August 10, 2023
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1703980800, 0), // December 31, 2023
+			),
+		},
+		DeploymentAirstop: {
+			BitNumber: 2,
+			DeploymentStarter: NewMedianTimeDeploymentStarter(
+				time.Unix(1751328000, 0), // July 1, 2025
+			),
+			DeploymentEnder: NewMedianTimeDeploymentEnder(
+				time.Unix(1759881600, 0), // October 8, 2025
+			),
+		},
 		DeploymentCSV: {
 			BitNumber: 0,
 			DeploymentStarter: NewMedianTimeDeploymentStarter(
@@ -477,6 +553,7 @@ var RegressionNetParams = Params{
 	NameClaimPrefix:     "hns-regtest:",
 	NameNoRollout:       false,
 	NameNoReserved:      false,
+	AirdropGooSigStop:   math.MaxUint32,
 }
 
 var (

@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
@@ -296,7 +297,7 @@ func TestNameBlockViewOpenLifecycle(t *testing.T) {
 	}}
 
 	if err := view.applyTx(nil, hnsutil.NewTx(tx), 1, 0,
-		prevOutputs); err != nil {
+		prevOutputs, handshakeDeploymentFlags{}); err != nil {
 
 		t.Fatalf("applyTx OPEN: %v", err)
 	}
@@ -310,6 +311,35 @@ func TestNameBlockViewOpenLifecycle(t *testing.T) {
 	}
 	if _, ok := view.dirty[ns.nameHash]; !ok {
 		t.Fatal("name state was not marked dirty")
+	}
+}
+
+func TestNameBlockViewRejectsLockedNameOpenWhenICANNLockupActive(t *testing.T) {
+	params := chaincfg.MainNetParams
+	chain := &BlockChain{chainParams: &params}
+	view := &nameBlockView{
+		chain:  chain,
+		states: make(map[chainhash.Hash]*nameState),
+		dirty:  make(map[chainhash.Hash]struct{}),
+		seen:   make(map[chainhash.Hash]struct{}),
+	}
+
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("com")))
+	prevOutputs := []namePrevOutput{{
+		outpoint: *testOutPoint(1),
+		amount:   1,
+		covenant: wire.Covenant{},
+	}}
+
+	err := view.applyTx(nil, hnsutil.NewTx(tx), params.NameClaimPeriod, 0,
+		prevOutputs, handshakeDeploymentFlags{icannLockupActive: true})
+	if err == nil {
+		t.Fatal("applyTx OPEN locked name: expected error")
+	}
+	if !strings.Contains(err.Error(), "OPEN covenant for locked name") {
+		t.Fatalf("applyTx OPEN locked name: unexpected error: %v", err)
 	}
 }
 
@@ -343,7 +373,8 @@ func TestNameBlockViewRejectsUnlinkedRevealWithoutPanic(t *testing.T) {
 	height := ns.height + params.NameTreeInterval + 1 +
 		params.NameBiddingPeriod
 
-	err := view.applyTx(nil, hnsutil.NewTx(tx), height, 0, prevOutputs)
+	err := view.applyTx(nil, hnsutil.NewTx(tx), height, 0, prevOutputs,
+		handshakeDeploymentFlags{})
 	if err == nil {
 		t.Fatal("applyTx REVEAL: expected unlinked covenant error")
 	}
@@ -374,7 +405,7 @@ func TestNameBlockViewBidAcceptanceWindow(t *testing.T) {
 	openingHeight := ns.height + params.NameTreeInterval
 	view := nameBlockViewWithStates(chain, ns)
 	err := view.applyTx(nil, hnsutil.NewTx(tx), openingHeight, 0,
-		prevOutputs)
+		prevOutputs, handshakeDeploymentFlags{})
 	if err == nil {
 		t.Fatal("applyTx BID before bidding period: expected error")
 	}
@@ -382,7 +413,7 @@ func TestNameBlockViewBidAcceptanceWindow(t *testing.T) {
 	biddingHeight := ns.height + params.NameTreeInterval + 1
 	view = nameBlockViewWithStates(chain, ns)
 	err = view.applyTx(nil, hnsutil.NewTx(tx), biddingHeight, 0,
-		prevOutputs)
+		prevOutputs, handshakeDeploymentFlags{})
 	if err != nil {
 		t.Fatalf("applyTx BID during bidding period: %v", err)
 	}
@@ -390,7 +421,7 @@ func TestNameBlockViewBidAcceptanceWindow(t *testing.T) {
 	revealHeight := biddingHeight + params.NameBiddingPeriod
 	view = nameBlockViewWithStates(chain, ns)
 	err = view.applyTx(nil, hnsutil.NewTx(tx), revealHeight, 0,
-		prevOutputs)
+		prevOutputs, handshakeDeploymentFlags{})
 	if err == nil {
 		t.Fatal("applyTx BID during reveal period: expected error")
 	}
@@ -422,7 +453,7 @@ func TestNameBlockViewRevealAcceptanceWindowAndBlind(t *testing.T) {
 	biddingHeight := ns.height + params.NameTreeInterval + 1
 	view := nameBlockViewWithStates(chain, ns)
 	err := view.applyTx(nil, hnsutil.NewTx(tx), biddingHeight, 0,
-		prevOutputs)
+		prevOutputs, handshakeDeploymentFlags{})
 	if err == nil {
 		t.Fatal("applyTx REVEAL before reveal period: expected error")
 	}
@@ -430,7 +461,7 @@ func TestNameBlockViewRevealAcceptanceWindowAndBlind(t *testing.T) {
 	revealHeight := biddingHeight + params.NameBiddingPeriod
 	view = nameBlockViewWithStates(chain, ns)
 	err = view.applyTx(nil, hnsutil.NewTx(tx), revealHeight, 0,
-		prevOutputs)
+		prevOutputs, handshakeDeploymentFlags{})
 	if err != nil {
 		t.Fatalf("applyTx REVEAL during reveal period: %v", err)
 	}
@@ -439,7 +470,7 @@ func TestNameBlockViewRevealAcceptanceWindowAndBlind(t *testing.T) {
 	badTx.TxOut[0].Value = value + 1
 	view = nameBlockViewWithStates(chain, ns)
 	err = view.applyTx(nil, hnsutil.NewTx(badTx), revealHeight, 0,
-		prevOutputs)
+		prevOutputs, handshakeDeploymentFlags{})
 	if err == nil {
 		t.Fatal("applyTx REVEAL with wrong blind value: expected error")
 	}
@@ -571,7 +602,8 @@ func TestNameBlockViewOwnerOperationsRequireCurrentOwner(t *testing.T) {
 
 			view := nameBlockViewWithStates(chain, test.state())
 			err := view.applyTx(nil, hnsutil.NewTx(tx), height, 0,
-				ownerPrev(staleOwner, test.prev))
+				ownerPrev(staleOwner, test.prev),
+				handshakeDeploymentFlags{})
 			if err == nil {
 				t.Fatalf("%s with stale owner unexpectedly succeeded",
 					test.name)
@@ -580,7 +612,8 @@ func TestNameBlockViewOwnerOperationsRequireCurrentOwner(t *testing.T) {
 			tx.TxIn[0].PreviousOutPoint = currentOwner
 			view = nameBlockViewWithStates(chain, test.state())
 			err = view.applyTx(nil, hnsutil.NewTx(tx), height, 0,
-				ownerPrev(currentOwner, test.prev))
+				ownerPrev(currentOwner, test.prev),
+				handshakeDeploymentFlags{})
 			if err != nil {
 				t.Fatalf("%s with current owner: %v", test.name,
 					err)

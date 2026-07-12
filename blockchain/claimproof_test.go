@@ -118,6 +118,47 @@ func TestCoinbaseAirdropConjuredValue(t *testing.T) {
 	}
 }
 
+func TestCoinbaseAirdropConjuredValueRejectsAirstop(t *testing.T) {
+	proof := testHsdFaucetProof(t)
+	tx, _ := testCoinbaseAirdropTxFromProof(t, proof)
+
+	if _, err := coinbaseConjuredValue(hnsutil.NewTx(tx), 10, 0,
+		&chaincfg.MainNetParams,
+		handshakeDeploymentFlags{airstopActive: true}); err == nil {
+
+		t.Fatal("coinbaseConjuredValue: expected airstop error")
+	}
+}
+
+func TestCoinbaseAirdropConjuredValueRejectsGooSigCutoff(t *testing.T) {
+	params := chaincfg.MainNetParams
+	proof, err := base64.StdEncoding.DecodeString(hsdGooProofBase64)
+	if err != nil {
+		t.Fatalf("DecodeString hsd GooSig proof: %v", err)
+	}
+	tx, value := testCoinbaseAirdropTxFromProof(t, proof)
+
+	got, err := coinbaseConjuredValue(hnsutil.NewTx(tx),
+		params.AirdropGooSigStop-1, 0, &params)
+	if err != nil {
+		t.Fatalf("coinbaseConjuredValue before cutoff: %v", err)
+	}
+	if got != value {
+		t.Fatalf("coinbaseConjuredValue got %d, want %d", got, value)
+	}
+
+	if _, err := coinbaseConjuredValue(hnsutil.NewTx(tx),
+		params.AirdropGooSigStop, 0, &params); err == nil {
+
+		t.Fatal("coinbaseConjuredValue: expected GooSig cutoff error")
+	}
+	if _, err := coinbaseConjuredValue(hnsutil.NewTx(tx),
+		params.AirdropGooSigStop-1, 0, nil); err == nil {
+
+		t.Fatal("coinbaseConjuredValue: expected nil params GooSig error")
+	}
+}
+
 func TestCoinbaseAirdropConjuredValueRejectsDuplicateProof(t *testing.T) {
 	proof := testHsdFaucetProof(t)
 	airdrop, err := parseAirdropProof(proof)
