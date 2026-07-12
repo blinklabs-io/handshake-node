@@ -469,7 +469,7 @@ var RegressionNetParams = Params{
 			AlwaysActiveHeight: 1,
 		},
 		DeploymentHardening: {
-			BitNumber: 0,
+			BitNumber: 3,
 			DeploymentStarter: NewMedianTimeDeploymentStarter(
 				time.Unix(1581638400, 0), // February 14, 2020
 			),
@@ -478,7 +478,7 @@ var RegressionNetParams = Params{
 			),
 		},
 		DeploymentICANNLockup: {
-			BitNumber: 1,
+			BitNumber: 4,
 			DeploymentStarter: NewMedianTimeDeploymentStarter(
 				time.Unix(1691625600, 0), // August 10, 2023
 			),

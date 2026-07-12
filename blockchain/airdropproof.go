@@ -136,7 +136,7 @@ func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int, height uint32,
 	if !proof.isSane() {
 		return 0, badCovenant("airdrop proof is not sane")
 	}
-	if params != nil && height >= params.AirdropGooSigStop {
+	if params == nil || height >= params.AirdropGooSigStop {
 		key, err := parseAirdropKey(proof.key)
 		if err != nil {
 			return 0, badCovenant("airdrop proof is invalid")

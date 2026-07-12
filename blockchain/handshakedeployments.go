@@ -41,8 +41,8 @@ func (b *BlockChain) currentHandshakeDeploymentFlags() (
 	handshakeDeploymentFlags, error) {
 
 	b.chainLock.Lock()
+	defer b.chainLock.Unlock()
 	flags, err := b.handshakeDeploymentFlags(b.bestChain.Tip())
-	b.chainLock.Unlock()
 
 	return flags, err
 }

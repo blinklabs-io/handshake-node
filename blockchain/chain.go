@@ -1159,37 +1159,55 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 			if err != nil {
 				return nil, nil, nil, err
 			}
+			deploymentFlags, err := b.handshakeDeploymentFlags(n.parent)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			transactions := block.Transactions()
+			var totalFees int64
+			var nameView *nameBlockView
 			if nameReorg != nil {
-				nameView, err := nameReorg.checkConnectBlock(block)
+				nameView, err = nameReorg.checkConnectBlock(block)
 				if err != nil {
 					return nil, nil, nil, err
 				}
-				deploymentFlags, err := b.handshakeDeploymentFlags(
-					n.parent)
+			}
+			for _, tx := range transactions {
+				txFee, err := CheckTransactionInputs(tx, n.height, view,
+					b.chainParams)
 				if err != nil {
 					return nil, nil, nil, err
 				}
-				for _, tx := range block.Transactions() {
+				lastTotalFees := totalFees
+				totalFees += txFee
+				if totalFees < lastTotalFees {
+					return nil, nil, nil, ruleError(ErrBadFees,
+						"total fees for block overflows accumulator")
+				}
+				if nameReorg != nil {
 					prevOutputs, err := prevOutputsFromView(tx, view)
 					if err != nil {
 						return nil, nil, nil, err
 					}
-					if err := nameView.applyTx(nil, tx, uint32(n.height),
-						n.parent.timestamp, prevOutputs,
-						deploymentFlags); err != nil {
-						return nil, nil, nil, err
-					}
-					if err := view.connectTransaction(tx, n.height, nil); err != nil {
+					err = b.applyTxToNameView(nameView, tx,
+						uint32(n.height), n.parent.timestamp,
+						prevOutputs, deploymentFlags)
+					if err != nil {
 						return nil, nil, nil, err
 					}
 				}
-				view.SetBestHash(&n.hash)
-				if err := nameReorg.connectBlock(n); err != nil {
+				if err := view.connectTransaction(tx, n.height, nil); err != nil {
 					return nil, nil, nil, err
 				}
-			} else {
-				err = view.connectTransactions(block, nil)
-				if err != nil {
+			}
+			if err := checkCoinbaseValue(transactions[0], n, totalFees,
+				b.chainParams, deploymentFlags); err != nil {
+
+				return nil, nil, nil, err
+			}
+			view.SetBestHash(&n.hash)
+			if nameReorg != nil {
+				if err := nameReorg.connectBlock(n); err != nil {
 					return nil, nil, nil, err
 				}
 			}

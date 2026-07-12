@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
@@ -336,6 +337,9 @@ func TestNameBlockViewRejectsLockedNameOpenWhenICANNLockupActive(t *testing.T) {
 		prevOutputs, handshakeDeploymentFlags{icannLockupActive: true})
 	if err == nil {
 		t.Fatal("applyTx OPEN locked name: expected error")
+	}
+	if !strings.Contains(err.Error(), "OPEN covenant for locked name") {
+		t.Fatalf("applyTx OPEN locked name: unexpected error: %v", err)
 	}
 }
 

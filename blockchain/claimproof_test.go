@@ -152,6 +152,11 @@ func TestCoinbaseAirdropConjuredValueRejectsGooSigCutoff(t *testing.T) {
 
 		t.Fatal("coinbaseConjuredValue: expected GooSig cutoff error")
 	}
+	if _, err := coinbaseConjuredValue(hnsutil.NewTx(tx),
+		params.AirdropGooSigStop-1, 0, nil); err == nil {
+
+		t.Fatal("coinbaseConjuredValue: expected nil params GooSig error")
+	}
 }
 
 func TestCoinbaseAirdropConjuredValueRejectsDuplicateProof(t *testing.T) {
