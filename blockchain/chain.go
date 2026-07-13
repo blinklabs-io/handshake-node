@@ -1171,6 +1171,7 @@ func (b *BlockChain) verifyReorganizationValidity(detachNodes, attachNodes *list
 				if err != nil {
 					return nil, nil, nil, err
 				}
+				nameView.ownerCoinValue = b.nameOwnerCoinLookup(view)
 			}
 			for _, tx := range transactions {
 				txFee, err := CheckTransactionInputs(tx, n.height, view,
