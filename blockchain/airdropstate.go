@@ -171,3 +171,18 @@ func forEachCoinbaseAirdropProof(tx *hnsutil.Tx,
 	}
 	return nil
 }
+
+// IsAirdropSpent returns whether the airdrop bitfield position has already
+// been consumed by the active chain.
+func (b *BlockChain) IsAirdropSpent(position uint32) (bool, error) {
+	var spent bool
+	err := b.db.View(func(dbTx database.Tx) error {
+		field, err := dbFetchAirdropSpentField(dbTx)
+		if err != nil {
+			return err
+		}
+		spent = field.isSpent(position)
+		return nil
+	})
+	return spent, err
+}

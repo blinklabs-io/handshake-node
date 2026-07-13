@@ -52,6 +52,58 @@ type claimProofData struct {
 	hash         []byte
 }
 
+// ClaimProofMetadata is the policy-relevant metadata decoded from a serialized
+// reserved-name ownership proof.
+type ClaimProofMetadata struct {
+	Name         string
+	NameHash     chainhash.Hash
+	Inception    uint32
+	Expiration   uint32
+	Value        uint64
+	Fee          uint64
+	Version      uint8
+	Address      []byte
+	Weak         bool
+	CommitHash   chainhash.Hash
+	CommitHeight uint32
+}
+
+// DecodeClaimProofMetadata decodes a serialized ownership proof and returns
+// the narrow set of metadata needed by policy code outside this package.
+func DecodeClaimProofMetadata(serialized []byte,
+	params *chaincfg.Params) (ClaimProofMetadata, error) {
+
+	proof, err := parseOwnershipProof(serialized)
+	if err != nil {
+		return ClaimProofMetadata{}, err
+	}
+	if !proof.isSane() {
+		return ClaimProofMetadata{}, errors.New("CLAIM ownership proof is not sane")
+	}
+
+	data, err := proof.claimData(params)
+	if err != nil {
+		return ClaimProofMetadata{}, err
+	}
+	if data == nil {
+		return ClaimProofMetadata{}, errors.New("CLAIM ownership proof data is invalid")
+	}
+
+	return ClaimProofMetadata{
+		Name:         data.name,
+		NameHash:     HashName([]byte(data.name)),
+		Inception:    data.inception,
+		Expiration:   data.expiration,
+		Value:        data.value,
+		Fee:          data.fee,
+		Version:      data.version,
+		Address:      append([]byte(nil), data.hash...),
+		Weak:         data.weak,
+		CommitHash:   data.commitHash,
+		CommitHeight: data.commitHeight,
+	}, nil
+}
+
 func checkCoinbaseClaimProofSanity(tx *hnsutil.Tx, outputIndex int,
 	covenant wire.Covenant) error {
 

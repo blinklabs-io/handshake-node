@@ -5,6 +5,7 @@
 package netsync
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -720,7 +721,7 @@ func TestBlockConnectedNotificationRemovesCoinbaseProofs(t *testing.T) {
 	addrHash[0] = 0x01
 	addr := wire.Address{Version: 0, Hash: addrHash}
 	proof := mining.CoinbaseProof{
-		Witness: []byte{0xaa, 0xbb},
+		Witness: netsyncAirdropProof(t, 0, addr, 107, 7),
 		Output:  wire.NewTxOut(100, addr, wire.Covenant{}),
 		Fee:     7,
 	}
@@ -762,6 +763,38 @@ func TestBlockConnectedNotificationRemovesCoinbaseProofs(t *testing.T) {
 	proofs, err := txPool.CoinbaseProofs(1)
 	require.NoError(t, err)
 	require.Empty(t, proofs)
+}
+
+func netsyncAirdropProof(t *testing.T, index uint32, addr wire.Address,
+	value, fee uint64) []byte {
+
+	t.Helper()
+
+	var key bytes.Buffer
+	key.WriteByte(4)
+	key.WriteByte(addr.Version)
+	key.WriteByte(byte(len(addr.Hash)))
+	key.Write(addr.Hash)
+	var valueRaw [8]byte
+	binary.LittleEndian.PutUint64(valueRaw[:], value)
+	key.Write(valueRaw[:])
+	key.WriteByte(0)
+
+	var proof bytes.Buffer
+	var indexRaw [4]byte
+	binary.LittleEndian.PutUint32(indexRaw[:], index)
+	proof.Write(indexRaw[:])
+	proof.WriteByte(0)
+	proof.WriteByte(0)
+	proof.WriteByte(0)
+	require.NoError(t, wire.WriteVarInt(&proof, 0, uint64(key.Len())))
+	proof.Write(key.Bytes())
+	proof.WriteByte(addr.Version)
+	proof.WriteByte(byte(len(addr.Hash)))
+	proof.Write(addr.Hash)
+	require.NoError(t, wire.WriteVarInt(&proof, 0, fee))
+	require.NoError(t, wire.WriteVarInt(&proof, 0, 0))
+	return proof.Bytes()
 }
 
 func TestBlockDisconnectedNotificationReaddsMempoolTransactions(t *testing.T) {

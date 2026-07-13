@@ -5,6 +5,7 @@
 package mempool
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -1179,10 +1180,11 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	addr := wire.Address{Version: 0, Hash: addrHash}
 	airdropOutput := wire.NewTxOut(90, addr, wire.Covenant{})
 	airdropProof := mining.CoinbaseProof{
-		Witness: []byte{0x01, 0x02, 0x03},
+		Witness: mempoolAirdropProof(t, 0, addr, 100, 10),
 		Output:  airdropOutput,
 		Fee:     10,
 	}
+	airdropWitness := append([]byte(nil), airdropProof.Witness...)
 
 	airdropHash, err := mp.AddCoinbaseProof(airdropProof)
 	if err != nil {
@@ -1205,7 +1207,7 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	if len(proofs) != 1 {
 		t.Fatalf("proof count = %d, want 1", len(proofs))
 	}
-	if proofs[0].Witness[0] != 0x01 ||
+	if !bytes.Equal(proofs[0].Witness, airdropWitness) ||
 		proofs[0].Output.Value != 90 ||
 		proofs[0].Output.Address.Hash[0] != 0x01 ||
 		proofs[0].Fee != 10 {
@@ -1221,7 +1223,9 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CoinbaseProofs after returned mutation: %v", err)
 	}
-	if proofs[0].Witness[0] != 0x01 || proofs[0].Output.Value != 90 {
+	if !bytes.Equal(proofs[0].Witness, airdropWitness) ||
+		proofs[0].Output.Value != 90 {
+
 		t.Fatalf("returned proof was not cloned: %+v", proofs[0])
 	}
 
@@ -1233,7 +1237,7 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 		Hash:    replacementHashBytes,
 	}
 	replacement := mining.CoinbaseProof{
-		Witness: []byte{0x01, 0x02, 0x03},
+		Witness: mempoolAirdropProof(t, 0, replacementAddr, 100, 10),
 		Output:  wire.NewTxOut(90, replacementAddr, wire.Covenant{}),
 		Fee:     10,
 	}
@@ -1255,7 +1259,7 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	}
 
 	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
-		Witness: []byte{0x01, 0x02, 0x03},
+		Witness: mempoolAirdropProof(t, 0, replacementAddr, 100, 10),
 		Output:  wire.NewTxOut(90, replacementAddr, wire.Covenant{}),
 		Fee:     11,
 	}); err == nil {
@@ -1264,12 +1268,23 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	}
 	duplicateOutput := wire.NewTxOut(91, replacementAddr, wire.Covenant{})
 	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
-		Witness: []byte{0x01, 0x02, 0x03},
+		Witness: mempoolAirdropProof(t, 0, replacementAddr, 100, 10),
 		Output:  duplicateOutput,
 		Fee:     10,
 	}); err == nil {
 
 		t.Fatal("AddCoinbaseProof duplicate witness: expected error")
+	}
+	otherAddrHash := make([]byte, 20)
+	otherAddrHash[0] = 0x03
+	otherAddr := wire.Address{Version: 0, Hash: otherAddrHash}
+	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: mempoolAirdropProof(t, 0, otherAddr, 100, 10),
+		Output:  wire.NewTxOut(90, otherAddr, wire.Covenant{}),
+		Fee:     10,
+	}); err == nil {
+
+		t.Fatal("AddCoinbaseProof duplicate position: expected error")
 	}
 	if _, err := mp.AddCoinbaseProof(mining.CoinbaseProof{
 		Witness: []byte{0x05},
@@ -1338,6 +1353,92 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	}
 }
 
+func TestAddCoinbaseProofRejectsStaleAndDisabledProofs(t *testing.T) {
+	t.Parallel()
+
+	addrHash := make([]byte, 20)
+	addrHash[0] = 0x01
+	addr := wire.Address{Version: 0, Hash: addrHash}
+	params := chaincfg.RegressionNetParams
+	params.AirdropGooSigStop = 1
+	bestHeight := func() int32 { return 0 }
+	inactive := func(uint32) (bool, error) { return false, nil }
+
+	spentPool := New(&Config{
+		ChainParams:        &params,
+		BestHeight:         bestHeight,
+		IsDeploymentActive: inactive,
+		IsAirdropSpent: func(uint32) (bool, error) {
+			return true, nil
+		},
+	})
+	if _, err := spentPool.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: mempoolAirdropProof(t, 0, addr, 100, 10),
+		Output:  wire.NewTxOut(90, addr, wire.Covenant{}),
+		Fee:     10,
+	}); err == nil {
+		t.Fatal("AddCoinbaseProof spent airdrop: expected error")
+	}
+
+	airstopPool := New(&Config{
+		ChainParams: &params,
+		BestHeight:  bestHeight,
+		IsDeploymentActive: func(deploymentID uint32) (bool, error) {
+			return deploymentID == chaincfg.DeploymentAirstop, nil
+		},
+	})
+	if _, err := airstopPool.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: mempoolAirdropProof(t, 0, addr, 100, 10),
+		Output:  wire.NewTxOut(90, addr, wire.Covenant{}),
+		Fee:     10,
+	}); err == nil {
+		t.Fatal("AddCoinbaseProof airstop airdrop: expected error")
+	}
+
+	gooKey := append([]byte{1}, make([]byte, 256)...)
+	gooPool := New(&Config{
+		ChainParams:        &params,
+		BestHeight:         bestHeight,
+		IsDeploymentActive: inactive,
+	})
+	if _, err := gooPool.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: mempoolAirdropProofWithKey(t, 0, gooKey, addr, 10),
+		Output: wire.NewTxOut(int64(mempoolAirdropReward-10), addr,
+			wire.Covenant{}),
+		Fee: 10,
+	}); err == nil {
+		t.Fatal("AddCoinbaseProof GooSig airdrop: expected error")
+	}
+
+	weakPool := New(&Config{
+		ChainParams: &params,
+		BestHeight:  bestHeight,
+		IsDeploymentActive: func(deploymentID uint32) (bool, error) {
+			return deploymentID == chaincfg.DeploymentHardening, nil
+		},
+	})
+	if _, err := weakPool.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: mempoolAirdropProofWithKey(t, 0,
+			mempoolWeakRSAKey(), addr, 10),
+		Output: wire.NewTxOut(int64(mempoolAirdropReward-10), addr,
+			wire.Covenant{}),
+		Fee: 10,
+	}); err == nil {
+		t.Fatal("AddCoinbaseProof weak airdrop: expected error")
+	}
+
+	claimPool := New(&Config{
+		BestHeight: func() int32 { return 1 },
+	})
+	if _, err := claimPool.AddCoinbaseProof(mining.CoinbaseProof{
+		Witness: []byte{0x01},
+		Output:  wire.NewTxOut(10, addr, mempoolClaimCovenant(1)),
+		Fee:     1,
+	}); err == nil {
+		t.Fatal("AddCoinbaseProof stale claim: expected error")
+	}
+}
+
 func TestRemoveCoinbaseProofsRemovesMinedProofs(t *testing.T) {
 	t.Parallel()
 
@@ -1348,7 +1449,7 @@ func TestRemoveCoinbaseProofsRemovesMinedProofs(t *testing.T) {
 	addr := wire.Address{Version: 0, Hash: addrHash}
 	proof := mining.CoinbaseProof{
 		Witness: []byte{0xaa, 0xbb},
-		Output:  wire.NewTxOut(100, addr, wire.Covenant{}),
+		Output:  wire.NewTxOut(100, addr, mempoolClaimCovenant(1)),
 		Fee:     7,
 	}
 	if _, err := mp.AddCoinbaseProof(proof); err != nil {
@@ -1466,6 +1567,67 @@ func mempoolClaimCovenant(height uint32) wire.Covenant {
 			mempoolU32Item(1),
 		},
 	}
+}
+
+const mempoolAirdropReward = uint64(4246994314)
+
+func mempoolAirdropProof(t *testing.T, index uint32, addr wire.Address,
+	value, fee uint64) []byte {
+
+	t.Helper()
+
+	var key bytes.Buffer
+	key.WriteByte(4) // ADDRESS airdrop key.
+	key.WriteByte(addr.Version)
+	key.WriteByte(byte(len(addr.Hash)))
+	key.Write(addr.Hash)
+	var scratch [8]byte
+	binary.LittleEndian.PutUint64(scratch[:], value)
+	key.Write(scratch[:])
+	key.WriteByte(0)
+
+	return mempoolAirdropProofWithKey(t, index, key.Bytes(), addr, fee)
+}
+
+func mempoolAirdropProofWithKey(t *testing.T, index uint32, key []byte,
+	addr wire.Address, fee uint64) []byte {
+
+	t.Helper()
+
+	var proof bytes.Buffer
+	proof.Write(mempoolU32Item(index))
+	proof.WriteByte(0)
+	proof.WriteByte(0)
+	proof.WriteByte(0)
+	if err := wire.WriteVarInt(&proof, 0, uint64(len(key))); err != nil {
+		t.Fatalf("WriteVarInt key length: %v", err)
+	}
+	proof.Write(key)
+	proof.WriteByte(addr.Version)
+	proof.WriteByte(byte(len(addr.Hash)))
+	proof.Write(addr.Hash)
+	if err := wire.WriteVarInt(&proof, 0, fee); err != nil {
+		t.Fatalf("WriteVarInt fee: %v", err)
+	}
+	if err := wire.WriteVarInt(&proof, 0, 0); err != nil {
+		t.Fatalf("WriteVarInt signature length: %v", err)
+	}
+	return proof.Bytes()
+}
+
+func mempoolWeakRSAKey() []byte {
+	var key bytes.Buffer
+	key.WriteByte(0)
+	var size [2]byte
+	binary.LittleEndian.PutUint16(size[:], 128)
+	key.Write(size[:])
+	modulus := make([]byte, 128)
+	modulus[0] = 0x80
+	key.Write(modulus)
+	key.WriteByte(1)
+	key.WriteByte(3)
+	key.Write(make([]byte, 32))
+	return key.Bytes()
 }
 
 func mempoolUpdateCovenant(name string, height uint32) wire.Covenant {

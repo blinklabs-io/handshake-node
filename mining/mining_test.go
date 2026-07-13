@@ -1168,7 +1168,7 @@ func TestNewBlockTemplateIncludesCoinbaseAirdropProof(t *testing.T) {
 	connectMiningTestTemplate(t, chain, template)
 }
 
-func TestNewBlockTemplateRejectsCoinbaseProofOverPolicyWeight(t *testing.T) {
+func TestNewBlockTemplateTrimsCoinbaseProofOverPolicyWeight(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil
 
@@ -1194,12 +1194,16 @@ func TestNewBlockTemplateRejectsCoinbaseProofOverPolicyWeight(t *testing.T) {
 	generator := NewBlkTmplGenerator(&policy, &params,
 		txSource, chain, timeSource, sigCache, hashCache)
 
-	_, err := generator.NewBlockTemplate(payAddr)
-	if err == nil {
-		t.Fatal("NewBlockTemplate accepted overweight coinbase proofs")
+	template, err := generator.NewBlockTemplate(payAddr)
+	if err != nil {
+		t.Fatalf("NewBlockTemplate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "coinbase proofs exceed max block weight") {
-		t.Fatalf("NewBlockTemplate error = %v", err)
+	if len(template.CoinbaseProofs) != 0 {
+		t.Fatalf("template coinbase proof count = %d, want 0",
+			len(template.CoinbaseProofs))
+	}
+	if got := len(template.Block.Transactions[0].TxIn); got != 1 {
+		t.Fatalf("coinbase input count = %d, want only base input", got)
 	}
 }
 
@@ -1219,7 +1223,7 @@ func TestAddCoinbaseProofsRejectsDuplicateWitness(t *testing.T) {
 	coinbaseTx := hnsutil.NewTx(wire.NewMsgTx(wire.TxVersion))
 
 	if _, err := addCoinbaseProofs(coinbaseTx,
-		[]CoinbaseProof{proof, proof}); err == nil {
+		[]CoinbaseProof{proof, proof}, 0, nil); err == nil {
 
 		t.Fatal("addCoinbaseProofs: expected duplicate proof error")
 	}
