@@ -222,6 +222,12 @@ func (cm *rpcConnManager) AddRebroadcastInventory(iv *wire.InvVect, data interfa
 	cm.server.AddRebroadcastInventory(iv, data)
 }
 
+// RelayInventory relays the passed inventory vector to all connected peers
+// that are not already known to have it.
+func (cm *rpcConnManager) RelayInventory(iv *wire.InvVect, data interface{}) {
+	cm.server.RelayInventory(iv, data)
+}
+
 // RelayTransactions generates and relays inventory vectors for all of the
 // passed transactions to all connected peers.
 func (cm *rpcConnManager) RelayTransactions(txns []*mempool.TxDesc) {

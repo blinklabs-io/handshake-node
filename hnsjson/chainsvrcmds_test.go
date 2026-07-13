@@ -1328,6 +1328,32 @@ func TestChainSvrCmds(t *testing.T) {
 			},
 		},
 		{
+			name: "sendrawclaim",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("sendrawclaim", "Y2xhaW0=")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewSendRawClaimCmd("Y2xhaW0=")
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"sendrawclaim","params":["Y2xhaW0="],"id":1}`,
+			unmarshalled: &hnsjson.SendRawClaimCmd{
+				Base64Proof: "Y2xhaW0=",
+			},
+		},
+		{
+			name: "sendrawairdrop",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("sendrawairdrop", "YWlyZHJvcA==")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewSendRawAirdropCmd("YWlyZHJvcA==")
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"sendrawairdrop","params":["YWlyZHJvcA=="],"id":1}`,
+			unmarshalled: &hnsjson.SendRawAirdropCmd{
+				Base64Proof: "YWlyZHJvcA==",
+			},
+		},
+		{
 			name: "sendrawtransaction optional",
 			newCmd: func() (interface{}, error) {
 				return hnsjson.NewCmd("sendrawtransaction", "1122", &hnsjson.AllowHighFeesOrMaxFeeRate{Value: hnsjson.Bool(false)})

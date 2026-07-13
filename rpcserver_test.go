@@ -121,6 +121,22 @@ func TestHandshakeRawHashRPCEncoding(t *testing.T) {
 	}
 }
 
+func TestSendRawProofRPCRejectsInvalidBase64(t *testing.T) {
+	s := &rpcServer{}
+
+	if _, err := handleSendRawClaim(s, hnsjson.NewSendRawClaimCmd("%%%"),
+		nil); err == nil {
+
+		t.Fatal("handleSendRawClaim accepted invalid base64")
+	}
+
+	if _, err := handleSendRawAirdrop(s,
+		hnsjson.NewSendRawAirdropCmd("%%%"), nil); err == nil {
+
+		t.Fatal("handleSendRawAirdrop accepted invalid base64")
+	}
+}
+
 func TestNameAuctionInfoUsesRawNameHash(t *testing.T) {
 	const name = "rawhash"
 	nameHash := blockchain.HashName([]byte(name))

@@ -920,6 +920,16 @@ var helpDescsEnUS = map[string]string{
 	"sendrawtransaction--result0":     "The hash of the transaction",
 	"allowhighfeesormaxfeerate-value": "Either the boolean value for the allowhighfees parameter in bitcoind < v0.19.0 or the numerical value for the maxfeerate field in bitcoind v0.19.0 and later",
 
+	// SendRawClaimCmd help.
+	"sendrawclaim--synopsis":   "Submits the base64-encoded raw Handshake claim proof and relays it to the network.",
+	"sendrawclaim-base64proof": "Base64-encoded raw claim proof",
+	"sendrawclaim--result0":    "The proof hash",
+
+	// SendRawAirdropCmd help.
+	"sendrawairdrop--synopsis":   "Submits the base64-encoded raw Handshake airdrop proof and relays it to the network.",
+	"sendrawairdrop-base64proof": "Base64-encoded raw airdrop proof",
+	"sendrawairdrop--result0":    "The proof hash",
+
 	// SetGenerateCmd help.
 	"setgenerate--synopsis":    "Set the server to generate coins (mine) or not.",
 	"setgenerate-generate":     "Use true to enable generation, false to disable it",
@@ -1176,6 +1186,8 @@ var rpcResultTypes = map[string][]interface{}{
 	"ping":                   nil,
 	"reconsiderblock":        nil,
 	"searchrawtransactions":  {(*string)(nil), (*[]hnsjson.SearchRawTransactionsResult)(nil)},
+	"sendrawairdrop":         {(*string)(nil)},
+	"sendrawclaim":           {(*string)(nil)},
 	"sendrawtransaction":     {(*string)(nil)},
 	"setgenerate":            nil,
 	"signmessagewithprivkey": {(*string)(nil)},

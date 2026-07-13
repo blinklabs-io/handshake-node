@@ -50,6 +50,89 @@ func TestCoinbaseClaimConjuredValue(t *testing.T) {
 	}
 }
 
+func TestCoinbaseClaimProofFromRaw(t *testing.T) {
+	params := chaincfg.MainNetParams
+	height := uint32(10)
+	prevTime := int64(100)
+	commitHash := chainhash.Hash{0x44}
+	commitHeight := uint32(1)
+	addr := wire.Address{
+		Version: 0,
+		Hash:    testAddressHash(),
+	}
+	value, ok := reservedNameValue(hashName([]byte("com")))
+	if !ok {
+		t.Fatal("missing reserved value for com")
+	}
+	fee := uint64(1000)
+
+	txt := testClaimTXT(t, &params, addr, fee, commitHash, commitHeight)
+	serialized := testOwnershipProof(t, "com", false, txt, 50, 150)
+	proof, err := CoinbaseClaimProofFromRaw(serialized, height, prevTime,
+		&params)
+	if err != nil {
+		t.Fatalf("CoinbaseClaimProofFromRaw: %v", err)
+	}
+
+	wantHash := chainhash.Hash(blake2b.Sum256(serialized))
+	if proof.Hash != wantHash {
+		t.Fatalf("proof hash = %x, want %x", proof.Hash[:],
+			wantHash[:])
+	}
+	if !bytes.Equal(proof.Witness, serialized) {
+		t.Fatal("proof witness does not match serialized claim")
+	}
+	if proof.Fee != int64(fee) {
+		t.Fatalf("proof fee = %d, want %d", proof.Fee, fee)
+	}
+	if proof.Output.Value != int64(value-fee) {
+		t.Fatalf("output value = %d, want %d", proof.Output.Value,
+			value-fee)
+	}
+	if proof.Output.Covenant.Type != wire.CovenantClaim {
+		t.Fatalf("covenant type = %d, want CLAIM",
+			proof.Output.Covenant.Type)
+	}
+	if got := binary.LittleEndian.Uint32(
+		proof.Output.Covenant.Items[1]); got != height {
+
+		t.Fatalf("claim height = %d, want %d", got, height)
+	}
+}
+
+func TestCoinbaseAirdropProofFromRaw(t *testing.T) {
+	serialized := testHsdFaucetProof(t)
+	proof, err := CoinbaseAirdropProofFromRaw(serialized, 10,
+		&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("CoinbaseAirdropProofFromRaw: %v", err)
+	}
+
+	airdrop, err := parseAirdropProof(serialized)
+	if err != nil {
+		t.Fatalf("parseAirdropProof: %v", err)
+	}
+	wantHash := chainhash.Hash(blake2b.Sum256(serialized))
+	if proof.Hash != wantHash {
+		t.Fatalf("proof hash = %x, want %x", proof.Hash[:],
+			wantHash[:])
+	}
+	if !bytes.Equal(proof.Witness, serialized) {
+		t.Fatal("proof witness does not match serialized airdrop")
+	}
+	if proof.Fee != int64(airdrop.fee) {
+		t.Fatalf("proof fee = %d, want %d", proof.Fee, airdrop.fee)
+	}
+	if proof.Output.Value != int64(airdrop.value()-airdrop.fee) {
+		t.Fatalf("output value = %d, want %d", proof.Output.Value,
+			airdrop.value()-airdrop.fee)
+	}
+	if proof.Output.Covenant.Type != wire.CovenantNone {
+		t.Fatalf("covenant type = %d, want NONE",
+			proof.Output.Covenant.Type)
+	}
+}
+
 func TestCoinbaseClaimConjuredValueRejectsMismatch(t *testing.T) {
 	params := chaincfg.MainNetParams
 	height := uint32(10)

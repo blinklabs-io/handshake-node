@@ -1177,6 +1177,12 @@ func (sm *SyncManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 		}
 
 		return false, nil
+
+	case wire.InvTypeClaim:
+		fallthrough
+	case wire.InvTypeAirDrop:
+		return sm.txMemPool != nil &&
+			sm.txMemPool.HaveCoinbaseProof(&invVect.Hash), nil
 	}
 
 	// The requested inventory is an unsupported type, so just claim
@@ -1239,6 +1245,8 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 		switch iv.Type {
 		case wire.InvTypeBlock:
 		case wire.InvTypeTx:
+		case wire.InvTypeClaim:
+		case wire.InvTypeAirDrop:
 		case wire.InvTypeWitnessBlock:
 		case wire.InvTypeWitnessTx:
 		default:
@@ -1353,6 +1361,12 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 				gdmsg.AddInvVect(iv)
 				numRequested++
 			}
+
+		case wire.InvTypeClaim:
+			fallthrough
+		case wire.InvTypeAirDrop:
+			gdmsg.AddInvVect(iv)
+			numRequested++
 		}
 
 		if numRequested >= wire.MaxInvPerMsg {

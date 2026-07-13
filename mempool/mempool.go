@@ -870,7 +870,44 @@ func validateCoinbaseProofShape(proof mining.CoinbaseProof) error {
 }
 
 func coinbaseProofWitnessHash(proof mining.CoinbaseProof) chainhash.Hash {
-	return chainhash.HashH(proof.Witness)
+	return blockchain.RawProofHash(proof.Witness)
+}
+
+// HaveCoinbaseProof returns whether the pool has a claim or airdrop proof with
+// the provided hsd proof hash.
+func (mp *TxPool) HaveCoinbaseProof(hash *chainhash.Hash) bool {
+	if hash == nil {
+		return false
+	}
+
+	mp.mtx.RLock()
+	defer mp.mtx.RUnlock()
+
+	for _, entry := range mp.coinbaseProofs {
+		if coinbaseProofWitnessHash(entry.proof) == *hash {
+			return true
+		}
+	}
+	return false
+}
+
+// FetchCoinbaseProof returns a cloned claim or airdrop proof by hsd proof hash.
+func (mp *TxPool) FetchCoinbaseProof(hash *chainhash.Hash) (
+	mining.CoinbaseProof, bool) {
+
+	if hash == nil {
+		return mining.CoinbaseProof{}, false
+	}
+
+	mp.mtx.RLock()
+	defer mp.mtx.RUnlock()
+
+	for _, entry := range mp.coinbaseProofs {
+		if coinbaseProofWitnessHash(entry.proof) == *hash {
+			return cloneCoinbaseProof(entry.proof), true
+		}
+	}
+	return mining.CoinbaseProof{}, false
 }
 
 func cloneCoinbaseProof(proof mining.CoinbaseProof) mining.CoinbaseProof {

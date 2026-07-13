@@ -491,6 +491,8 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"ping":                   handlePing,
 	"reconsiderblock":        handleReconsiderBlock,
 	"searchrawtransactions":  handleSearchRawTransactions,
+	"sendrawairdrop":         handleSendRawAirdrop,
+	"sendrawclaim":           handleSendRawClaim,
 	"sendrawtransaction":     handleSendRawTransaction,
 	"setgenerate":            handleSetGenerate,
 	"signmessagewithprivkey": handleSignMessageWithPrivKey,
@@ -608,6 +610,8 @@ var rpcLimited = map[string]struct{}{
 	"invalidateblock":       {},
 	"reconsiderblock":       {},
 	"searchrawtransactions": {},
+	"sendrawairdrop":        {},
+	"sendrawclaim":          {},
 	"sendrawtransaction":    {},
 	"submitblock":           {},
 	"uptime":                {},
@@ -5066,6 +5070,120 @@ func handleSendRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan st
 	return tx.Hash().String(), nil
 }
 
+// handleSendRawClaim implements the sendrawclaim command.
+func handleSendRawClaim(s *rpcServer, cmd interface{},
+	closeChan <-chan struct{}) (interface{}, error) {
+
+	c := cmd.(*hnsjson.SendRawClaimCmd)
+	serialized, err := base64.StdEncoding.DecodeString(c.Base64Proof)
+	if err != nil {
+		return nil, rpcInvalidParameterError("Invalid base64 string")
+	}
+
+	hash, err := s.acceptRawClaimProof(serialized)
+	if err != nil {
+		return nil, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCVerify,
+			Message: "Claim rejected: " + err.Error(),
+		}
+	}
+	return rawHashString(hash), nil
+}
+
+// handleSendRawAirdrop implements the sendrawairdrop command.
+func handleSendRawAirdrop(s *rpcServer, cmd interface{},
+	closeChan <-chan struct{}) (interface{}, error) {
+
+	c := cmd.(*hnsjson.SendRawAirdropCmd)
+	serialized, err := base64.StdEncoding.DecodeString(c.Base64Proof)
+	if err != nil {
+		return nil, rpcInvalidParameterError("Invalid base64 string")
+	}
+
+	hash, err := s.acceptRawAirdropProof(serialized)
+	if err != nil {
+		return nil, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCVerify,
+			Message: "Airdrop rejected: " + err.Error(),
+		}
+	}
+	return rawHashString(hash), nil
+}
+
+type coinbaseProofPool interface {
+	AddCoinbaseProof(mining.CoinbaseProof) (chainhash.Hash, error)
+}
+
+func (s *rpcServer) coinbaseProofContext() (uint32, int64) {
+	best := s.cfg.Chain.BestSnapshot()
+	return uint32(best.Height + 1), s.cfg.Chain.BestBlockTimestamp().Unix()
+}
+
+func (s *rpcServer) addRawCoinbaseProof(
+	raw blockchain.RawCoinbaseProof) error {
+
+	mp, ok := s.cfg.TxMemPool.(coinbaseProofPool)
+	if !ok || mp == nil {
+		return fmt.Errorf("coinbase proof mempool is unavailable")
+	}
+	if _, err := mp.AddCoinbaseProof(coinbaseProofForMining(raw)); err != nil {
+		return err
+	}
+
+	if s.cfg.ConnMgr != nil {
+		invType := wire.InvTypeAirDrop
+		if raw.Output != nil && raw.Output.Covenant.Type == wire.CovenantClaim {
+			invType = wire.InvTypeClaim
+		}
+		iv := wire.NewInvVect(invType, &raw.Hash)
+		s.cfg.ConnMgr.RelayInventory(iv, nil)
+	}
+	if s.gbtWorkState != nil {
+		s.gbtWorkState.NotifyMempoolTx(s.cfg.TxMemPool.LastUpdated())
+	}
+	return nil
+}
+
+func (s *rpcServer) acceptRawClaimProof(serialized []byte) (
+	chainhash.Hash, error) {
+
+	hash := blockchain.RawProofHash(serialized)
+	height, prevTime := s.coinbaseProofContext()
+	proof, err := blockchain.CoinbaseClaimProofFromRaw(serialized, height,
+		prevTime, s.cfg.ChainParams)
+	if err != nil {
+		return hash, err
+	}
+	if err := s.addRawCoinbaseProof(proof); err != nil {
+		return hash, err
+	}
+	return proof.Hash, nil
+}
+
+func (s *rpcServer) acceptRawAirdropProof(serialized []byte) (
+	chainhash.Hash, error) {
+
+	hash := blockchain.RawProofHash(serialized)
+	height, _ := s.coinbaseProofContext()
+	active, err := s.cfg.Chain.IsDeploymentActive(chaincfg.DeploymentAirstop)
+	if err != nil {
+		return hash, err
+	}
+	if active {
+		return hash, fmt.Errorf("airdrop proofs are disabled")
+	}
+
+	proof, err := blockchain.CoinbaseAirdropProofFromRaw(serialized, height,
+		s.cfg.ChainParams)
+	if err != nil {
+		return hash, err
+	}
+	if err := s.addRawCoinbaseProof(proof); err != nil {
+		return hash, err
+	}
+	return proof.Hash, nil
+}
+
 // handleSetGenerate implements the setgenerate command.
 func handleSetGenerate(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*hnsjson.SetGenerateCmd)
@@ -6325,6 +6443,10 @@ type rpcserverConnManager interface {
 	// inventories to be rebroadcast at random intervals until they show up
 	// in a block.
 	AddRebroadcastInventory(iv *wire.InvVect, data interface{})
+
+	// RelayInventory relays the passed inventory vector to all connected
+	// peers that are not already known to have it.
+	RelayInventory(invVect *wire.InvVect, data interface{})
 
 	// RelayTransactions generates and relays inventory vectors for all of
 	// the passed transactions to all connected peers.
