@@ -155,6 +155,11 @@ func (cm *rpcConnManager) ConnectedCount() int32 {
 	return cm.server.ConnectedCount()
 }
 
+// Services returns the local services advertised to peers.
+func (cm *rpcConnManager) Services() wire.ServiceFlag {
+	return cm.server.services
+}
+
 // NetTotals returns the sum of all bytes received and sent across the network
 // for all peers.
 //
@@ -230,6 +235,19 @@ func (cm *rpcConnManager) RelayTransactions(txns []*mempool.TxDesc) {
 // rpcserverConnManager interface implementation.
 func (cm *rpcConnManager) NodeAddresses() []*wire.NetAddressV2 {
 	return cm.server.addrManager.AddressCache()
+}
+
+// LocalAddresses returns locally advertised addresses.
+func (cm *rpcConnManager) LocalAddresses() []rpcserverLocalAddress {
+	addresses := cm.server.addrManager.LocalAddresses()
+	results := make([]rpcserverLocalAddress, 0, len(addresses))
+	for _, address := range addresses {
+		results = append(results, rpcserverLocalAddress{
+			NetAddress: address.NetAddress,
+			Score:      int32(address.Score),
+		})
+	}
+	return results
 }
 
 // rpcSyncMgr provides a block manager for use with the RPC server and

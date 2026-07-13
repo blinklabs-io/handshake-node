@@ -16,6 +16,37 @@ func rawHashString(hash chainhash.Hash) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// FutureDecodeResourceResult is a future promise to deliver the result of a
+// DecodeResourceAsync RPC invocation.
+type FutureDecodeResourceResult chan *Response
+
+// Receive waits for the Response promised by the future and returns the decoded
+// resource data.
+func (r FutureDecodeResourceResult) Receive() (*hnsjson.NameResourceDataResult, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var result hnsjson.NameResourceDataResult
+	if err := json.Unmarshal(res, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DecodeResourceAsync returns an instance of a type that can be used to get the
+// result of the RPC at some future time by invoking the Receive function on the
+// returned instance.
+func (c *Client) DecodeResourceAsync(hexResource string) FutureDecodeResourceResult {
+	return c.SendCmd(hnsjson.NewDecodeResourceCmd(hexResource))
+}
+
+// DecodeResource decodes a hex-encoded Handshake DNS resource.
+func (c *Client) DecodeResource(hexResource string) (*hnsjson.NameResourceDataResult, error) {
+	return c.DecodeResourceAsync(hexResource).Receive()
+}
+
 // FutureGetNameInfoResult is a future promise to deliver the result of a
 // GetNameInfoAsync RPC invocation.
 type FutureGetNameInfoResult chan *Response
