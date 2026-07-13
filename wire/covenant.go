@@ -46,16 +46,17 @@ const (
 	// CovenantRevoke represents revoking a name.
 	CovenantRevoke uint8 = 11
 
-	// maxCovenantType is the highest valid covenant type value.
+	// maxCovenantType is the highest known covenant type value.
 	maxCovenantType = CovenantRevoke
 
 	// maxCovenantItems is the maximum number of items a covenant can have.
-	// This is based on the Handshake protocol's maximum of 255 items.
-	maxCovenantItems = 255
+	// This matches hsd's consensus MAX_SCRIPT_STACK bound.
+	maxCovenantItems = 1000
 
 	// maxCovenantItemSize is the maximum size of a single covenant item.
-	// This limits memory usage during deserialization.
-	maxCovenantItemSize = 520
+	// It is large enough to admit every hsd-sane unknown covenant while still
+	// bounding memory during deserialization.
+	maxCovenantItemSize = 585
 )
 
 // covenantTypeNames maps covenant types to their human-readable names.
@@ -88,13 +89,6 @@ type Covenant struct {
 
 func validateCovenantFields(covenantType uint8, itemCount int, items [][]byte,
 	op string) error {
-
-	if covenantType > maxCovenantType {
-		return messageError(op, fmt.Sprintf(
-			"covenant type %d exceeds max %d",
-			covenantType, maxCovenantType,
-		))
-	}
 
 	if itemCount > maxCovenantItems {
 		str := fmt.Sprintf("covenant item count is too large "+
@@ -151,12 +145,6 @@ func (c *Covenant) Decode(r io.Reader) error {
 		return err
 	}
 	c.Type = typ
-	if typ > maxCovenantType {
-		return messageError("Covenant.Decode", fmt.Sprintf(
-			"covenant type %d exceeds max %d",
-			typ, maxCovenantType,
-		))
-	}
 
 	itemCount, err := ReadVarInt(r, 0)
 	if err != nil {
@@ -206,6 +194,18 @@ func (c *Covenant) String() string {
 		return covenantTypeNames[c.Type]
 	}
 	return fmt.Sprintf("UNKNOWN(%d)", c.Type)
+}
+
+// IsKnown returns whether the covenant type is one of the currently defined
+// Handshake covenant types.
+func (c *Covenant) IsKnown() bool {
+	return c.Type <= maxCovenantType
+}
+
+// IsUnknown returns whether the covenant type is reserved for a future
+// Handshake covenant extension.
+func (c *Covenant) IsUnknown() bool {
+	return !c.IsKnown()
 }
 
 // NewCovenant returns a new Covenant with the given type and items.

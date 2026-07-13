@@ -245,6 +245,42 @@ func TestStandardVerifyFlagsExcludeTaproot(t *testing.T) {
 	}
 }
 
+func TestCheckSequenceVerifyAllowsVersionZero(t *testing.T) {
+	t.Parallel()
+
+	pkScript, err := NewScriptBuilder().
+		AddInt64(1).
+		AddOp(OP_CHECKSEQUENCEVERIFY).
+		AddOp(OP_TRUE).
+		Script()
+	if err != nil {
+		t.Fatalf("script build: %v", err)
+	}
+
+	tx := &wire.MsgTx{
+		Version: 0,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  chainhash.Hash{0x01},
+				Index: 0,
+			},
+			Sequence: 1,
+		}},
+		TxOut: []*wire.TxOut{{
+			Value: 1000000000,
+		}},
+	}
+
+	vm, err := NewEngine(pkScript, tx, 0, ScriptVerifyCheckSequenceVerify,
+		nil, nil, -1, nil)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if err := vm.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
 // TestCheckPubKeyEncoding ensures the internal checkPubKeyEncoding function
 // works as expected.
 func TestCheckPubKeyEncoding(t *testing.T) {
