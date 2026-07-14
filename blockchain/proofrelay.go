@@ -99,11 +99,9 @@ func CoinbaseClaimProofFromRaw(serialized []byte, height uint32, prevTime int64,
 		},
 	})
 
-	tx := coinbaseProofTx(serialized, output)
-	if err := checkCoinbaseClaimProofSanity(tx, 1, output.Covenant); err != nil {
-		return RawCoinbaseProof{}, err
-	}
-	if _, err := verifyCoinbaseClaimProof(tx, 1, height, prevTime, params); err != nil {
+	if _, err := verifyCoinbaseClaimProofData(output, output.Covenant,
+		height, params, data); err != nil {
+
 		return RawCoinbaseProof{}, err
 	}
 

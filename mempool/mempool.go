@@ -190,9 +190,10 @@ type NameValidationView interface {
 }
 
 type coinbaseProofEntry struct {
-	hash   chainhash.Hash
-	proof  mining.CoinbaseProof
-	policy coinbaseProofPolicy
+	hash        chainhash.Hash
+	witnessHash chainhash.Hash
+	proof       mining.CoinbaseProof
+	policy      coinbaseProofPolicy
 }
 
 type coinbaseProofKind uint8
@@ -233,18 +234,19 @@ type TxPool struct {
 	// The following variables must only be used atomically.
 	lastUpdated int64 // last time pool was updated
 
-	mtx              sync.RWMutex
-	cfg              Config
-	pool             map[chainhash.Hash]*TxDesc
-	orphans          map[chainhash.Hash]*orphanTx
-	orphansByPrev    map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx
-	outpoints        map[wire.OutPoint]*hnsutil.Tx
-	nameActions      map[chainhash.Hash]*hnsutil.Tx
-	coinbaseProofs   []coinbaseProofEntry
-	coinbaseClaims   map[chainhash.Hash]chainhash.Hash
-	coinbaseAirdrops map[uint32]chainhash.Hash
-	pennyTotal       float64 // exponentially decaying total for penny spends.
-	lastPennyUnix    int64   // unix time of last ``penny spend''
+	mtx                     sync.RWMutex
+	cfg                     Config
+	pool                    map[chainhash.Hash]*TxDesc
+	orphans                 map[chainhash.Hash]*orphanTx
+	orphansByPrev           map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx
+	outpoints               map[wire.OutPoint]*hnsutil.Tx
+	nameActions             map[chainhash.Hash]*hnsutil.Tx
+	coinbaseProofs          []coinbaseProofEntry
+	coinbaseProofsByWitness map[chainhash.Hash]int
+	coinbaseClaims          map[chainhash.Hash]chainhash.Hash
+	coinbaseAirdrops        map[uint32]chainhash.Hash
+	pennyTotal              float64 // exponentially decaying total for penny spends.
+	lastPennyUnix           int64   // unix time of last ``penny spend''
 
 	// nextExpireScan is the time after which the orphan pool will be
 	// scanned in order to evict orphans.  This is NOT a hard deadline as
@@ -691,28 +693,44 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 					"proof fee metadata changed for %v; "+
 					"remove the old proof first", hash)
 			}
+			if existing, ok := mp.coinbaseProofsByWitness[witnessHash]; ok &&
+				existing != i {
+
+				return chainhash.Hash{}, fmt.Errorf("coinbase proof " +
+					"witness already exists in pool")
+			}
+			if err := mp.checkCoinbaseProofIndexConflict(hash, policy); err != nil {
+				return chainhash.Hash{}, err
+			}
+			delete(mp.coinbaseProofsByWitness,
+				mp.coinbaseProofs[i].witnessHash)
+			mp.unindexCoinbaseProof(mp.coinbaseProofs[i])
 			mp.coinbaseProofs[i].proof = cloned
 			mp.coinbaseProofs[i].policy = policy
+			mp.coinbaseProofs[i].witnessHash = witnessHash
+			mp.coinbaseProofsByWitness[witnessHash] = i
+			mp.indexCoinbaseProof(hash, policy)
 			atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 			return hash, nil
 		}
-		if coinbaseProofWitnessHash(mp.coinbaseProofs[i].proof) ==
-			witnessHash {
-
-			return chainhash.Hash{}, fmt.Errorf("coinbase proof " +
-				"witness already exists in pool")
-		}
+	}
+	if _, exists := mp.coinbaseProofsByWitness[witnessHash]; exists {
+		return chainhash.Hash{}, fmt.Errorf("coinbase proof " +
+			"witness already exists in pool")
 	}
 	if err := mp.checkCoinbaseProofIndexConflict(hash, policy); err != nil {
 		return chainhash.Hash{}, err
 	}
 
+	index := len(mp.coinbaseProofs)
 	mp.coinbaseProofs = append(mp.coinbaseProofs, coinbaseProofEntry{
-		hash:   hash,
-		proof:  cloned,
-		policy: policy,
+		hash:        hash,
+		witnessHash: witnessHash,
+		proof:       cloned,
+		policy:      policy,
 	})
 	mp.indexCoinbaseProof(hash, policy)
+	mp.coinbaseProofsByWitness[witnessHash] = index
 	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 	return hash, nil
 }
@@ -740,9 +758,13 @@ func (mp *TxPool) removeCoinbaseProof(hash chainhash.Hash) bool {
 
 func (mp *TxPool) removeCoinbaseProofAt(i int) {
 	mp.unindexCoinbaseProof(mp.coinbaseProofs[i])
+	delete(mp.coinbaseProofsByWitness, mp.coinbaseProofs[i].witnessHash)
 	copy(mp.coinbaseProofs[i:], mp.coinbaseProofs[i+1:])
 	mp.coinbaseProofs[len(mp.coinbaseProofs)-1] = coinbaseProofEntry{}
 	mp.coinbaseProofs = mp.coinbaseProofs[:len(mp.coinbaseProofs)-1]
+	for j := i; j < len(mp.coinbaseProofs); j++ {
+		mp.coinbaseProofsByWitness[mp.coinbaseProofs[j].witnessHash] = j
+	}
 	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 }
 
@@ -883,12 +905,8 @@ func (mp *TxPool) HaveCoinbaseProof(hash *chainhash.Hash) bool {
 	mp.mtx.RLock()
 	defer mp.mtx.RUnlock()
 
-	for _, entry := range mp.coinbaseProofs {
-		if coinbaseProofWitnessHash(entry.proof) == *hash {
-			return true
-		}
-	}
-	return false
+	_, ok := mp.coinbaseProofsByWitness[*hash]
+	return ok
 }
 
 // FetchCoinbaseProof returns a cloned claim or airdrop proof by hsd proof hash.
@@ -902,12 +920,11 @@ func (mp *TxPool) FetchCoinbaseProof(hash *chainhash.Hash) (
 	mp.mtx.RLock()
 	defer mp.mtx.RUnlock()
 
-	for _, entry := range mp.coinbaseProofs {
-		if coinbaseProofWitnessHash(entry.proof) == *hash {
-			return cloneCoinbaseProof(entry.proof), true
-		}
+	index, ok := mp.coinbaseProofsByWitness[*hash]
+	if !ok || index < 0 || index >= len(mp.coinbaseProofs) {
+		return mining.CoinbaseProof{}, false
 	}
-	return mining.CoinbaseProof{}, false
+	return cloneCoinbaseProof(mp.coinbaseProofs[index].proof), true
 }
 
 func cloneCoinbaseProof(proof mining.CoinbaseProof) mining.CoinbaseProof {
@@ -1215,6 +1232,18 @@ func (mp *TxPool) ensureCoinbaseProofIndexes() {
 	}
 	if mp.coinbaseAirdrops == nil {
 		mp.coinbaseAirdrops = make(map[uint32]chainhash.Hash)
+	}
+	if mp.coinbaseProofsByWitness == nil {
+		mp.coinbaseProofsByWitness = make(map[chainhash.Hash]int,
+			len(mp.coinbaseProofs))
+		for i, entry := range mp.coinbaseProofs {
+			witnessHash := entry.witnessHash
+			if witnessHash == (chainhash.Hash{}) {
+				witnessHash = coinbaseProofWitnessHash(entry.proof)
+				mp.coinbaseProofs[i].witnessHash = witnessHash
+			}
+			mp.coinbaseProofsByWitness[witnessHash] = i
+		}
 	}
 }
 
@@ -2804,14 +2833,15 @@ func (mp *TxPool) validateRelayFeeMet(tx *hnsutil.Tx, txFee, txSize int64,
 // transactions until they are mined into a block.
 func New(cfg *Config) *TxPool {
 	return &TxPool{
-		cfg:              *cfg,
-		pool:             make(map[chainhash.Hash]*TxDesc),
-		orphans:          make(map[chainhash.Hash]*orphanTx),
-		orphansByPrev:    make(map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx),
-		nextExpireScan:   time.Now().Add(orphanExpireScanInterval),
-		outpoints:        make(map[wire.OutPoint]*hnsutil.Tx),
-		nameActions:      make(map[chainhash.Hash]*hnsutil.Tx),
-		coinbaseClaims:   make(map[chainhash.Hash]chainhash.Hash),
-		coinbaseAirdrops: make(map[uint32]chainhash.Hash),
+		cfg:                     *cfg,
+		pool:                    make(map[chainhash.Hash]*TxDesc),
+		orphans:                 make(map[chainhash.Hash]*orphanTx),
+		orphansByPrev:           make(map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx),
+		nextExpireScan:          time.Now().Add(orphanExpireScanInterval),
+		outpoints:               make(map[wire.OutPoint]*hnsutil.Tx),
+		nameActions:             make(map[chainhash.Hash]*hnsutil.Tx),
+		coinbaseProofsByWitness: make(map[chainhash.Hash]int),
+		coinbaseClaims:          make(map[chainhash.Hash]chainhash.Hash),
+		coinbaseAirdrops:        make(map[uint32]chainhash.Hash),
 	}
 }

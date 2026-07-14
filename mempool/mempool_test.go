@@ -1354,6 +1354,9 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	if !mp.RemoveCoinbaseProof(airdropHash) {
 		t.Fatal("RemoveCoinbaseProof returned false")
 	}
+	if mp.HaveCoinbaseProof(&airdropRawHash) {
+		t.Fatal("HaveCoinbaseProof found removed airdrop")
+	}
 	proofs, err = mp.CoinbaseProofs(11)
 	if err != nil {
 		t.Fatalf("CoinbaseProofs after remove: %v", err)

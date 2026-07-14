@@ -531,6 +531,45 @@ func TestStartSyncSendsGetDataForHeaderBlocks(t *testing.T) {
 	}
 }
 
+func TestHandleInvMsgTracksRequestedCoinbaseProofs(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	sm.txMemPool = mempool.New(&mempool.Config{})
+
+	p, remote, cleanup := connectSyncTestPeer(t, &params, 0)
+	defer cleanup()
+	sm.peerStates[p] = &peerSyncState{
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+
+	proofHash := chainhash.Hash{0x01, 0x02, 0x03}
+	inv := wire.NewHnsMsgInv()
+	inv.AddInvVect(wire.NewInvVect(wire.InvTypeClaim, &proofHash))
+	sm.handleInvMsg(&invMsg{inv: inv, peer: p})
+
+	msg := readSyncTestPeerMessage(t, remote, &params)
+	getData, ok := msg.(*wire.HnsMsgGetData)
+	require.True(t, ok, "got %T, want *wire.HnsMsgGetData", msg)
+	require.Len(t, getData.Inventory, 1)
+	require.Equal(t, wire.InvTypeClaim, getData.Inventory[0].InvVect().Type)
+	require.Equal(t, proofHash, getData.Inventory[0].InvVect().Hash)
+	require.Contains(t, sm.requestedProofs, proofHash)
+	require.Contains(t, sm.peerStates[p].requestedProofs, proofHash)
+
+	sm.handleCoinbaseProofMsg(&coinbaseProofMsg{
+		hash: proofHash,
+		peer: p,
+	})
+	require.NotContains(t, sm.requestedProofs, proofHash)
+	require.NotContains(t, sm.peerStates[p].requestedProofs, proofHash)
+}
+
 func TestHandleBlockMsgRequestsParentsForOrphanBlock(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil

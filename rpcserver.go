@@ -5116,7 +5116,7 @@ type coinbaseProofPool interface {
 
 func (s *rpcServer) coinbaseProofContext() (uint32, int64) {
 	best := s.cfg.Chain.BestSnapshot()
-	return uint32(best.Height + 1), s.cfg.Chain.BestBlockTimestamp().Unix()
+	return uint32(best.Height + 1), best.Timestamp.Unix()
 }
 
 func (s *rpcServer) addRawCoinbaseProof(

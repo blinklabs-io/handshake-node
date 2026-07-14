@@ -629,6 +629,9 @@ func (sp *serverPeer) OnClaim(_ *peer.Peer, msg *wire.HnsMsgClaim) {
 	hash, err := sp.server.acceptRawClaimProof(msg.Claim)
 	iv := wire.NewInvVect(wire.InvTypeClaim, &hash)
 	sp.AddKnownInventory(iv)
+	if sp.server.syncManager != nil {
+		sp.server.syncManager.QueueCoinbaseProof(&hash, sp.Peer)
+	}
 	if err != nil {
 		peerLog.Debugf("Rejected claim %x from %v: %v", hash[:], sp, err)
 		sp.PushRejectMsg(wire.HnsMsgTypeClaim, wire.RejectInvalid,
@@ -649,6 +652,9 @@ func (sp *serverPeer) OnAirDrop(_ *peer.Peer, msg *wire.HnsMsgAirDrop) {
 	hash, err := sp.server.acceptRawAirdropProof(msg.Payload)
 	iv := wire.NewInvVect(wire.InvTypeAirDrop, &hash)
 	sp.AddKnownInventory(iv)
+	if sp.server.syncManager != nil {
+		sp.server.syncManager.QueueCoinbaseProof(&hash, sp.Peer)
+	}
 	if err != nil {
 		peerLog.Debugf("Rejected airdrop %x from %v: %v", hash[:], sp, err)
 		sp.PushRejectMsg(wire.HnsMsgTypeAirDrop, wire.RejectInvalid,
@@ -873,7 +879,7 @@ func (s *server) pushInventory(sp *serverPeer, iv *wire.InvVect,
 
 func (s *server) coinbaseProofContext() (uint32, int64) {
 	best := s.chain.BestSnapshot()
-	return uint32(best.Height + 1), s.chain.BestBlockTimestamp().Unix()
+	return uint32(best.Height + 1), best.Timestamp.Unix()
 }
 
 func coinbaseProofForMining(proof blockchain.RawCoinbaseProof) mining.CoinbaseProof {
@@ -926,6 +932,23 @@ func (s *server) acceptRawAirdropProof(serialized []byte) (chainhash.Hash, error
 
 func (s *server) pushCoinbaseProofMsg(sp *serverPeer, iv *wire.InvVect,
 	doneChan chan<- struct{}) error {
+
+	if iv.Type == wire.InvTypeAirDrop {
+		active, err := s.chain.IsDeploymentActive(
+			chaincfg.DeploymentAirstop)
+		if err != nil {
+			if doneChan != nil {
+				doneChan <- struct{}{}
+			}
+			return err
+		}
+		if active {
+			if doneChan != nil {
+				doneChan <- struct{}{}
+			}
+			return errors.New("airdrop proofs are disabled")
+		}
+	}
 
 	proof, ok := s.txMemPool.FetchCoinbaseProof(&iv.Hash)
 	if !ok {

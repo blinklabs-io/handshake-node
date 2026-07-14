@@ -258,6 +258,18 @@ func verifyCoinbaseClaimProof(tx *hnsutil.Tx, outputIndex int, height uint32,
 		return 0, badCovenant("CLAIM ownership proof uses weak algorithm")
 	}
 
+	return verifyCoinbaseClaimProofData(txOut, covenant, height, params,
+		data)
+}
+
+func verifyCoinbaseClaimProofData(txOut *wire.TxOut, covenant wire.Covenant,
+	height uint32, params *chaincfg.Params, data *claimProofData) (
+	uint64, error) {
+
+	if data == nil {
+		return 0, badCovenant("CLAIM ownership proof data is invalid")
+	}
+
 	if txOut.Address.Version != data.version ||
 		!bytes.Equal(txOut.Address.Hash, data.hash) {
 

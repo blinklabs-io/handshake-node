@@ -47,6 +47,10 @@ const (
 	// hashes to store in memory.
 	maxRequestedTxns = wire.MaxInvPerMsg
 
+	// maxRequestedProofs is the maximum number of requested claim or
+	// airdrop proof hashes to store in memory.
+	maxRequestedProofs = wire.MaxInvPerMsg
+
 	// maxStallDuration is the time after which we will disconnect our
 	// current sync peer if we haven't made progress.
 	maxStallDuration = 3 * time.Minute
@@ -106,6 +110,13 @@ type txMsg struct {
 	reply chan struct{}
 }
 
+// coinbaseProofMsg packages a claim or airdrop proof hash and the peer it came
+// from so the sync manager can clear pending getdata state.
+type coinbaseProofMsg struct {
+	hash chainhash.Hash
+	peer *peerpkg.Peer
+}
+
 // getSyncPeerMsg is a message type to be sent across the message channel for
 // retrieving the current sync peer.
 type getSyncPeerMsg struct {
@@ -159,6 +170,7 @@ type peerSyncState struct {
 	requestQueue    []*wire.InvVect
 	requestedTxns   map[chainhash.Hash]struct{}
 	requestedBlocks map[chainhash.Hash]struct{}
+	requestedProofs map[chainhash.Hash]struct{}
 }
 
 // limitAdd is a helper function for maps that require a maximum limit by
@@ -202,6 +214,7 @@ type SyncManager struct {
 	rejectedTxns     map[chainhash.Hash]struct{}
 	requestedTxns    map[chainhash.Hash]struct{}
 	requestedBlocks  map[chainhash.Hash]struct{}
+	requestedProofs  map[chainhash.Hash]struct{}
 	syncPeer         *peerpkg.Peer
 	peerStates       map[*peerpkg.Peer]*peerSyncState
 	lastProgressTime time.Time
@@ -446,6 +459,7 @@ func (sm *SyncManager) handleNewPeerMsg(peer *peerpkg.Peer) {
 		syncCandidate:   isSyncCandidate,
 		requestedTxns:   make(map[chainhash.Hash]struct{}),
 		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
 	}
 
 	// Start syncing by choosing the best candidate if needed.
@@ -546,6 +560,12 @@ func (sm *SyncManager) clearRequestedState(state *peerSyncState) {
 	// fetched from elsewhere next time we get an inv.
 	for blockHash := range state.requestedBlocks {
 		delete(sm.requestedBlocks, blockHash)
+	}
+
+	// Remove requested claim and airdrop proofs from the global map so that
+	// they will be fetched from elsewhere next time we get an inv.
+	for proofHash := range state.requestedProofs {
+		delete(sm.requestedProofs, proofHash)
 	}
 }
 
@@ -1094,6 +1114,7 @@ func (sm *SyncManager) handleNotFoundMsg(nfmsg *notFoundMsg) {
 		log.Warnf("Received notfound message from unknown peer %s", peer)
 		return
 	}
+	sm.ensureRequestedProofMaps(state)
 
 	missingSyncBlock := false
 	for _, inv := range nfmsg.notFound.InvVects() {
@@ -1117,6 +1138,14 @@ func (sm *SyncManager) handleNotFoundMsg(nfmsg *notFoundMsg) {
 			if _, exists := state.requestedTxns[inv.Hash]; exists {
 				delete(state.requestedTxns, inv.Hash)
 				delete(sm.requestedTxns, inv.Hash)
+			}
+
+		case wire.InvTypeClaim:
+			fallthrough
+		case wire.InvTypeAirDrop:
+			if _, exists := state.requestedProofs[inv.Hash]; exists {
+				delete(state.requestedProofs, inv.Hash)
+				delete(sm.requestedProofs, inv.Hash)
 			}
 		}
 	}
@@ -1199,6 +1228,7 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 		log.Warnf("Received inv message from unknown peer %s", peer)
 		return
 	}
+	sm.ensureRequestedProofMaps(state)
 
 	// Attempt to find the final block in the inventory list.  There may
 	// not be one.
@@ -1365,8 +1395,15 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 		case wire.InvTypeClaim:
 			fallthrough
 		case wire.InvTypeAirDrop:
-			gdmsg.AddInvVect(iv)
-			numRequested++
+			if _, exists := sm.requestedProofs[iv.Hash]; !exists {
+				limitAdd(sm.requestedProofs, iv.Hash,
+					maxRequestedProofs)
+				limitAdd(state.requestedProofs, iv.Hash,
+					maxRequestedProofs)
+
+				gdmsg.AddInvVect(iv)
+				numRequested++
+			}
 		}
 
 		if numRequested >= wire.MaxInvPerMsg {
@@ -1376,6 +1413,28 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 	state.requestQueue = requestQueue
 	if len(gdmsg.Inventory) > 0 {
 		peer.QueueMessage(gdmsg, nil)
+	}
+}
+
+func (sm *SyncManager) handleCoinbaseProofMsg(pmsg *coinbaseProofMsg) {
+	state, exists := sm.peerStates[pmsg.peer]
+	if !exists {
+		log.Warnf("Received proof message from unknown peer %s",
+			pmsg.peer)
+		return
+	}
+	sm.ensureRequestedProofMaps(state)
+
+	delete(state.requestedProofs, pmsg.hash)
+	delete(sm.requestedProofs, pmsg.hash)
+}
+
+func (sm *SyncManager) ensureRequestedProofMaps(state *peerSyncState) {
+	if sm.requestedProofs == nil {
+		sm.requestedProofs = make(map[chainhash.Hash]struct{})
+	}
+	if state.requestedProofs == nil {
+		state.requestedProofs = make(map[chainhash.Hash]struct{})
 	}
 }
 
@@ -1400,6 +1459,9 @@ out:
 			case *txMsg:
 				sm.handleTxMsg(msg)
 				msg.reply <- struct{}{}
+
+			case *coinbaseProofMsg:
+				sm.handleCoinbaseProofMsg(msg)
 
 			case *blockMsg:
 				sm.handleBlockMsg(msg)
@@ -1616,6 +1678,17 @@ func (sm *SyncManager) QueueTx(tx *hnsutil.Tx, peer *peerpkg.Peer, done chan str
 	sm.msgChan <- &txMsg{tx: tx, peer: peer, reply: done}
 }
 
+// QueueCoinbaseProof marks a requested claim or airdrop proof as received.
+func (sm *SyncManager) QueueCoinbaseProof(hash *chainhash.Hash,
+	peer *peerpkg.Peer) {
+
+	if atomic.LoadInt32(&sm.shutdown) != 0 || hash == nil {
+		return
+	}
+
+	sm.msgChan <- &coinbaseProofMsg{hash: *hash, peer: peer}
+}
+
 // QueueBlock adds the passed block message and peer to the block handling
 // queue. Responds to the done channel argument after the block message is
 // processed.
@@ -1747,6 +1820,7 @@ func New(config *Config) (*SyncManager, error) {
 		rejectedTxns:    make(map[chainhash.Hash]struct{}),
 		requestedTxns:   make(map[chainhash.Hash]struct{}),
 		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
 		peerStates:      make(map[*peerpkg.Peer]*peerSyncState),
 		progressLogger:  newBlockProgressLogger("Processed", log),
 		msgChan:         make(chan interface{}, config.MaxPeers*3),

@@ -67,6 +67,7 @@ type BestState struct {
 	BlockWeight uint64         // The weight of the block.
 	NumTxns     uint64         // The number of txns in the block.
 	TotalTxns   uint64         // The total number of txns in the chain.
+	Timestamp   time.Time      // The timestamp of the block.
 	MedianTime  time.Time      // Median time as per CalcPastMedianTime.
 }
 
@@ -82,6 +83,7 @@ func newBestState(node *blockNode, blockSize, blockWeight, numTxns,
 		BlockWeight: blockWeight,
 		NumTxns:     numTxns,
 		TotalTxns:   totalTxns,
+		Timestamp:   time.Unix(node.timestamp, 0),
 		MedianTime:  medianTime,
 	}
 }
