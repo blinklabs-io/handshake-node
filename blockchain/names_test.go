@@ -343,6 +343,51 @@ func TestNameBlockViewRejectsLockedNameOpenWhenICANNLockupActive(t *testing.T) {
 	}
 }
 
+func TestNameBlockViewRejectsWeakClaimRegisterAfterHardening(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	chain := &BlockChain{chainParams: &params}
+	name := "weakregister"
+	owner := *testOutPoint(20)
+	height := uint32(1)
+
+	state := func() *nameState {
+		ns := newNameState(hashName([]byte(name)))
+		ns.set([]byte(name), height)
+		ns.owner = owner
+		ns.claimed = 1
+		ns.weak = true
+		return ns
+	}
+
+	tx := wire.NewMsgTx(1)
+	tx.AddTxOut(wire.NewTxOut(0, wire.Address{},
+		registerCovenant(name, height)))
+	txOut := tx.TxOut[0]
+	prevOutputs := []namePrevOutput{{
+		outpoint: owner,
+		covenant: claimCovenantAt(name, height, chainhash.Hash{0x01},
+			1, true),
+	}}
+
+	view := &nameBlockView{chain: chain}
+	err := view.applyRegister(nil, state(), txOut.Covenant,
+		hnsutil.NewTx(tx), 0, txOut, height, nameStateClosed,
+		prevOutputs, handshakeDeploymentFlags{})
+	if err != nil {
+		t.Fatalf("applyRegister before hardening: %v", err)
+	}
+
+	err = view.applyRegister(nil, state(), txOut.Covenant,
+		hnsutil.NewTx(tx), 0, txOut, height, nameStateClosed,
+		prevOutputs, handshakeDeploymentFlags{hardeningActive: true})
+	if err == nil {
+		t.Fatal("applyRegister: expected weak claim REGISTER error")
+	}
+	if !strings.Contains(err.Error(), "REGISTER covenant in invalid name state") {
+		t.Fatalf("applyRegister weak claim error = %v", err)
+	}
+}
+
 func TestNameBlockViewRejectsUnlinkedRevealWithoutPanic(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	chain := &BlockChain{chainParams: &params}
@@ -622,6 +667,68 @@ func TestNameBlockViewOwnerOperationsRequireCurrentOwner(t *testing.T) {
 	}
 }
 
+func TestNameBlockViewRejectsReplacementClaimValueMismatch(t *testing.T) {
+	params := chaincfg.MainNetParams
+	chain := &BlockChain{chainParams: &params}
+	name := "com"
+	nameHash := hashName([]byte(name))
+	height := params.NameDeflationHeight + params.NameClaimFrequency + 1
+	commitHeight := uint32(2)
+	commitHash := chainhash.Hash{0x44}
+	prevOwner := *testOutPoint(21)
+	addr := wire.Address{
+		Version: 0,
+		Hash:    testAddressHash(),
+	}
+	reservedValue, ok := reservedNameValue(nameHash)
+	if !ok {
+		t.Fatal("missing reserved value for com")
+	}
+	fee := uint64(1000)
+	outputValue := int64(reservedValue - fee)
+	txt := testClaimTXT(t, &params, addr, fee, commitHash, commitHeight)
+	proof := testOwnershipProof(t, name, false, txt, 50, 150)
+	tx := testCoinbaseClaimTx(t, height, addr, uint64(outputValue),
+		commitHash, commitHeight, proof)
+
+	newView := func(ownerValue int64) *nameBlockView {
+		ns := newNameState(nameHash)
+		ns.set([]byte(name), height-params.NameClaimFrequency)
+		ns.claimed = 1
+		ns.owner = prevOwner
+
+		view := nameBlockViewWithStates(chain, ns)
+		view.mainChainHeight = func(hash chainhash.Hash) (int32, error) {
+			if hash != commitHash {
+				return -1, nil
+			}
+			return int32(commitHeight), nil
+		}
+		view.ownerCoinValue = func(_ database.Tx, owner wire.OutPoint) (int64, bool, error) {
+			if owner != prevOwner {
+				return 0, false, nil
+			}
+			return ownerValue, true, nil
+		}
+		return view
+	}
+
+	err := newView(outputValue+1).applyTx(nil, hnsutil.NewTx(tx),
+		height, 100, nil, handshakeDeploymentFlags{})
+	if err == nil {
+		t.Fatal("applyTx replacement CLAIM: expected value mismatch")
+	}
+	if !strings.Contains(err.Error(), "invalid replacement value") {
+		t.Fatalf("applyTx replacement CLAIM error = %v", err)
+	}
+
+	err = newView(outputValue).applyTx(nil, hnsutil.NewTx(tx), height,
+		100, nil, handshakeDeploymentFlags{})
+	if err != nil {
+		t.Fatalf("applyTx replacement CLAIM matching value: %v", err)
+	}
+}
+
 func TestCheckTransactionNamesRejectsMissingState(t *testing.T) {
 	chain := setupNameStateQueryChain(t, "checktxnamesmissing")
 	name := "missingstate"
@@ -789,7 +896,7 @@ func TestNameBlockViewEmptyResourcePreservesData(t *testing.T) {
 	}
 	err := view.applyRegister(nil, ns, registerCovenant,
 		hnsutil.NewTx(registerTx), 0, registerTxOut, 1,
-		nameStateClosed, prevOutputs)
+		nameStateClosed, prevOutputs, handshakeDeploymentFlags{})
 	if err != nil {
 		t.Fatalf("applyRegister: %v", err)
 	}

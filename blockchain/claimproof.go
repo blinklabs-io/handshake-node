@@ -123,7 +123,7 @@ func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
 			}
 
 			value, err := verifyCoinbaseAirdropProof(tx, i, height,
-				params)
+				params, flags)
 			if err != nil {
 				return 0, err
 			}
@@ -136,7 +136,7 @@ func coinbaseConjuredValue(tx *hnsutil.Tx, height uint32, prevTime int64,
 		}
 
 		value, err := verifyCoinbaseClaimProof(tx, i, height,
-			prevTime, params)
+			prevTime, params, flags)
 		if err != nil {
 			return 0, err
 		}
@@ -161,7 +161,8 @@ func addCoinbaseConjured(conjured, value uint64) (uint64, error) {
 }
 
 func verifyCoinbaseClaimProof(tx *hnsutil.Tx, outputIndex int, height uint32,
-	prevTime int64, params *chaincfg.Params) (uint64, error) {
+	prevTime int64, params *chaincfg.Params,
+	deploymentFlags handshakeDeploymentFlags) (uint64, error) {
 
 	msgTx := tx.MsgTx()
 	if outputIndex >= len(msgTx.TxIn) ||
@@ -200,6 +201,9 @@ func verifyCoinbaseClaimProof(tx *hnsutil.Tx, outputIndex int, height uint32,
 	}
 	if data == nil {
 		return 0, badCovenant("CLAIM ownership proof data is invalid")
+	}
+	if deploymentFlags.hardeningActive && data.weak {
+		return 0, badCovenant("CLAIM ownership proof uses weak algorithm")
 	}
 
 	if txOut.Address.Version != data.version ||

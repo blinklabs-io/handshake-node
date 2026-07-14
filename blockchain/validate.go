@@ -1255,6 +1255,9 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 			return err
 		}
 	}
+	if nameView != nil {
+		nameView.ownerCoinValue = b.nameOwnerCoinLookup(view)
+	}
 
 	enforceBIP0016 := true
 	enforceSegWit := true

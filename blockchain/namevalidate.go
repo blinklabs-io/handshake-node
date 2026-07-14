@@ -24,6 +24,8 @@ type namePrevOutput struct {
 	covenant wire.Covenant
 }
 
+type nameOwnerCoinLookup func(database.Tx, wire.OutPoint) (int64, bool, error)
+
 type nameBlockView struct {
 	chain           *BlockChain
 	states          map[chainhash.Hash]*nameState
@@ -32,6 +34,7 @@ type nameBlockView struct {
 	undo            []nameUndoEntry
 	seen            map[chainhash.Hash]struct{}
 	mainChainHeight func(chainhash.Hash) (int32, error)
+	ownerCoinValue  nameOwnerCoinLookup
 }
 
 // NameValidationView validates a sequence of transactions against a shared
@@ -103,6 +106,7 @@ func (v *NameValidationView) ApplyTransaction(tx *hnsutil.Tx, height int32,
 		if err != nil {
 			return err
 		}
+		v.view.ownerCoinValue = v.chain.nameOwnerCoinLookup(utxoView)
 		return v.view.applyTx(dbTx, tx, uint32(height), prevTime,
 			prevOutputs, v.deploymentFlags)
 	})
@@ -226,6 +230,65 @@ func (v *nameBlockView) recordChange(before, after *nameState) error {
 	}
 	v.dirty[nameHash] = struct{}{}
 	return nil
+}
+
+func (v *nameBlockView) nameOwnerCoinValue(dbTx database.Tx, owner wire.OutPoint) (
+	int64, bool, error) {
+
+	if v.ownerCoinValue == nil {
+		return 0, false, nil
+	}
+	return v.ownerCoinValue(dbTx, owner)
+}
+
+func (b *BlockChain) nameOwnerCoinLookup(
+	view *UtxoViewpoint) nameOwnerCoinLookup {
+
+	return func(dbTx database.Tx, owner wire.OutPoint) (int64, bool, error) {
+		if view != nil {
+			entry := view.LookupEntry(owner)
+			if entry != nil {
+				if entry.IsSpent() {
+					return 0, false, nil
+				}
+				return entry.Amount(), true, nil
+			}
+		}
+
+		if b == nil || b.utxoCache == nil {
+			return 0, false, nil
+		}
+
+		entry, cached := b.utxoCache.cachedEntries.get(owner)
+		if cached {
+			if entry == nil || entry.IsSpent() {
+				return 0, false, nil
+			}
+			return entry.Amount(), true, nil
+		}
+
+		if dbTx != nil {
+			utxoBucket := dbTx.Metadata().Bucket(utxoSetBucketName)
+			entry, err := dbFetchUtxoEntry(dbTx, utxoBucket, owner)
+			if err != nil {
+				return 0, false, err
+			}
+			if entry == nil || entry.IsSpent() {
+				return 0, false, nil
+			}
+			return entry.Amount(), true, nil
+		}
+
+		entries, err := b.utxoCache.fetchEntries([]wire.OutPoint{owner})
+		if err != nil {
+			return 0, false, err
+		}
+		entry = entries[0]
+		if entry == nil || entry.IsSpent() {
+			return 0, false, nil
+		}
+		return entry.Amount(), true, nil
+	}
 }
 
 func nameStatesEqual(a, b *nameState) bool {
@@ -384,7 +447,7 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 	switch covenant.Type {
 	case wire.CovenantClaim:
 		if err := v.applyClaim(dbTx, ns, covenant, tx, outputIndex,
-			height, prevTime, state, txOut.Value); err != nil {
+			height, prevTime, state, txOut.Value, deploymentFlags); err != nil {
 			return err
 		}
 	case wire.CovenantOpen:
@@ -449,7 +512,7 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 		}
 	case wire.CovenantRegister:
 		if err := v.applyRegister(dbTx, ns, covenant, tx, outputIndex,
-			txOut, height, state, prevOutputs); err != nil {
+			txOut, height, state, prevOutputs, deploymentFlags); err != nil {
 			return err
 		}
 	case wire.CovenantUpdate:
@@ -511,7 +574,8 @@ func (v *nameBlockView) applyCovenantOutput(dbTx database.Tx, tx *hnsutil.Tx,
 
 func (v *nameBlockView) applyClaim(dbTx database.Tx, ns *nameState,
 	covenant wire.Covenant, tx *hnsutil.Tx, outputIndex int, height uint32,
-	prevTime int64, state nameStateKind, value int64) error {
+	prevTime int64, state nameStateKind, value int64,
+	deploymentFlags handshakeDeploymentFlags) error {
 
 	validState := state == nameStateOpening ||
 		state == nameStateLocked ||
@@ -527,13 +591,16 @@ func (v *nameBlockView) applyClaim(dbTx database.Tx, ns *nameState,
 	}
 
 	if _, err := verifyCoinbaseClaimProof(tx, outputIndex, height,
-		prevTime, v.chain.chainParams); err != nil {
+		prevTime, v.chain.chainParams, deploymentFlags); err != nil {
 
 		return err
 	}
 
 	flags, _ := covenantU8(covenant, 3)
 	weak := flags&1 != 0
+	if deploymentFlags.hardeningActive && weak {
+		return badCovenant("CLAIM ownership proof uses weak algorithm")
+	}
 	blockHash, _ := covenantHash(covenant, 4)
 	claimed, err := v.mainChainHeightForHash(dbTx, blockHash)
 	if err != nil {
@@ -556,6 +623,15 @@ func (v *nameBlockView) applyClaim(dbTx database.Tx, ns *nameState,
 
 			return badCovenant("CLAIM covenant before frequency")
 		}
+		if !isNullNameOwner(ns.owner) {
+			coinValue, ok, err := v.nameOwnerCoinValue(dbTx, ns.owner)
+			if err != nil {
+				return err
+			}
+			if !ok || value != coinValue {
+				return badCovenant("CLAIM covenant has invalid replacement value")
+			}
+		}
 	}
 
 	ns.height = height
@@ -572,7 +648,8 @@ func (v *nameBlockView) applyClaim(dbTx database.Tx, ns *nameState,
 func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 	covenant wire.Covenant, tx *hnsutil.Tx, outputIndex int,
 	txOut *wire.TxOut, height uint32, state nameStateKind,
-	prevOutputs []namePrevOutput) error {
+	prevOutputs []namePrevOutput,
+	deploymentFlags handshakeDeploymentFlags) error {
 
 	start, _ := covenantU32(covenant, 1)
 	if start != ns.height {
@@ -599,6 +676,11 @@ func (v *nameBlockView) applyRegister(dbTx database.Tx, ns *nameState,
 	}
 	if txOut.Value != ns.value {
 		return badCovenant("REGISTER covenant has invalid value")
+	}
+	if ns.isClaimable(height, v.chain.chainParams) &&
+		deploymentFlags.hardeningActive && ns.weak {
+
+		return badCovenant("REGISTER covenant in invalid name state")
 	}
 
 	ns.registered = true
@@ -1085,6 +1167,7 @@ func (b *BlockChain) connectNames(dbTx database.Tx, node *blockNode,
 	}
 
 	view := newLazyNameBlockView(b)
+	view.ownerCoinValue = b.nameOwnerCoinLookup(nil)
 
 	stxoOffset := 0
 	for _, tx := range block.Transactions() {

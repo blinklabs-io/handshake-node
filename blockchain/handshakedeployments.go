@@ -7,6 +7,7 @@ package blockchain
 import "github.com/blinklabs-io/handshake-node/chaincfg"
 
 type handshakeDeploymentFlags struct {
+	hardeningActive   bool
 	icannLockupActive bool
 	airstopActive     bool
 }
@@ -22,6 +23,10 @@ func (b *BlockChain) handshakeDeploymentFlags(prevNode *blockNode) (
 		return state == ThresholdActive, nil
 	}
 
+	hardeningActive, err := active(chaincfg.DeploymentHardening)
+	if err != nil {
+		return handshakeDeploymentFlags{}, err
+	}
 	icannLockupActive, err := active(chaincfg.DeploymentICANNLockup)
 	if err != nil {
 		return handshakeDeploymentFlags{}, err
@@ -32,6 +37,7 @@ func (b *BlockChain) handshakeDeploymentFlags(prevNode *blockNode) (
 	}
 
 	return handshakeDeploymentFlags{
+		hardeningActive:   hardeningActive,
 		icannLockupActive: icannLockupActive,
 		airstopActive:     airstopActive,
 	}, nil
