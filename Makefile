@@ -69,6 +69,8 @@ build:
 	$(GOBUILD) $(PKG)/cmd/gencerts
 	$(GOBUILD) $(PKG)/cmd/findcheckpoint
 	$(GOBUILD) $(PKG)/cmd/addblock
+	$(GOBUILD) $(PKG)/cmd/hsdinterop
+	$(GOBUILD) $(PKG)/cmd/hnsparity
 
 #? install: Install all binaries, place them in $GOPATH/bin
 install:
@@ -78,6 +80,8 @@ install:
 	$(GOINSTALL) $(PKG)/cmd/gencerts
 	$(GOINSTALL) $(PKG)/cmd/findcheckpoint
 	$(GOINSTALL) $(PKG)/cmd/addblock
+	$(GOINSTALL) $(PKG)/cmd/hsdinterop
+	$(GOINSTALL) $(PKG)/cmd/hnsparity
 
 #? release-install: Install handshake-node and hnsctl release binaries, place them in $GOBIN
 release-install:
@@ -114,6 +118,21 @@ unit-race:
 	cd hnsutil && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 	cd hnsutil/psbt && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 
+#? integration: Run the bounded tagged RPC integration suite
+integration:
+	@$(call print, "Running tagged RPC integration tests.")
+	$(GOTEST_DEV) ./integration -count=1 -test.timeout=20m
+
+#? hsd-interop: Run bounded interoperability protocol tests
+hsd-interop:
+	@$(call print, "Running hsd interoperability protocol tests.")
+	$(GOTEST) ./cmd/hsdinterop -count=1 -test.timeout=2m
+
+#? hnsparity: Build the manual mainnet parity runner
+hnsparity:
+	@$(call print, "Building manual mainnet parity runner.")
+	$(GOBUILD) $(PKG)/cmd/hnsparity
+
 # =========
 # UTILITIES
 # =========
@@ -147,6 +166,9 @@ tidy-module:
 	unit \
 	unit-cover \
 	unit-race \
+	integration \
+	hsd-interop \
+	hnsparity \
 	fmt \
 	lint \
 	clean \

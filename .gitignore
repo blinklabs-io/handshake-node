@@ -53,6 +53,14 @@ hnsutil/psbt/coverage.txt
 /handshake-node
 /findcheckpoint
 /gencerts
+/hsdinterop
+/hnsparity
+
+# Manual parity state and reports (release-candidate Markdown reports belong
+# under docs/readiness/runs instead).
+/hnsparity-state.json
+/hnsparity-report.json
+/hnsparity-report.md
 
 .DS_Store
 .aider*
