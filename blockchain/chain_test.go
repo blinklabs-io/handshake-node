@@ -223,12 +223,10 @@ func TestCalcSequenceLock(t *testing.T) {
 		mempool bool
 		want    *SequenceLock
 	}{
-		// A transaction of version one should disable sequence locks
-		// as the new sequence number semantics only apply to
-		// transactions version 2 or higher.
+		// Handshake applies sequence locks to version 0 transactions.
 		{
 			tx: &wire.MsgTx{
-				Version: 1,
+				Version: 0,
 				TxIn: []*wire.TxIn{{
 					PreviousOutPoint: utxo,
 					Sequence:         LockTimeToSequence(false, 3),
@@ -237,7 +235,7 @@ func TestCalcSequenceLock(t *testing.T) {
 			view: utxoView,
 			want: &SequenceLock{
 				Seconds:     -1,
-				BlockHeight: -1,
+				BlockHeight: prevUtxoHeight + 2,
 			},
 		},
 		// A transaction with a single input with max sequence number.

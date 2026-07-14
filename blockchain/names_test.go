@@ -108,6 +108,78 @@ func TestCheckCovenantSanityOpenRejectsHashMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
+	t.Run("allows hsd max item size", func(t *testing.T) {
+		const maxSingleItemSize = 580
+
+		tx := wire.NewMsgTx(1)
+		tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32,
+			nil))
+		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+			Type: wire.CovenantRevoke + 1,
+			Items: [][]byte{
+				make([]byte, maxSingleItemSize),
+			},
+		}))
+
+		if got := tx.TxOut[0].Covenant.SerializeSize(); got != maxCovenantSize {
+			t.Fatalf("covenant size = %d, want %d", got,
+				maxCovenantSize)
+		}
+		if err := CheckTransactionSanity(hnsutil.NewTx(tx)); err != nil {
+			t.Fatalf("CheckTransactionSanity: %v", err)
+		}
+	})
+
+	t.Run("allows hsd max empty item count by size", func(t *testing.T) {
+		const maxEmptyItemsBySize = 581
+
+		items := make([][]byte, maxEmptyItemsBySize)
+		for i := range items {
+			items[i] = []byte{}
+		}
+
+		tx := wire.NewMsgTx(1)
+		tx.AddTxIn(wire.NewTxIn(testOutPoint(2), math.MaxUint32,
+			nil))
+		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+			Type:  wire.CovenantRevoke + 1,
+			Items: items,
+		}))
+
+		if got := tx.TxOut[0].Covenant.SerializeSize(); got != maxCovenantSize {
+			t.Fatalf("covenant size = %d, want %d", got,
+				maxCovenantSize)
+		}
+		if err := CheckTransactionSanity(hnsutil.NewTx(tx)); err != nil {
+			t.Fatalf("CheckTransactionSanity: %v", err)
+		}
+	})
+
+	t.Run("rejects over hsd covenant size", func(t *testing.T) {
+		tx := wire.NewMsgTx(1)
+		tx.AddTxIn(wire.NewTxIn(testOutPoint(3), math.MaxUint32,
+			nil))
+		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+			Type: wire.CovenantRevoke + 1,
+			Items: [][]byte{
+				make([]byte, 581),
+			},
+		}))
+
+		err := CheckTransactionSanity(hnsutil.NewTx(tx))
+		if err == nil {
+			t.Fatal("CheckTransactionSanity: expected size error")
+		}
+		if ruleErr, ok := err.(RuleError); !ok ||
+			ruleErr.ErrorCode != ErrInvalidCovenant {
+
+			t.Fatalf("CheckTransactionSanity error = %T %v, want ErrInvalidCovenant",
+				err, err)
+		}
+	})
+}
+
 func TestCheckBlockNameLimitsDuplicateAcrossTransactions(t *testing.T) {
 	block := &wire.MsgBlock{}
 	for i := 0; i < 2; i++ {
@@ -273,6 +345,31 @@ func TestVerifyCovenantSpendBidRevealBlind(t *testing.T) {
 	output.Value = 8
 	if err := verifyCovenantSpend(prev, output); err == nil {
 		t.Fatal("verifyCovenantSpend: expected blind mismatch")
+	}
+}
+
+func TestVerifyCovenantSpendUnknownCovenant(t *testing.T) {
+	prev := namePrevOutput{
+		outpoint: *testOutPoint(1),
+		amount:   10,
+		covenant: wire.Covenant{
+			Type: wire.CovenantRevoke + 1,
+			Items: [][]byte{
+				[]byte("future"),
+			},
+		},
+	}
+
+	if err := verifyCovenantSpend(prev,
+		wire.NewTxOut(1, wire.Address{}, wire.Covenant{})); err != nil {
+
+		t.Fatalf("verifyCovenantSpend unknown to NONE: %v", err)
+	}
+
+	if err := verifyCovenantSpend(prev,
+		wire.NewTxOut(1, wire.Address{}, openCovenant("known"))); err == nil {
+
+		t.Fatal("verifyCovenantSpend: expected unknown to known name rejection")
 	}
 }
 

@@ -44,6 +44,12 @@ func TestCovenantEncodeDecode(t *testing.T) {
 			covenant: NewCovenant(CovenantNone, [][]byte{}),
 		},
 		{
+			name: "unknown covenant with hsd-sized item",
+			covenant: NewCovenant(CovenantRevoke+1, [][]byte{
+				make([]byte, 582),
+			}),
+		},
+		{
 			name: "REGISTER covenant with empty item",
 			covenant: NewCovenant(CovenantRegister, [][]byte{
 				{},
@@ -237,6 +243,18 @@ func TestCovenantString(t *testing.T) {
 	if got != want {
 		t.Errorf("String() for unknown type: got %q, want %q",
 			got, want)
+	}
+}
+
+func TestCovenantKnownUnknown(t *testing.T) {
+	known := NewCovenant(CovenantRevoke, nil)
+	if !known.IsKnown() || known.IsUnknown() {
+		t.Fatal("REVOKE covenant should be known")
+	}
+
+	unknown := NewCovenant(CovenantRevoke+1, nil)
+	if unknown.IsKnown() || !unknown.IsUnknown() {
+		t.Fatal("covenant above REVOKE should be unknown")
 	}
 }
 

@@ -383,12 +383,12 @@ func (b *BlockChain) calcSequenceLock(node *blockNode, tx *hnsutil.Tx, utxoView 
 	// any given height or time.
 	sequenceLock := &SequenceLock{Seconds: -1, BlockHeight: -1}
 
-	// Handshake sequence-lock semantics are active consensus rules for
-	// version 2+ transactions. They are not gated behind Bitcoin's BIP9 CSV
-	// deployment. Sequence locks also do not apply to coinbase transactions.
+	// Handshake sequence-lock semantics are active consensus rules for all
+	// transaction versions. They are not gated behind Bitcoin's BIP9 CSV
+	// deployment or the inherited Bitcoin tx version >= 2 rule. Sequence locks
+	// also do not apply to coinbase transactions.
 	mTx := tx.MsgTx()
-	sequenceLockActive := uint32(mTx.Version) >= 2
-	if !sequenceLockActive || IsCoinBase(tx) {
+	if IsCoinBase(tx) {
 		return sequenceLock, nil
 	}
 
