@@ -3888,16 +3888,8 @@ func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 }
 
 func localUserAgent() string {
-	agent := wire.DefaultUserAgent
-	if userAgentName != "" || userAgentVersion != "" {
-		comment := ""
-		if len(cfg.UserAgentComments) > 0 {
-			comment = "(" + strings.Join(cfg.UserAgentComments, "; ") + ")"
-		}
-		agent += fmt.Sprintf("%s:%s%s/", userAgentName,
-			userAgentVersion, comment)
-	}
-	return agent
+	return peer.FormatUserAgent(userAgentName, userAgentVersion,
+		cfg.UserAgentComments)
 }
 
 func localServiceNames(services wire.ServiceFlag) []string {
