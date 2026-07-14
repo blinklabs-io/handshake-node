@@ -9,10 +9,8 @@ Package rpcclient implements a websocket-enabled JSON-RPC client.
 
 This client provides a robust and easy to use client for interfacing with a
 JSON-RPC server that uses a handshake-node/bitcoin core compatible JSON-RPC
-API.  This client has been tested with handshake-node
-(https://github.com/blinklabs-io/handshake-node),
-bursa (https://github.com/blinklabs-io/bursa), and
-bitcoin core (https://github.com/bitcoin).
+API. This client is intended for handshake-node
+(https://github.com/blinklabs-io/handshake-node).
 
 In addition to the compatible standard HTTP POST JSON-RPC API, handshake-node
 provides a websocket interface that is more efficient than the standard HTTP
@@ -110,14 +108,11 @@ of these commands against an RPC server that doesn't provide them, you will get
 an unimplemented error from the server.  An effort has been made to call out
 which commands are extensions in their documentation.
 
-Also, it is important to realize that handshake-node intentionally separates the
-wallet functionality into a separate process named bursa.  This means if you
-are connected to the handshake-node RPC server directly, only the RPCs which are
-related to
-chain services will be available.  Depending on your application, you might only
-need chain-related RPCs.  Bursa owns keys, signing, coin selection, and wallet
-state while using handshake-node RPCs for UTXO lookup, unsigned covenant
-transaction construction, broadcast, and notifications.
+handshake-node intentionally does not implement wallet functionality. A client
+connected to handshake-node can use chain services, while wallet software must
+separately own keys, signing, coin selection, and wallet state. The node exposes
+RPCs for UTXO lookup, unsigned covenant construction, broadcast, and
+notifications to support such integrations.
 
 # Errors
 
@@ -164,18 +159,13 @@ detect if a command is unimplemented by the remote RPC server:
 
 # Example Usage
 
-The following full-blown client examples are in the examples directory:
+The following full client examples are in the examples directory:
 
-  - bitcoincorehttp
-    Connects to a bitcoin core RPC server using HTTP POST mode with TLS disabled
-    and gets the current block count
   - hnswebsockets
     Connects to a handshake-node RPC server using TLS-secured websockets, registers for
     block connected and block disconnected notifications, and gets the current
     block count
-  - hnswalletwebsockets
-    Connects to a wallet RPC server using TLS-secured websockets, registers for
-    wallet notifications, and gets a list of unspent transaction outputs
-    (UTXOs) the wallet can sign
+  - customcommand
+    Demonstrates invoking an application-specific JSON-RPC command.
 */
 package rpcclient

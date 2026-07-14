@@ -9,7 +9,7 @@ import (
 )
 
 // activeNetParams is a pointer to the parameters specific to the
-// currently active bitcoin network.
+// currently active Handshake network.
 var activeNetParams = &mainNetParams
 
 // params is used to group parameters for various networks such as the main
@@ -30,7 +30,7 @@ var mainNetParams = params{
 // network (wire.TestNet).
 var regressionNetParams = params{
 	Params:  &chaincfg.RegressionNetParams,
-	rpcPort: "18334",
+	rpcPort: "14037",
 }
 
 // netName returns the name used when referring to a Handshake network.

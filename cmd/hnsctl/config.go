@@ -27,27 +27,19 @@ const (
 )
 
 var (
-	hnsNodeHomeDir        = hnsutil.AppDataDir("handshake-node", false)
-	hnsctlHomeDir         = hnsutil.AppDataDir("hnsctl", false)
-	btcwalletHomeDir      = hnsutil.AppDataDir("btcwallet", false)
-	defaultConfigFile     = filepath.Join(hnsctlHomeDir, "hnsctl.conf")
-	defaultRPCServer      = "localhost"
-	defaultRPCCertFile    = filepath.Join(hnsNodeHomeDir, "rpc.cert")
-	defaultWalletCertFile = filepath.Join(btcwalletHomeDir, "rpc.cert")
+	hnsNodeHomeDir     = hnsutil.AppDataDir("handshake-node", false)
+	hnsctlHomeDir      = hnsutil.AppDataDir("hnsctl", false)
+	defaultConfigFile  = filepath.Join(hnsctlHomeDir, "hnsctl.conf")
+	defaultRPCServer   = "localhost"
+	defaultRPCCertFile = filepath.Join(hnsNodeHomeDir, "rpc.cert")
 )
 
-// listCommands categorizes and lists all of the usable commands along with
-// their one-line usage.
+// listCommands lists usable node commands with their one-line usage.
 func listCommands() {
-	const (
-		categoryChain uint8 = iota
-		categoryWallet
-		numCategories
-	)
-
-	// Get a list of registered commands and categorize and filter them.
+	// Get the registered chain commands and filter out commands that belong
+	// to external wallet software.
 	cmdMethods := hnsjson.RegisteredCmdMethods()
-	categorized := make([][]string, numCategories)
+	commands := make([]string, 0, len(cmdMethods))
 	for _, method := range cmdMethods {
 		flags, err := hnsjson.MethodUsageFlags(method)
 		if err != nil {
@@ -57,7 +49,7 @@ func listCommands() {
 		}
 
 		// Skip the commands that aren't usable from this utility.
-		if flags&unusableFlags != 0 {
+		if flags&(unusableFlags|hnsjson.UFWalletOnly) != 0 {
 			continue
 		}
 
@@ -68,25 +60,14 @@ func listCommands() {
 			continue
 		}
 
-		// Categorize the command based on the usage flags.
-		category := categoryChain
-		if flags&hnsjson.UFWalletOnly != 0 {
-			category = categoryWallet
-		}
-		categorized[category] = append(categorized[category], usage)
+		commands = append(commands, usage)
 	}
 
-	// Display the command according to their categories.
-	categoryTitles := make([]string, numCategories)
-	categoryTitles[categoryChain] = "Chain Server Commands:"
-	categoryTitles[categoryWallet] = "Wallet Server Commands (--wallet):"
-	for category := uint8(0); category < numCategories; category++ {
-		fmt.Println(categoryTitles[category])
-		for _, usage := range categorized[category] {
-			fmt.Println(usage)
-		}
-		fmt.Println()
+	fmt.Println("Chain Server Commands:")
+	for _, usage := range commands {
+		fmt.Println(usage)
 	}
+	fmt.Println()
 }
 
 // config defines the configuration options for hnsctl.
@@ -106,30 +87,19 @@ type config struct {
 	RPCUser        string `short:"u" long:"rpcuser" description:"RPC username"`
 	TLSSkipVerify  bool   `long:"skipverify" description:"Do not verify tls certificates (not recommended!)"`
 	ShowVersion    bool   `short:"V" long:"version" description:"Display version information and exit"`
-	Wallet         bool   `long:"wallet" description:"Connect to wallet"`
 }
 
 // normalizeAddress returns addr with the passed default port appended if
 // there is not already a port specified.
-func normalizeAddress(addr string, chain *chaincfg.Params, useWallet bool) (string, error) {
+func normalizeAddress(addr string, chain *chaincfg.Params) (string, error) {
 	_, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		var defaultPort string
 		switch chain {
 		case &chaincfg.RegressionNetParams:
-			if useWallet {
-				// TODO: add port once regtest is supported in wallet
-				paramErr := fmt.Errorf("cannot use -wallet with -regtest, wallet not yet compatible with regtest")
-				return "", paramErr
-			} else {
-				defaultPort = "18334"
-			}
+			defaultPort = "14037"
 		default:
-			if useWallet {
-				defaultPort = "8332"
-			} else {
-				defaultPort = "12037"
-			}
+			defaultPort = "12037"
 		}
 
 		return net.JoinHostPort(addr, defaultPort), nil
@@ -208,12 +178,7 @@ func loadConfig() (*config, []string, error) {
 
 	if _, err := os.Stat(preCfg.ConfigFile); os.IsNotExist(err) {
 		// Use config file for RPC server to create default hnsctl config
-		var serverConfigPath string
-		if preCfg.Wallet {
-			serverConfigPath = filepath.Join(btcwalletHomeDir, "btcwallet.conf")
-		} else {
-			serverConfigPath = filepath.Join(hnsNodeHomeDir, "handshake-node.conf")
-		}
+		serverConfigPath := filepath.Join(hnsNodeHomeDir, "handshake-node.conf")
 
 		err := createDefaultConfigFile(preCfg.ConfigFile, serverConfigPath)
 		if err != nil {
@@ -250,18 +215,11 @@ func loadConfig() (*config, []string, error) {
 		network = &chaincfg.RegressionNetParams
 	}
 
-	// Override the RPC certificate if the --wallet flag was specified and
-	// the user did not specify one.
-	if cfg.Wallet && cfg.RPCCert == defaultRPCCertFile {
-		cfg.RPCCert = defaultWalletCertFile
-	}
-
 	// Handle environment variable expansion in the RPC certificate path.
 	cfg.RPCCert = cleanAndExpandPath(cfg.RPCCert)
 
-	// Add default port to RPC server based on --regtest and --wallet flags
-	// if needed.
-	cfg.RPCServer, err = normalizeAddress(cfg.RPCServer, network, cfg.Wallet)
+	// Add the network's default RPC port if needed.
+	cfg.RPCServer, err = normalizeAddress(cfg.RPCServer, network)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -270,8 +228,7 @@ func loadConfig() (*config, []string, error) {
 }
 
 // createDefaultConfig creates a basic config file at the given destination path.
-// For this it tries to read the config file for the RPC server (either handshake-node or
-// btcwallet), and extract the RPC user and password from it.
+// It reads the handshake-node config and extracts the RPC user and password.
 func createDefaultConfigFile(destinationPath, serverConfigPath string) error {
 	// Read the RPC server config
 	serverConfigFile, err := os.Open(serverConfigPath)

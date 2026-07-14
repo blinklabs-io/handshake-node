@@ -509,8 +509,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 }
 
 // list of commands that we recognize, but for which handshake-node has no support because
-// it lacks support for wallet functionality. For these commands the user
-// should ask a connected instance of btcwallet.
+// it intentionally keeps wallet functionality in external wallet software.
 var rpcAskWallet = map[string]struct{}{
 	"addmultisigaddress":     {},
 	"backupwallet":           {},
@@ -742,7 +741,7 @@ func handleUnimplemented(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 
 // handleAskWallet is the handler for commands that are recognized as valid, but
 // are unable to answer correctly since it involves wallet state.
-// These commands will be implemented in btcwallet.
+// These commands belong to external wallet software.
 func handleAskWallet(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	return nil, ErrRPCNoWallet
 }
@@ -5881,8 +5880,8 @@ type parsedRPCCmd struct {
 	err     *hnsjson.RPCError
 }
 
-// standardCmdResult checks that a parsed command is a standard Bitcoin JSON-RPC
-// command and runs the appropriate handler to reply to the command.  Any
+// standardCmdResult checks a parsed JSON-RPC command and runs the appropriate
+// handler to reply to it. Any
 // commands which are not recognized or not implemented will return an error
 // suitable for use in replies.
 func (s *rpcServer) standardCmdResult(cmd *parsedRPCCmd, closeChan <-chan struct{}) (interface{}, error) {

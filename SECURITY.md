@@ -2,14 +2,12 @@
 
 ## Supported Versions
 
-The last major `btcd` release is to be considered the current support version.
-Given an issue severe enough, a backport will be issued either to the prior
-major release or the set of releases considered utilized enough. 
+Security fixes are provided for the latest handshake-node release. Users should
+upgrade to the newest release before reporting an issue that may already have
+been fixed.
 
 ## Reporting a Vulnerability
 
-To report security issues, send an email to security@lightning.engineering
-(this list isn't to be used for support). 
-
-The following key can be used to communicate sensitive information: `91FE 464C
-D751 01DA 6B6B  AB60 555C 6465 E5BC B3AF`. 
+Please report vulnerabilities privately through the repository's
+[GitHub security advisory form](https://github.com/blinklabs-io/handshake-node/security/advisories/new).
+Do not open a public issue for an undisclosed vulnerability.

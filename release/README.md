@@ -47,7 +47,7 @@ should be created.
 
 The tagged commit should be a commit that bumps version numbers in `version.go`
 and `cmd/hnsctl/version.go` to the same semantic version.
-For example (taken from [f3ec130](https://github.com/btcsuite/btcd/commit/f3ec13030e4e828869954472cbc51ac36bee5c1d)):
+For example:
 ```diff
 diff --git a/cmd/hnsctl/version.go b/cmd/hnsctl/version.go
 index 2195175c71..f65cacef7e 100644

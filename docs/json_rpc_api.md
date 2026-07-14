@@ -30,20 +30,17 @@
 handshake-node provides a [JSON-RPC](http://json-rpc.org/wiki/specification) API that is
 fully compatible with the original bitcoind/bitcoin-qt.  There are a few key
 differences between handshake-node and bitcoind as far as how RPCs are serviced:
-* Unlike bitcoind that has the wallet and chain intermingled in the same process
-  which leads to several issues, handshake-node intentionally splits the wallet and chain
-  services into independent processes.  Wallet functionality lives in
-  [bursa](https://github.com/blinklabs-io/bursa), while handshake-node exposes
-  chain, mempool, mining, name-state, and unsigned covenant-construction RPCs.
+* handshake-node does not implement wallet functionality. It exposes chain,
+  mempool, mining, name-state, and unsigned covenant-construction RPCs for use
+  by external wallet software and other applications.
 * handshake-node is secure by default which means that the RPC connection is TLS-enabled
   by default
 * handshake-node provides access to the API through both
   [HTTP POST](http://en.wikipedia.org/wiki/POST_%28HTTP%29) requests and
   [Websockets](http://en.wikipedia.org/wiki/WebSocket)
 
-Websockets are the preferred transport for handshake-node RPC and are used by applications
-such as bursa for inter-process communication with handshake-node.  The
-websocket connection endpoint for handshake-node is
+Websockets are the preferred transport for application communication with
+handshake-node. The websocket connection endpoint is
 `wss://your_ip_or_domain:12037/ws`.
 
 In addition to the [standard API](#Methods), an [extension API](#WSExtMethods)
@@ -395,7 +392,7 @@ the method name for further details such as parameter and return information.
 |Method|getinfo|
 |Parameters|None|
 |Description|Returns a JSON object containing various state info.|
-|Notes|NOTE: Since handshake-node does NOT contain wallet functionality, wallet-related fields are not returned. Bursa owns wallet-facing state and APIs.|
+|Notes|NOTE: Since handshake-node does NOT contain wallet functionality, wallet-related fields are not returned.|
 |Returns|`{ (json object)`<br />&nbsp;&nbsp;`"version": n,  (numeric) the version of the server`<br />&nbsp;&nbsp;`"protocolversion": n,  (numeric) the latest supported protocol version`<br />&nbsp;&nbsp;`"blocks": n,  (numeric) the number of blocks processed`<br />&nbsp;&nbsp;`"timeoffset": n,  (numeric) the time offset`<br />&nbsp;&nbsp;`"connections": n,  (numeric) the number of connected peers`<br />&nbsp;&nbsp;`"proxy": "host:port",  (string) the proxy used by the server`<br />&nbsp;&nbsp;`"difficulty": n.nn,  (numeric) the current target difficulty`<br />&nbsp;&nbsp;`"testnet": true or false,  (boolean) whether or not server is using testnet`<br />&nbsp;&nbsp;`"relayfee": n.nn,  (numeric) the minimum relay fee for non-free transactions in BTC/KB`<br />`}`|
 |Example Return|`{`<br />&nbsp;&nbsp;`"version": 70000`<br />&nbsp;&nbsp;`"protocolversion": 70001,  `<br />&nbsp;&nbsp;`"blocks": 298963,`<br />&nbsp;&nbsp;`"timeoffset": 0,`<br />&nbsp;&nbsp;`"connections": 17,`<br />&nbsp;&nbsp;`"proxy": "",`<br />&nbsp;&nbsp;`"difficulty": 8000872135.97,`<br />&nbsp;&nbsp;`"testnet": false,`<br />&nbsp;&nbsp;`"relayfee": 0.00001,`<br />`}`|
 [Return to Overview](#MethodOverview)<br />
@@ -616,10 +613,10 @@ The following is an overview of the RPC methods which are implemented by handsha
 |---|---|
 |Method|debuglevel|
 |Parameters|1. _levelspec_ (string)|
-|Description|Dynamically changes the debug logging level.<br />The levelspec can either a debug level or of the form `<subsystem>=<level>,<subsystem2>=<level2>,...`<br />The valid debug levels are `trace`, `debug`, `info`, `warn`, `error`, and `critical`.<br />The valid subsystems are `AMGR`, `ADXR`, `BCDB`, `BMGR`, `BTCD`, `CHAN`, `DISC`, `PEER`, `RPCS`, `SCRP`, `SRVR`, and `TXMP`.<br />Additionally, the special keyword `show` can be used to get a list of the available subsystems.|
+|Description|Dynamically changes the debug logging level.<br />The levelspec can either a debug level or of the form `<subsystem>=<level>,<subsystem2>=<level2>,...`<br />The valid debug levels are `trace`, `debug`, `info`, `warn`, `error`, and `critical`.<br />The valid subsystems are `ADXR`, `AMGR`, `BCDB`, `CHAN`, `CMGR`, `DISC`, `HNSN`, `INDX`, `MINR`, `PEER`, `RPCS`, `SCRP`, `SRVR`, `STRM`, `SYNC`, and `TXMP`.<br />Additionally, the special keyword `show` can be used to get a list of the available subsystems.|
 |Returns|string|
 |Example Return|`Done.`|
-|Example `show` Return|`Supported subsystems [AMGR ADXR BCDB BMGR BTCD CHAN DISC PEER RPCS SCRP SRVR TXMP]`|
+|Example `show` Return|`Supported subsystems [ADXR AMGR BCDB CHAN CMGR DISC HNSN INDX MINR PEER RPCS SCRP SRVR STRM SYNC TXMP]`|
 [Return to Overview](#ExtMethodOverview)<br />
 
 ***
@@ -1203,7 +1200,7 @@ func main() {
 	// not long-lived, the connection will be closed as soon as the program
 	// exits.
 	connCfg := &rpcclient.ConnConfig{
-		Host:         "localhost:18334",
+		Host:         "localhost:14037",
 		Endpoint:     "ws",
 		User:         "yourrpcuser",
 		Pass:         "yourrpcpass",
