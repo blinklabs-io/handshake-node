@@ -20,6 +20,7 @@ import (
 func TestParityRunAndResume(t *testing.T) {
 	var requestedHeights []int64
 	tip := int64(2)
+	decodedBlockCalls := 0
 	originalFactory := newHTTPClient
 	t.Cleanup(func() { newHTTPClient = originalFactory })
 	newHTTPClient = func(_ time.Duration) *http.Client {
@@ -49,7 +50,14 @@ func TestParityRunAndResume(t *testing.T) {
 				if isRaw {
 					result = "deadbeef"
 				} else {
+					decodedBlockCalls++
 					result = map[string]any{"hash": req.Params[0], "height": 2, "version": 0, "merkleroot": "aa", "time": 1, "bits": "207fffff", "nonce": 0}
+					transactions := []any{map[string]any{"txid": "01", "version": 1}}
+					if r.URL.Host == "node.invalid" {
+						result.(map[string]any)["rawtx"] = transactions
+					} else {
+						result.(map[string]any)["tx"] = transactions
+					}
 				}
 			case "getblockchaininfo":
 				result = map[string]any{"chain": "mainnet", "bip9_softforks": map[string]any{"hardening": map[string]any{"status": "active"}}}
@@ -68,7 +76,7 @@ func TestParityRunAndResume(t *testing.T) {
 	state := filepath.Join(dir, "state.json")
 	reportPath := filepath.Join(dir, "report.json")
 	markdown := filepath.Join(dir, "report.md")
-	args := []string{"--node-url", "http://node.invalid", "--hsd-url", "http://hsd.invalid", "--target", "0", "--sample-interval", "1", "--state", state, "--report", reportPath, "--markdown", markdown}
+	args := []string{"--node-url", "http://node.invalid", "--hsd-url", "http://hsd.invalid", "--target", "0", "--sample-interval", "1000", "--state", state, "--report", reportPath, "--markdown", markdown}
 	if code := run(args, os.Stdout, os.Stderr); code != 0 {
 		t.Fatalf("run returned %d", code)
 	}
@@ -82,6 +90,9 @@ func TestParityRunAndResume(t *testing.T) {
 	}
 	if got.Status != "pass" || got.LastVerifiedHeight != 2 || got.HSDCommit != hsdCommit {
 		t.Fatalf("unexpected report: %+v", got)
+	}
+	if decodedBlockCalls == 0 {
+		t.Fatal("resolved target did not receive the full decoded-block comparison")
 	}
 	if _, err := os.Stat(markdown); err != nil {
 		t.Fatal(err)

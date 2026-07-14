@@ -242,6 +242,7 @@ func execute(cfg *config, stdout io.Writer) error {
 	if target > hsdHeight {
 		return fmt.Errorf("target %d is above captured hsd tip %d", target, hsdHeight)
 	}
+	cfg.target = target
 	targetHash, err := blockHash(ctx, hsd, target)
 	if err != nil {
 		return fmt.Errorf("read hsd target hash: %w", err)
@@ -346,7 +347,7 @@ func compareHeight(ctx context.Context, node, hsd *rpcClient, height int64, cfg 
 	if !equalHex(nBlock, hBlock) {
 		return addMismatch(rep, height, "serialized_block", digest(nBlock), digest(hBlock))
 	}
-	if err := compareSelected(ctx, node, hsd, height, "decoded_block", "getblock", []any{nh, 2}, []any{hh, true, true}, []string{"hash", "height", "version", "merkleroot", "witnessroot", "treeroot", "reservedroot", "time", "bits", "nonce", "tx", "rawtx"}, rep); err != nil {
+	if err := compareSelected(ctx, node, hsd, height, "decoded_block", "getblock", []any{nh, 2}, []any{hh, true, true}, []string{"hash", "height", "version", "merkleroot", "witnessroot", "treeroot", "reservedroot", "time", "bits", "nonce", "tx"}, rep); err != nil {
 		return err
 	}
 	for _, name := range cfg.names {
@@ -407,6 +408,16 @@ func compareSelected(ctx context.Context, a, b *rpcClient, height int64, check, 
 	var am, bm map[string]any
 	if json.Unmarshal(ar, &am) != nil || json.Unmarshal(br, &bm) != nil {
 		return fmt.Errorf("%s returned a non-object", method)
+	}
+	if check == "decoded_block" {
+		// handshake-node exposes verbosity-2 transactions as rawtx while
+		// hsd exposes the equivalent decoded array as tx.
+		if rawTx, ok := am["rawtx"]; ok {
+			am["tx"] = rawTx
+		}
+		if rawTx, ok := bm["rawtx"]; ok {
+			bm["tx"] = rawTx
+		}
 	}
 	selected := func(m map[string]any) map[string]any {
 		result := make(map[string]any)
