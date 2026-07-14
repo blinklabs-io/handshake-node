@@ -93,6 +93,9 @@ type report struct {
 	TargetHash         string     `json:"target_hash"`
 	FinalNodeHeight    int64      `json:"final_node_height"`
 	FinalHSDHeight     int64      `json:"final_hsd_height"`
+	FinalNodeError     string     `json:"final_node_error,omitempty"`
+	FinalHSDError      string     `json:"final_hsd_error,omitempty"`
+	DeploymentCheck    string     `json:"deployment_check"`
 	LastVerifiedHeight int64      `json:"last_verified_height"`
 	SampleInterval     int64      `json:"sample_interval"`
 	StartedAt          string     `json:"started_at"`
@@ -177,7 +180,7 @@ func parseConfig(args []string, output io.Writer) (*config, error) {
 	fs.SetOutput(output)
 	cfg := &config{}
 	fs.StringVar(&cfg.nodeURL, "node-url", env("HNSPARITY_NODE_URL", "http://127.0.0.1:12037"), "handshake-node RPC URL")
-	fs.StringVar(&cfg.hsdURL, "hsd-url", env("HNSPARITY_HSD_URL", "http://127.0.0.1:12037"), "hsd RPC URL")
+	fs.StringVar(&cfg.hsdURL, "hsd-url", env("HNSPARITY_HSD_URL", "http://127.0.0.1:13037"), "hsd RPC URL")
 	fs.StringVar(&cfg.network, "network", "mainnet", "network name")
 	fs.Int64Var(&cfg.target, "target", 0, "target height; 0 captures the hsd tip at startup")
 	fs.Int64Var(&cfg.sampleEvery, "sample-interval", 1000, "interval for full block and state comparisons")
@@ -203,6 +206,9 @@ func parseConfig(args []string, output io.Writer) (*config, error) {
 	if cfg.statePath == "" || cfg.reportPath == "" || cfg.markdownPath == "" {
 		return nil, errors.New("state and report paths must not be empty")
 	}
+	if strings.TrimRight(cfg.nodeURL, "/") == strings.TrimRight(cfg.hsdURL, "/") {
+		return nil, errors.New("node-url and hsd-url must identify different RPC endpoints")
+	}
 	return cfg, nil
 }
 
@@ -219,12 +225,18 @@ func execute(cfg *config, stdout io.Writer) error {
 	node := &rpcClient{url: cfg.nodeURL, user: cfg.nodeUser, pass: cfg.nodePass, http: httpClient}
 	hsd := &rpcClient{url: cfg.hsdURL, user: cfg.hsdUser, pass: cfg.hsdPass, http: httpClient}
 	ctx := context.Background()
+	existing, stateErr := loadCheckpoint(cfg.statePath)
+	if stateErr != nil && !errors.Is(stateErr, os.ErrNotExist) {
+		return fmt.Errorf("load checkpoint: %w", stateErr)
+	}
 	hsdHeight, err := blockCount(ctx, hsd)
 	if err != nil {
 		return fmt.Errorf("read hsd tip: %w", err)
 	}
 	target := cfg.target
-	if target == 0 {
+	if target == 0 && existing != nil {
+		target = existing.TargetHeight
+	} else if target == 0 {
 		target = hsdHeight
 	}
 	if target > hsdHeight {
@@ -237,11 +249,11 @@ func execute(cfg *config, stdout io.Writer) error {
 
 	cp := checkpoint{Schema: 1, Network: cfg.network, TargetHeight: target, TargetHash: targetHash, LastVerified: -1, StartedAt: started.Format(time.RFC3339)}
 	resumed := int64(-1)
-	if loaded, err := loadCheckpoint(cfg.statePath); err == nil {
-		if loaded.Network != cfg.network || loaded.TargetHeight != target || !equalHex(loaded.TargetHash, targetHash) {
+	if existing != nil {
+		if existing.Network != cfg.network || existing.TargetHeight != target || !equalHex(existing.TargetHash, targetHash) {
 			return errors.New("checkpoint does not match network or captured target")
 		}
-		cp = *loaded
+		cp = *existing
 		resumed = cp.LastVerified
 		if cp.LastVerified >= 0 {
 			nodeAnchor, nodeErr := blockHash(ctx, node, cp.LastVerified)
@@ -250,8 +262,6 @@ func execute(cfg *config, stdout io.Writer) error {
 				return fmt.Errorf("checkpoint anchor at height %d is no longer on both chains", cp.LastVerified)
 			}
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("load checkpoint: %w", err)
 	}
 
 	rep := &report{Schema: 1, Status: "running", Network: cfg.network, HSDPin: hsdVersion, HSDCommit: hsdCommit, NodeURL: redactURL(cfg.nodeURL), HSDURL: redactURL(cfg.hsdURL), TargetHeight: target, TargetHash: targetHash, SampleInterval: cfg.sampleEvery, StartedAt: started.Format(time.RFC3339), ResumedFrom: resumed, LastVerifiedHeight: cp.LastVerified, RestartHistory: append([]string(nil), cfg.restarts...)}
@@ -287,6 +297,12 @@ func execute(cfg *config, stdout io.Writer) error {
 		}
 	}
 	rep.Status = "pass"
+	if err := compareTipDeployments(ctx, node, hsd, target, rep); err != nil {
+		rep.Status = "failed"
+		finishReport(rep, node, hsd, cp.LastVerified, started)
+		_ = writeReports(cfg, rep)
+		return err
+	}
 	finishReport(rep, node, hsd, cp.LastVerified, started)
 	return writeReports(cfg, rep)
 }
@@ -333,9 +349,6 @@ func compareHeight(ctx context.Context, node, hsd *rpcClient, height int64, cfg 
 	if err := compareSelected(ctx, node, hsd, height, "decoded_block", "getblock", []any{nh, 2}, []any{hh, true, true}, []string{"hash", "height", "version", "merkleroot", "witnessroot", "treeroot", "reservedroot", "time", "bits", "nonce", "tx", "rawtx"}, rep); err != nil {
 		return err
 	}
-	if err := compareSelected(ctx, node, hsd, height, "deployments", "getblockchaininfo", nil, nil, []string{"chain", "softforks", "bip9_softforks"}, rep); err != nil {
-		return err
-	}
 	for _, name := range cfg.names {
 		if err := compareRaw(ctx, node, hsd, height, "name:"+name, "getnameinfo", rep, name); err != nil {
 			return err
@@ -354,6 +367,31 @@ func compareHeight(ctx context.Context, node, hsd *rpcClient, height int64, cfg 
 			return err
 		}
 	}
+	return nil
+}
+
+func compareTipDeployments(ctx context.Context, node, hsd *rpcClient, target int64, rep *report) error {
+	nodeHeight, nodeErr := blockCount(ctx, node)
+	hsdHeight, hsdErr := blockCount(ctx, hsd)
+	if nodeErr != nil || hsdErr != nil || nodeHeight != target || hsdHeight != target {
+		rep.DeploymentCheck = "not-run: endpoints are not both pinned to the captured target"
+		return nil
+	}
+	nodeHash, err := blockHash(ctx, node, target)
+	if err != nil {
+		return err
+	}
+	hsdHash, err := blockHash(ctx, hsd, target)
+	if err != nil {
+		return err
+	}
+	if !equalHex(nodeHash, hsdHash) {
+		return addMismatch(rep, target, "deployment_tip_hash", nodeHash, hsdHash)
+	}
+	if err := compareSelected(ctx, node, hsd, target, "deployments", "getblockchaininfo", nil, nil, []string{"chain", "softforks", "bip9_softforks"}, rep); err != nil {
+		return err
+	}
+	rep.DeploymentCheck = "pass at captured target"
 	return nil
 }
 
@@ -397,8 +435,11 @@ func compareRaw(ctx context.Context, a, b *rpcClient, height int64, check, metho
 		return err
 	}
 	var av, bv any
-	if json.Unmarshal(ar, &av) != nil || json.Unmarshal(br, &bv) != nil {
-		return fmt.Errorf("decode %s", method)
+	if err := json.Unmarshal(ar, &av); err != nil {
+		return fmt.Errorf("decode handshake-node %s result: %w", method, err)
+	}
+	if err := json.Unmarshal(br, &bv); err != nil {
+		return fmt.Errorf("decode hsd %s result: %w", method, err)
 	}
 	aj, _ := json.Marshal(av)
 	bj, _ := json.Marshal(bv)
@@ -488,8 +529,15 @@ func writeJSONAtomic(path string, value any) error {
 }
 func finishReport(rep *report, node, hsd *rpcClient, last int64, started time.Time) {
 	rep.LastVerifiedHeight = last
-	rep.FinalNodeHeight, _ = blockCount(context.Background(), node)
-	rep.FinalHSDHeight, _ = blockCount(context.Background(), hsd)
+	var err error
+	rep.FinalNodeHeight, err = blockCount(context.Background(), node)
+	if err != nil {
+		rep.FinalNodeError = err.Error()
+	}
+	rep.FinalHSDHeight, err = blockCount(context.Background(), hsd)
+	if err != nil {
+		rep.FinalHSDError = err.Error()
+	}
 	now := time.Now().UTC()
 	rep.FinishedAt, rep.Duration = now.Format(time.RFC3339), now.Sub(started).Round(time.Millisecond).String()
 }
@@ -501,7 +549,10 @@ func writeReports(cfg *config, rep *report) error {
 }
 func writeMarkdown(path string, rep *report) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Handshake mainnet parity report\n\n- Status: **%s**\n- Network: `%s`\n- hsd oracle: `%s` (`%s`)\n- Target: `%d` (`%s`)\n- Last verified: `%d`\n- Duration: `%s`\n- Started: `%s`\n- Finished: `%s`\n- Resumed from: `%d`\n- Mismatches: `%d`\n", rep.Status, rep.Network, rep.HSDPin, rep.HSDCommit, rep.TargetHeight, rep.TargetHash, rep.LastVerifiedHeight, rep.Duration, rep.StartedAt, rep.FinishedAt, rep.ResumedFrom, len(rep.Mismatches))
+	fmt.Fprintf(&b, "# Handshake mainnet parity report\n\n- Status: **%s**\n- Network: `%s`\n- hsd oracle: `%s` (`%s`)\n- Target: `%d` (`%s`)\n- Last verified: `%d`\n- Deployment check: `%s`\n- Duration: `%s`\n- Started: `%s`\n- Finished: `%s`\n- Resumed from: `%d`\n- Mismatches: `%d`\n", rep.Status, rep.Network, rep.HSDPin, rep.HSDCommit, rep.TargetHeight, rep.TargetHash, rep.LastVerifiedHeight, rep.DeploymentCheck, rep.Duration, rep.StartedAt, rep.FinishedAt, rep.ResumedFrom, len(rep.Mismatches))
+	if rep.FinalNodeError != "" || rep.FinalHSDError != "" {
+		fmt.Fprintf(&b, "- Final handshake-node height error: `%s`\n- Final hsd height error: `%s`\n", rep.FinalNodeError, rep.FinalHSDError)
+	}
 	if len(rep.Mismatches) > 0 {
 		b.WriteString("\n## Mismatches\n\n| Height | Check | Node | hsd |\n|---:|---|---|---|\n")
 		for _, m := range rep.Mismatches {

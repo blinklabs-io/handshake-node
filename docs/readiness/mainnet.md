@@ -54,7 +54,8 @@ states at the sampling interval. Add repeatable `--name example` and
 `--outpoint txid:index` options for release-specific name and UTXO samples.
 
 The checkpoint is written atomically after every verified height. Re-running
-the same command resumes at the next height and rejects a state file whose
+the same `--target 0` command retains the originally captured target, resumes
+at the next height, and rejects a state file whose
 network, target height, or target hash differs. RPC credentials are neither
 stored nor printed. JSON reports are operational artifacts; copy the concise
 Markdown report into `docs/readiness/runs/` for a release candidate.

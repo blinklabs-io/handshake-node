@@ -19,6 +19,7 @@ import (
 
 func TestParityRunAndResume(t *testing.T) {
 	var requestedHeights []int64
+	tip := int64(2)
 	originalFactory := newHTTPClient
 	t.Cleanup(func() { newHTTPClient = originalFactory })
 	newHTTPClient = func(_ time.Duration) *http.Client {
@@ -33,7 +34,7 @@ func TestParityRunAndResume(t *testing.T) {
 			var result any
 			switch req.Method {
 			case "getblockcount":
-				result = int64(2)
+				result = tip
 			case "getblockhash":
 				height := int64(req.Params[0].(float64))
 				requestedHeights = append(requestedHeights, height)
@@ -67,7 +68,7 @@ func TestParityRunAndResume(t *testing.T) {
 	state := filepath.Join(dir, "state.json")
 	reportPath := filepath.Join(dir, "report.json")
 	markdown := filepath.Join(dir, "report.md")
-	args := []string{"--node-url", "http://node.invalid", "--hsd-url", "http://hsd.invalid", "--target", "2", "--sample-interval", "1", "--state", state, "--report", reportPath, "--markdown", markdown}
+	args := []string{"--node-url", "http://node.invalid", "--hsd-url", "http://hsd.invalid", "--target", "0", "--sample-interval", "1", "--state", state, "--report", reportPath, "--markdown", markdown}
 	if code := run(args, os.Stdout, os.Stderr); code != 0 {
 		t.Fatalf("run returned %d", code)
 	}
@@ -87,6 +88,7 @@ func TestParityRunAndResume(t *testing.T) {
 	}
 
 	requestedHeights = nil
+	tip = 3
 	if code := run(args, os.Stdout, os.Stderr); code != 0 {
 		t.Fatalf("resume returned %d", code)
 	}
@@ -108,7 +110,7 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
-func TestParseConfigDoesNotExposeCredentials(t *testing.T) {
+func TestParseConfigLoadsCredentialsFromEnv(t *testing.T) {
 	t.Setenv("HNSPARITY_NODE_USER", "alice")
 	t.Setenv("HNSPARITY_NODE_PASS", "secret")
 	cfg, err := parseConfig([]string{"--target", "1"}, os.Stderr)
@@ -117,5 +119,15 @@ func TestParseConfigDoesNotExposeCredentials(t *testing.T) {
 	}
 	if cfg.nodeUser != "alice" || cfg.nodePass != "secret" {
 		t.Fatal("credentials not loaded from environment")
+	}
+}
+
+func TestParseConfigRejectsSameEndpoint(t *testing.T) {
+	_, err := parseConfig([]string{
+		"--node-url", "http://127.0.0.1:12037/",
+		"--hsd-url", "http://127.0.0.1:12037",
+	}, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "different RPC endpoints") {
+		t.Fatalf("expected equal endpoint error, got %v", err)
 	}
 }
