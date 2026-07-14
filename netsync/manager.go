@@ -1525,6 +1525,14 @@ func (sm *SyncManager) handleBlockchainNotification(notification *blockchain.Not
 				log.Debugf("Removed %d stale name transactions from "+
 					"mempool", len(removedNameTxs))
 			}
+			removedProofs, err := sm.txMemPool.PruneCoinbaseProofs()
+			if err != nil {
+				log.Warnf("Unable to prune stale coinbase proofs: %v",
+					err)
+			} else if removedProofs > 0 {
+				log.Debugf("Removed %d stale coinbase proofs from "+
+					"mempool", removedProofs)
+			}
 		}
 
 		// Register block with the fee estimator, if it exists.

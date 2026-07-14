@@ -9,6 +9,7 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
@@ -32,6 +33,10 @@ const (
 	// and is used to monitor BIP16 support as well as blocks that are
 	// generated via handshake-node.
 	CoinbaseFlags = "/P2SH/handshake-node/"
+
+	// maxCoinbaseProofsPerType is hsd's per-template cap for each local
+	// proof class.
+	maxCoinbaseProofsPerType = 10
 )
 
 // TxDesc is a descriptor about a transaction in a transaction source along with
@@ -325,8 +330,8 @@ func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockH
 	return hnsutil.NewTx(tx), nil
 }
 
-func addCoinbaseProofs(coinbaseTx *hnsutil.Tx,
-	proofs []CoinbaseProof) (int64, error) {
+func addCoinbaseProofs(coinbaseTx *hnsutil.Tx, proofs []CoinbaseProof,
+	nextBlockHeight int32, params *chaincfg.Params) (int64, error) {
 
 	msgTx := coinbaseTx.MsgTx()
 	var proofFees int64
@@ -341,24 +346,59 @@ func addCoinbaseProofs(coinbaseTx *hnsutil.Tx,
 				"earlier proof witness", i)
 		}
 		seenProofs[proofHash] = struct{}{}
-		if proofFees > hnsutil.MaxDoo-proof.Fee {
+		minerFee, err := coinbaseProofMinerFee(proof,
+			nextBlockHeight, params)
+		if err != nil {
+			return 0, fmt.Errorf("coinbase proof %d: %w", i, err)
+		}
+		if proofFees > hnsutil.MaxDoo-minerFee {
 			return 0, fmt.Errorf("coinbase proof fees exceed max money")
 		}
 
-		nullHash := chainhash.Hash{}
-		msgTx.AddTxIn(&wire.TxIn{
-			PreviousOutPoint: *wire.NewOutPoint(&nullHash,
-				wire.MaxPrevOutIndex),
-			Sequence: wire.MaxTxInSequenceNum,
-			Witness: wire.TxWitness{
-				append([]byte(nil), proof.Witness...),
-			},
-		})
-		msgTx.AddTxOut(cloneCoinbaseProofOutput(proof.Output))
-		proofFees += proof.Fee
+		appendCoinbaseProof(msgTx, proof)
+		proofFees += minerFee
 	}
 
 	return proofFees, nil
+}
+
+func appendCoinbaseProof(msgTx *wire.MsgTx, proof CoinbaseProof) {
+	nullHash := chainhash.Hash{}
+	msgTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: *wire.NewOutPoint(&nullHash,
+			wire.MaxPrevOutIndex),
+		Sequence: wire.MaxTxInSequenceNum,
+		Witness: wire.TxWitness{
+			append([]byte(nil), proof.Witness...),
+		},
+	})
+	msgTx.AddTxOut(cloneCoinbaseProofOutput(proof.Output))
+}
+
+func coinbaseProofMinerFee(proof CoinbaseProof, nextBlockHeight int32,
+	params *chaincfg.Params) (int64, error) {
+
+	if proof.Fee < 0 {
+		return 0, fmt.Errorf("has negative fee")
+	}
+	if proof.Output == nil ||
+		proof.Output.Covenant.Type != wire.CovenantClaim ||
+		params == nil ||
+		nextBlockHeight < 0 ||
+		uint32(nextBlockHeight) < params.NameDeflationHeight {
+
+		return proof.Fee, nil
+	}
+
+	covenant := proof.Output.Covenant
+	if len(covenant.Items) < 6 || len(covenant.Items[5]) != 4 {
+		return 0, fmt.Errorf("CLAIM covenant missing commit height")
+	}
+	commitHeight := binary.LittleEndian.Uint32(covenant.Items[5])
+	if commitHeight != 1 {
+		return 0, nil
+	}
+	return proof.Fee, nil
 }
 
 // ValidateCoinbaseProofShape checks whether a coinbase proof has the covenant
@@ -459,6 +499,131 @@ func cloneCoinbaseProofs(proofs []CoinbaseProof) []CoinbaseProof {
 		cloned[i] = cloneCoinbaseProof(proofs[i])
 	}
 	return cloned
+}
+
+type coinbaseProofCandidate struct {
+	proof CoinbaseProof
+	rate  int64
+	index int
+}
+
+func selectCoinbaseProofs(coinbaseTx *hnsutil.Tx, proofs []CoinbaseProof,
+	nextBlockHeight int32, maxBlockWeight uint32,
+	params *chaincfg.Params) ([]CoinbaseProof, error) {
+
+	if len(proofs) == 0 {
+		return nil, nil
+	}
+
+	claims := make([]coinbaseProofCandidate, 0, len(proofs))
+	airdrops := make([]coinbaseProofCandidate, 0, len(proofs))
+	for i, proof := range proofs {
+		if err := ValidateCoinbaseProofShape(proof); err != nil {
+			return nil, fmt.Errorf("coinbase proof %d: %w", i, err)
+		}
+
+		rate, err := coinbaseProofRate(coinbaseTx, proof,
+			nextBlockHeight, params)
+		if err != nil {
+			return nil, fmt.Errorf("coinbase proof %d: %w", i, err)
+		}
+
+		candidate := coinbaseProofCandidate{
+			proof: proof,
+			rate:  rate,
+			index: i,
+		}
+		switch proof.Output.Covenant.Type {
+		case wire.CovenantClaim:
+			claims = append(claims, candidate)
+		case wire.CovenantNone:
+			airdrops = append(airdrops, candidate)
+		}
+	}
+
+	sortCoinbaseProofCandidates(claims)
+	sortCoinbaseProofCandidates(airdrops)
+
+	tempTx := hnsutil.NewTx(coinbaseTx.MsgTx().Copy())
+	selected := make([]CoinbaseProof, 0, minInt(len(proofs),
+		maxCoinbaseProofsPerType*2))
+	seenProofs := make(map[chainhash.Hash]struct{}, len(proofs))
+	addCandidates := func(candidates []coinbaseProofCandidate) {
+		added := 0
+		for _, candidate := range candidates {
+			if added >= maxCoinbaseProofsPerType {
+				break
+			}
+
+			proofHash := chainhash.HashH(candidate.proof.Witness)
+			if _, exists := seenProofs[proofHash]; exists {
+				continue
+			}
+			if !coinbaseProofFits(tempTx, candidate.proof,
+				maxBlockWeight) {
+
+				continue
+			}
+
+			appendCoinbaseProof(tempTx.MsgTx(), candidate.proof)
+			selected = append(selected, cloneCoinbaseProof(candidate.proof))
+			seenProofs[proofHash] = struct{}{}
+			added++
+		}
+	}
+	addCandidates(claims)
+	addCandidates(airdrops)
+
+	return selected, nil
+}
+
+func sortCoinbaseProofCandidates(candidates []coinbaseProofCandidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].rate == candidates[j].rate {
+			return candidates[i].index < candidates[j].index
+		}
+		return candidates[i].rate > candidates[j].rate
+	})
+}
+
+func coinbaseProofRate(coinbaseTx *hnsutil.Tx, proof CoinbaseProof,
+	nextBlockHeight int32, params *chaincfg.Params) (int64, error) {
+
+	minerFee, err := coinbaseProofMinerFee(proof, nextBlockHeight,
+		params)
+	if err != nil {
+		return 0, err
+	}
+	if minerFee <= 0 {
+		return 0, nil
+	}
+
+	baseWeight := blockchain.GetTransactionWeight(coinbaseTx)
+	msgTx := coinbaseTx.MsgTx().Copy()
+	appendCoinbaseProof(msgTx, proof)
+	proofWeight := blockchain.GetTransactionWeight(hnsutil.NewTx(msgTx)) -
+		baseWeight
+	if proofWeight <= 0 {
+		return 0, nil
+	}
+	virtualSize := (proofWeight + blockchain.WitnessScaleFactor - 1) /
+		blockchain.WitnessScaleFactor
+	if virtualSize == 0 {
+		return 0, nil
+	}
+	return minerFee * 1000 / virtualSize, nil
+}
+
+func coinbaseProofFits(coinbaseTx *hnsutil.Tx, proof CoinbaseProof,
+	maxBlockWeight uint32) bool {
+
+	msgTx := coinbaseTx.MsgTx().Copy()
+	appendCoinbaseProof(msgTx, proof)
+	blockWeight := uint32((blockHeaderOverhead *
+		blockchain.WitnessScaleFactor) +
+		blockchain.GetTransactionWeight(hnsutil.NewTx(msgTx)))
+
+	return blockWeight < maxBlockWeight
 }
 
 // spendTransaction updates the passed view by marking the inputs to the passed
@@ -659,7 +824,13 @@ func (g *BlkTmplGenerator) NewBlockTemplate(payToAddress hnsutil.Address) (*Bloc
 		if err != nil {
 			return nil, err
 		}
-		coinbaseProofFees, err = addCoinbaseProofs(coinbaseTx, proofs)
+		proofs, err = selectCoinbaseProofs(coinbaseTx, proofs,
+			nextBlockHeight, g.policy.BlockMaxWeight, g.chainParams)
+		if err != nil {
+			return nil, err
+		}
+		coinbaseProofFees, err = addCoinbaseProofs(coinbaseTx, proofs,
+			nextBlockHeight, g.chainParams)
 		if err != nil {
 			return nil, err
 		}
@@ -801,9 +972,6 @@ mempoolLoop:
 	// transaction.
 	blockWeight := uint32((blockHeaderOverhead * blockchain.WitnessScaleFactor) +
 		blockchain.GetTransactionWeight(coinbaseTx))
-	if len(coinbaseProofs) > 0 && blockWeight >= g.policy.BlockMaxWeight {
-		return nil, fmt.Errorf("coinbase proofs exceed max block weight")
-	}
 	blockSigOpCost := coinbaseSigOpCost
 	totalFees := int64(0)
 	if len(coinbaseProofs) > 0 {

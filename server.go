@@ -2819,6 +2819,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 			return s.chain.NewNameValidationView()
 		},
 		IsDeploymentActive: s.chain.IsDeploymentActive,
+		IsAirdropSpent:     s.chain.IsAirdropSpent,
 		SigCache:           s.sigCache,
 		HashCache:          s.hashCache,
 		AddrIndex:          s.addrIndex,

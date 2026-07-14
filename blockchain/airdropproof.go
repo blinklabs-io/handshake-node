@@ -90,6 +90,51 @@ type airdropKey struct {
 	sponsor bool
 }
 
+// AirdropProofMetadata is the policy-relevant metadata decoded from a
+// serialized airdrop proof.
+type AirdropProofMetadata struct {
+	Position uint32
+	Value    uint64
+	Fee      uint64
+	Version  uint8
+	Address  []byte
+	Weak     bool
+	GooSig   bool
+}
+
+// DecodeAirdropProofMetadata decodes a serialized airdrop proof and returns
+// the narrow set of metadata needed by policy code outside this package.
+func DecodeAirdropProofMetadata(serialized []byte) (
+	AirdropProofMetadata, error) {
+
+	proof, err := parseAirdropProof(serialized)
+	if err != nil {
+		return AirdropProofMetadata{}, err
+	}
+	if !proof.isSane() {
+		return AirdropProofMetadata{}, errors.New("airdrop proof is not sane")
+	}
+
+	position, err := proof.position()
+	if err != nil {
+		return AirdropProofMetadata{}, err
+	}
+	key, err := parseAirdropKey(proof.key)
+	if err != nil {
+		return AirdropProofMetadata{}, err
+	}
+
+	return AirdropProofMetadata{
+		Position: position,
+		Value:    proof.value(),
+		Fee:      proof.fee,
+		Version:  proof.version,
+		Address:  append([]byte(nil), proof.address...),
+		Weak:     key.isWeak(),
+		GooSig:   key.keyType == airdropKeyGoo,
+	}, nil
+}
+
 func checkCoinbaseAirdropProofSanity(tx *hnsutil.Tx, outputIndex int) error {
 	msgTx := tx.MsgTx()
 	if outputIndex >= len(msgTx.TxIn) ||
@@ -520,11 +565,12 @@ func parseAirdropKey(serialized []byte) (*airdropKey, error) {
 	return key, nil
 }
 
-func (key *airdropKey) isWeak() bool {
-	if key.keyType != airdropKeyRSA {
+func (k *airdropKey) isWeak() bool {
+	if k == nil || k.keyType != airdropKeyRSA {
 		return false
 	}
-	return new(big.Int).SetBytes(key.n).BitLen() < 2048-7
+
+	return new(big.Int).SetBytes(k.n).BitLen() < strongRSAKeyBits
 }
 
 func verifyAirdropRSASignature(key *airdropKey, msg, signature []byte) bool {

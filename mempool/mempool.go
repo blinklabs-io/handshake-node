@@ -107,6 +107,11 @@ type Config struct {
 	// into the mempool or not.
 	IsDeploymentActive func(deploymentID uint32) (bool, error)
 
+	// IsAirdropSpent returns true if the airdrop bitfield position has
+	// already been consumed by the active chain.  It is optional because
+	// tests and non-chain-backed pools can still rely on block validation.
+	IsAirdropSpent func(position uint32) (bool, error)
+
 	// SigCache defines a signature cache to use.
 	SigCache *txscript.SigCache
 
@@ -185,8 +190,31 @@ type NameValidationView interface {
 }
 
 type coinbaseProofEntry struct {
-	hash  chainhash.Hash
-	proof mining.CoinbaseProof
+	hash   chainhash.Hash
+	proof  mining.CoinbaseProof
+	policy coinbaseProofPolicy
+}
+
+type coinbaseProofKind uint8
+
+const (
+	coinbaseProofKindUnknown coinbaseProofKind = iota
+	coinbaseProofKindClaim
+	coinbaseProofKindAirdrop
+)
+
+type coinbaseProofPolicy struct {
+	kind            coinbaseProofKind
+	claimNameHash   chainhash.Hash
+	claimHeight     uint32
+	claimInception  uint32
+	claimExpiration uint32
+	airdropPosition uint32
+	airdropWeak     bool
+	airdropGooSig   bool
+	hasClaimHeight  bool
+	hasClaimWindow  bool
+	hasClaimExpiry  bool
 }
 
 // orphanTx is normal transaction that references an ancestor transaction
@@ -205,16 +233,18 @@ type TxPool struct {
 	// The following variables must only be used atomically.
 	lastUpdated int64 // last time pool was updated
 
-	mtx            sync.RWMutex
-	cfg            Config
-	pool           map[chainhash.Hash]*TxDesc
-	orphans        map[chainhash.Hash]*orphanTx
-	orphansByPrev  map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx
-	outpoints      map[wire.OutPoint]*hnsutil.Tx
-	nameActions    map[chainhash.Hash]*hnsutil.Tx
-	coinbaseProofs []coinbaseProofEntry
-	pennyTotal     float64 // exponentially decaying total for penny spends.
-	lastPennyUnix  int64   // unix time of last ``penny spend''
+	mtx              sync.RWMutex
+	cfg              Config
+	pool             map[chainhash.Hash]*TxDesc
+	orphans          map[chainhash.Hash]*orphanTx
+	orphansByPrev    map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx
+	outpoints        map[wire.OutPoint]*hnsutil.Tx
+	nameActions      map[chainhash.Hash]*hnsutil.Tx
+	coinbaseProofs   []coinbaseProofEntry
+	coinbaseClaims   map[chainhash.Hash]chainhash.Hash
+	coinbaseAirdrops map[uint32]chainhash.Hash
+	pennyTotal       float64 // exponentially decaying total for penny spends.
+	lastPennyUnix    int64   // unix time of last ``penny spend''
 
 	// nextExpireScan is the time after which the orphan pool will be
 	// scanned in order to evict orphans.  This is NOT a hard deadline as
@@ -640,11 +670,19 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 	if err != nil {
 		return chainhash.Hash{}, err
 	}
+	policy, err := mp.coinbaseProofPolicy(proof)
+	if err != nil {
+		return chainhash.Hash{}, err
+	}
+	if err := mp.validateCoinbaseProofAdmission(policy); err != nil {
+		return chainhash.Hash{}, err
+	}
 	cloned := cloneCoinbaseProof(proof)
 	witnessHash := coinbaseProofWitnessHash(proof)
 
 	mp.mtx.Lock()
 	defer mp.mtx.Unlock()
+	mp.ensureCoinbaseProofIndexes()
 
 	for i := range mp.coinbaseProofs {
 		if mp.coinbaseProofs[i].hash == hash {
@@ -654,6 +692,7 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 					"remove the old proof first", hash)
 			}
 			mp.coinbaseProofs[i].proof = cloned
+			mp.coinbaseProofs[i].policy = policy
 			atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 			return hash, nil
 		}
@@ -664,11 +703,16 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 				"witness already exists in pool")
 		}
 	}
+	if err := mp.checkCoinbaseProofIndexConflict(hash, policy); err != nil {
+		return chainhash.Hash{}, err
+	}
 
 	mp.coinbaseProofs = append(mp.coinbaseProofs, coinbaseProofEntry{
-		hash:  hash,
-		proof: cloned,
+		hash:   hash,
+		proof:  cloned,
+		policy: policy,
 	})
+	mp.indexCoinbaseProof(hash, policy)
 	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 	return hash, nil
 }
@@ -688,14 +732,18 @@ func (mp *TxPool) removeCoinbaseProof(hash chainhash.Hash) bool {
 			continue
 		}
 
-		copy(mp.coinbaseProofs[i:], mp.coinbaseProofs[i+1:])
-		mp.coinbaseProofs[len(mp.coinbaseProofs)-1] =
-			coinbaseProofEntry{}
-		mp.coinbaseProofs = mp.coinbaseProofs[:len(mp.coinbaseProofs)-1]
-		atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+		mp.removeCoinbaseProofAt(i)
 		return true
 	}
 	return false
+}
+
+func (mp *TxPool) removeCoinbaseProofAt(i int) {
+	mp.unindexCoinbaseProof(mp.coinbaseProofs[i])
+	copy(mp.coinbaseProofs[i:], mp.coinbaseProofs[i+1:])
+	mp.coinbaseProofs[len(mp.coinbaseProofs)-1] = coinbaseProofEntry{}
+	mp.coinbaseProofs = mp.coinbaseProofs[:len(mp.coinbaseProofs)-1]
+	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 }
 
 // RemoveCoinbaseProofs removes claim and airdrop proofs consumed by the passed
@@ -744,17 +792,59 @@ func (mp *TxPool) RemoveCoinbaseProofs(coinbaseTx *hnsutil.Tx) int {
 func (mp *TxPool) CoinbaseProofs(nextBlockHeight int32) (
 	[]mining.CoinbaseProof, error) {
 
-	mp.mtx.RLock()
-	defer mp.mtx.RUnlock()
+	mp.mtx.Lock()
+	defer mp.mtx.Unlock()
 
 	proofs := make([]mining.CoinbaseProof, 0, len(mp.coinbaseProofs))
-	for _, entry := range mp.coinbaseProofs {
-		if !coinbaseProofMatchesHeight(entry.proof, nextBlockHeight) {
+	for i := 0; i < len(mp.coinbaseProofs); {
+		entry := mp.coinbaseProofs[i]
+		if err := mp.validateCoinbaseProofForHeight(entry.policy,
+			nextBlockHeight); err != nil {
+
+			if coinbaseProofErrorPrunable(err) {
+				mp.removeCoinbaseProofAt(i)
+				continue
+			}
+			return nil, err
+		}
+		if !coinbaseProofMatchesHeight(entry.policy, nextBlockHeight) {
+			i++
 			continue
 		}
 		proofs = append(proofs, cloneCoinbaseProof(entry.proof))
+		i++
 	}
 	return proofs, nil
+}
+
+// PruneCoinbaseProofs removes stored coinbase proofs that are no longer
+// eligible to be mined at the current chain tip.
+func (mp *TxPool) PruneCoinbaseProofs() (int, error) {
+	nextBlockHeight, ok := mp.nextBlockHeight()
+	if !ok {
+		return 0, nil
+	}
+
+	mp.mtx.Lock()
+	defer mp.mtx.Unlock()
+
+	removed := 0
+	for i := 0; i < len(mp.coinbaseProofs); {
+		entry := mp.coinbaseProofs[i]
+		err := mp.validateCoinbaseProofForHeight(entry.policy,
+			nextBlockHeight)
+		if err == nil {
+			i++
+			continue
+		}
+		if !coinbaseProofErrorPrunable(err) {
+			return removed, err
+		}
+
+		mp.removeCoinbaseProofAt(i)
+		removed++
+	}
+	return removed, nil
 }
 
 func coinbaseProofHash(proof mining.CoinbaseProof) (chainhash.Hash, error) {
@@ -816,20 +906,340 @@ func cloneCoinbaseProofCovenant(covenant wire.Covenant) wire.Covenant {
 	}
 }
 
-func coinbaseProofMatchesHeight(proof mining.CoinbaseProof,
+type coinbaseProofPolicyError struct {
+	msg      string
+	prunable bool
+}
+
+func (e *coinbaseProofPolicyError) Error() string {
+	return e.msg
+}
+
+func coinbaseProofErrorPrunable(err error) bool {
+	policyErr, ok := err.(*coinbaseProofPolicyError)
+	return ok && policyErr.prunable
+}
+
+func coinbaseProofReject(format string, args ...interface{}) error {
+	return &coinbaseProofPolicyError{
+		msg: fmt.Sprintf(format, args...),
+	}
+}
+
+func coinbaseProofPrune(format string, args ...interface{}) error {
+	return &coinbaseProofPolicyError{
+		msg:      fmt.Sprintf(format, args...),
+		prunable: true,
+	}
+}
+
+func (mp *TxPool) coinbaseProofPolicy(proof mining.CoinbaseProof) (
+	coinbaseProofPolicy, error) {
+
+	if err := validateCoinbaseProofShape(proof); err != nil {
+		return coinbaseProofPolicy{}, err
+	}
+
+	switch proof.Output.Covenant.Type {
+	case wire.CovenantNone:
+		return coinbaseAirdropPolicy(proof)
+
+	case wire.CovenantClaim:
+		return mp.coinbaseClaimPolicy(proof)
+
+	default:
+		return coinbaseProofPolicy{}, fmt.Errorf("coinbase proof has "+
+			"unsupported covenant type %d", proof.Output.Covenant.Type)
+	}
+}
+
+func coinbaseAirdropPolicy(proof mining.CoinbaseProof) (
+	coinbaseProofPolicy, error) {
+
+	meta, err := blockchain.DecodeAirdropProofMetadata(proof.Witness)
+	if err != nil {
+		return coinbaseProofPolicy{}, fmt.Errorf("airdrop proof: %w", err)
+	}
+	if proof.Fee != int64(meta.Fee) {
+		return coinbaseProofPolicy{}, fmt.Errorf("airdrop proof fee "+
+			"metadata = %d, want %d", proof.Fee, meta.Fee)
+	}
+	if proof.Output.Value != int64(meta.Value-meta.Fee) {
+		return coinbaseProofPolicy{}, fmt.Errorf("airdrop proof output "+
+			"value = %d, want %d", proof.Output.Value,
+			meta.Value-meta.Fee)
+	}
+	if proof.Output.Address.Version != meta.Version ||
+		!bytes.Equal(proof.Output.Address.Hash, meta.Address) {
+
+		return coinbaseProofPolicy{}, fmt.Errorf("airdrop proof output " +
+			"address mismatch")
+	}
+
+	return coinbaseProofPolicy{
+		kind:            coinbaseProofKindAirdrop,
+		airdropPosition: meta.Position,
+		airdropWeak:     meta.Weak,
+		airdropGooSig:   meta.GooSig,
+	}, nil
+}
+
+func (mp *TxPool) coinbaseClaimPolicy(proof mining.CoinbaseProof) (
+	coinbaseProofPolicy, error) {
+
+	covenant := proof.Output.Covenant
+	policy := coinbaseProofPolicy{
+		kind: coinbaseProofKindClaim,
+	}
+	copy(policy.claimNameHash[:], covenant.Items[0])
+	policy.claimHeight = binary.LittleEndian.Uint32(covenant.Items[1])
+	policy.hasClaimHeight = true
+
+	params := mp.cfg.ChainParams
+	if params == nil || params.NameClaimPrefix == "" {
+		return policy, nil
+	}
+
+	meta, err := blockchain.DecodeClaimProofMetadata(proof.Witness, params)
+	if err != nil {
+		return coinbaseProofPolicy{}, fmt.Errorf("CLAIM proof: %w", err)
+	}
+	if err := validateCoinbaseClaimMetadata(proof, policy, meta); err != nil {
+		return coinbaseProofPolicy{}, err
+	}
+
+	policy.claimInception = meta.Inception
+	policy.claimExpiration = meta.Expiration
+	policy.hasClaimWindow = true
+	policy.hasClaimExpiry = true
+	return policy, nil
+}
+
+func validateCoinbaseClaimMetadata(proof mining.CoinbaseProof,
+	policy coinbaseProofPolicy, meta blockchain.ClaimProofMetadata) error {
+
+	covenant := proof.Output.Covenant
+	if meta.NameHash != policy.claimNameHash ||
+		!bytes.Equal(covenant.Items[2], []byte(meta.Name)) {
+
+		return fmt.Errorf("CLAIM proof name metadata mismatch")
+	}
+	flags := covenant.Items[3][0]
+	if (flags&1 != 0) != meta.Weak {
+		return fmt.Errorf("CLAIM proof weak metadata mismatch")
+	}
+	var commitHash chainhash.Hash
+	copy(commitHash[:], covenant.Items[4])
+	if commitHash != meta.CommitHash ||
+		binary.LittleEndian.Uint32(covenant.Items[5]) !=
+			meta.CommitHeight {
+
+		return fmt.Errorf("CLAIM proof commit metadata mismatch")
+	}
+	if proof.Fee != int64(meta.Fee) {
+		return fmt.Errorf("CLAIM proof fee metadata = %d, want %d",
+			proof.Fee, meta.Fee)
+	}
+	if proof.Output.Value != int64(meta.Value-meta.Fee) {
+		return fmt.Errorf("CLAIM proof output value = %d, want %d",
+			proof.Output.Value, meta.Value-meta.Fee)
+	}
+	if proof.Output.Address.Version != meta.Version ||
+		!bytes.Equal(proof.Output.Address.Hash, meta.Address) {
+
+		return fmt.Errorf("CLAIM proof output address mismatch")
+	}
+	return nil
+}
+
+func (mp *TxPool) validateCoinbaseProofAdmission(
+	policy coinbaseProofPolicy) error {
+
+	nextBlockHeight, hasHeight := mp.nextBlockHeight()
+	if !hasHeight {
+		return nil
+	}
+	if err := mp.validateCoinbaseProofForHeight(policy,
+		nextBlockHeight); err != nil {
+
+		return err
+	}
+	if policy.kind == coinbaseProofKindClaim && policy.hasClaimHeight &&
+		policy.claimHeight != uint32(nextBlockHeight) {
+
+		return coinbaseProofReject("CLAIM proof height = %d, want %d",
+			policy.claimHeight, nextBlockHeight)
+	}
+	return nil
+}
+
+func (mp *TxPool) validateCoinbaseProofForHeight(
+	policy coinbaseProofPolicy, nextBlockHeight int32) error {
+
+	if nextBlockHeight < 0 {
+		return nil
+	}
+
+	switch policy.kind {
+	case coinbaseProofKindAirdrop:
+		return mp.validateAirdropProofForHeight(policy, nextBlockHeight)
+
+	case coinbaseProofKindClaim:
+		return mp.validateClaimProofForHeight(policy, nextBlockHeight)
+
+	default:
+		return nil
+	}
+}
+
+func (mp *TxPool) validateAirdropProofForHeight(
+	policy coinbaseProofPolicy, nextBlockHeight int32) error {
+
+	if mp.cfg.IsDeploymentActive != nil {
+		active, err := mp.cfg.IsDeploymentActive(
+			chaincfg.DeploymentAirstop)
+		if err != nil {
+			return err
+		}
+		if active {
+			return coinbaseProofPrune("airdrop proofs are disabled")
+		}
+
+		active, err = mp.cfg.IsDeploymentActive(chaincfg.DeploymentHardening)
+		if err != nil {
+			return err
+		}
+		if active && policy.airdropWeak {
+			return coinbaseProofPrune("weak RSA airdrop proof is disabled")
+		}
+	}
+
+	if mp.cfg.ChainParams != nil &&
+		uint32(nextBlockHeight) >= mp.cfg.ChainParams.AirdropGooSigStop &&
+		policy.airdropGooSig {
+
+		return coinbaseProofPrune("GooSig airdrop proof is disabled")
+	}
+
+	if mp.cfg.IsAirdropSpent != nil {
+		spent, err := mp.cfg.IsAirdropSpent(policy.airdropPosition)
+		if err != nil {
+			return err
+		}
+		if spent {
+			return coinbaseProofPrune("airdrop proof position %d is "+
+				"already spent", policy.airdropPosition)
+		}
+	}
+
+	return nil
+}
+
+func (mp *TxPool) validateClaimProofForHeight(
+	policy coinbaseProofPolicy, nextBlockHeight int32) error {
+
+	nextHeight := uint32(nextBlockHeight)
+	if mp.cfg.ChainParams != nil &&
+		nextHeight >= mp.cfg.ChainParams.NameClaimPeriod {
+
+		return coinbaseProofPrune("CLAIM proof period has ended")
+	}
+	if policy.hasClaimHeight && policy.claimHeight < nextHeight {
+		return coinbaseProofPrune("CLAIM proof height = %d, before %d",
+			policy.claimHeight, nextBlockHeight)
+	}
+	if mp.cfg.MedianTimePast != nil {
+		medianTime := mp.cfg.MedianTimePast().Unix()
+		if policy.hasClaimWindow &&
+			medianTime < int64(policy.claimInception) {
+
+			return coinbaseProofPrune("CLAIM proof is not active")
+		}
+		if policy.hasClaimExpiry &&
+			medianTime > int64(policy.claimExpiration) {
+
+			return coinbaseProofPrune("CLAIM proof is expired")
+		}
+	}
+
+	return nil
+}
+
+func (mp *TxPool) nextBlockHeight() (int32, bool) {
+	if mp.cfg.BestHeight == nil {
+		return 0, false
+	}
+	return mp.cfg.BestHeight() + 1, true
+}
+
+func (mp *TxPool) ensureCoinbaseProofIndexes() {
+	if mp.coinbaseClaims == nil {
+		mp.coinbaseClaims = make(map[chainhash.Hash]chainhash.Hash)
+	}
+	if mp.coinbaseAirdrops == nil {
+		mp.coinbaseAirdrops = make(map[uint32]chainhash.Hash)
+	}
+}
+
+func (mp *TxPool) checkCoinbaseProofIndexConflict(hash chainhash.Hash,
+	policy coinbaseProofPolicy) error {
+
+	switch policy.kind {
+	case coinbaseProofKindAirdrop:
+		if existing, ok := mp.coinbaseAirdrops[policy.airdropPosition]; ok &&
+			existing != hash {
+
+			return fmt.Errorf("airdrop proof position %d already "+
+				"exists in pool", policy.airdropPosition)
+		}
+
+	case coinbaseProofKindClaim:
+		if existing, ok := mp.coinbaseClaims[policy.claimNameHash]; ok &&
+			existing != hash {
+
+			return fmt.Errorf("CLAIM proof name already exists in pool")
+		}
+	}
+	return nil
+}
+
+func (mp *TxPool) indexCoinbaseProof(hash chainhash.Hash,
+	policy coinbaseProofPolicy) {
+
+	switch policy.kind {
+	case coinbaseProofKindAirdrop:
+		mp.coinbaseAirdrops[policy.airdropPosition] = hash
+	case coinbaseProofKindClaim:
+		mp.coinbaseClaims[policy.claimNameHash] = hash
+	}
+}
+
+func (mp *TxPool) unindexCoinbaseProof(entry coinbaseProofEntry) {
+	switch entry.policy.kind {
+	case coinbaseProofKindAirdrop:
+		if hash, ok := mp.coinbaseAirdrops[entry.policy.airdropPosition]; ok && hash == entry.hash {
+
+			delete(mp.coinbaseAirdrops, entry.policy.airdropPosition)
+		}
+	case coinbaseProofKindClaim:
+		if hash, ok := mp.coinbaseClaims[entry.policy.claimNameHash]; ok && hash == entry.hash {
+
+			delete(mp.coinbaseClaims, entry.policy.claimNameHash)
+		}
+	}
+}
+
+func coinbaseProofMatchesHeight(policy coinbaseProofPolicy,
 	nextBlockHeight int32) bool {
 
-	if proof.Output == nil || proof.Output.Covenant.Type != wire.CovenantClaim {
+	if policy.kind != coinbaseProofKindClaim {
 		return true
 	}
-	if nextBlockHeight < 0 || len(proof.Output.Covenant.Items) < 2 ||
-		len(proof.Output.Covenant.Items[1]) != 4 {
-
+	if nextBlockHeight < 0 || !policy.hasClaimHeight {
 		return false
 	}
 
-	height := binary.LittleEndian.Uint32(proof.Output.Covenant.Items[1])
-	return height == uint32(nextBlockHeight)
+	return policy.claimHeight == uint32(nextBlockHeight)
 }
 
 func isMempoolMutableNameCovenant(covenantType uint8) bool {
@@ -2357,12 +2767,14 @@ func (mp *TxPool) validateRelayFeeMet(tx *hnsutil.Tx, txFee, txSize int64,
 // transactions until they are mined into a block.
 func New(cfg *Config) *TxPool {
 	return &TxPool{
-		cfg:            *cfg,
-		pool:           make(map[chainhash.Hash]*TxDesc),
-		orphans:        make(map[chainhash.Hash]*orphanTx),
-		orphansByPrev:  make(map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx),
-		nextExpireScan: time.Now().Add(orphanExpireScanInterval),
-		outpoints:      make(map[wire.OutPoint]*hnsutil.Tx),
-		nameActions:    make(map[chainhash.Hash]*hnsutil.Tx),
+		cfg:              *cfg,
+		pool:             make(map[chainhash.Hash]*TxDesc),
+		orphans:          make(map[chainhash.Hash]*orphanTx),
+		orphansByPrev:    make(map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx),
+		nextExpireScan:   time.Now().Add(orphanExpireScanInterval),
+		outpoints:        make(map[wire.OutPoint]*hnsutil.Tx),
+		nameActions:      make(map[chainhash.Hash]*hnsutil.Tx),
+		coinbaseClaims:   make(map[chainhash.Hash]chainhash.Hash),
+		coinbaseAirdrops: make(map[uint32]chainhash.Hash),
 	}
 }
