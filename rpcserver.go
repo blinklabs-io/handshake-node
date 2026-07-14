@@ -783,7 +783,7 @@ func handleNode(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 	c := cmd.(*hnsjson.NodeCmd)
 
 	var addr string
-	var nodeID uint64
+	var nodeID int32
 	var errN, err error
 	params := s.cfg.ChainParams
 	switch c.SubCmd {
@@ -791,8 +791,8 @@ func handleNode(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 		// If we have a valid uint disconnect by node id. Otherwise,
 		// attempt to disconnect by address, returning an error if a
 		// valid IP address is not supplied.
-		if nodeID, errN = strconv.ParseUint(c.Target, 10, 32); errN == nil {
-			err = s.cfg.ConnMgr.DisconnectByID(int32(nodeID))
+		if nodeID, errN = parseNodeID(c.Target); errN == nil {
+			err = s.cfg.ConnMgr.DisconnectByID(nodeID)
 		} else {
 			if _, _, errP := net.SplitHostPort(c.Target); errP == nil || net.ParseIP(c.Target) != nil {
 				addr = normalizeAddress(c.Target, params.DefaultPort)
@@ -804,7 +804,7 @@ func handleNode(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 				}
 			}
 		}
-		if err != nil && peerExists(s.cfg.ConnMgr, addr, int32(nodeID)) {
+		if err != nil && peerExists(s.cfg.ConnMgr, addr, nodeID) {
 
 			return nil, &hnsjson.RPCError{
 				Code:    hnsjson.ErrRPCMisc,
@@ -816,8 +816,8 @@ func handleNode(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 		// If we have a valid uint disconnect by node id. Otherwise,
 		// attempt to disconnect by address, returning an error if a
 		// valid IP address is not supplied.
-		if nodeID, errN = strconv.ParseUint(c.Target, 10, 32); errN == nil {
-			err = s.cfg.ConnMgr.RemoveByID(int32(nodeID))
+		if nodeID, errN = parseNodeID(c.Target); errN == nil {
+			err = s.cfg.ConnMgr.RemoveByID(nodeID)
 		} else {
 			if _, _, errP := net.SplitHostPort(c.Target); errP == nil || net.ParseIP(c.Target) != nil {
 				addr = normalizeAddress(c.Target, params.DefaultPort)
@@ -829,7 +829,7 @@ func handleNode(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 				}
 			}
 		}
-		if err != nil && peerExists(s.cfg.ConnMgr, addr, int32(nodeID)) {
+		if err != nil && peerExists(s.cfg.ConnMgr, addr, nodeID) {
 			return nil, &hnsjson.RPCError{
 				Code:    hnsjson.ErrRPCMisc,
 				Message: "can't remove a temporary peer, use disconnect",
@@ -870,6 +870,17 @@ func handleNode(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 
 	// no data returned unless an error.
 	return nil, nil
+}
+
+func parseNodeID(target string) (int32, error) {
+	nodeID, err := strconv.ParseInt(target, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	if nodeID < 0 {
+		return 0, fmt.Errorf("node ID cannot be negative")
+	}
+	return int32(nodeID), nil
 }
 
 // peerExists determines if a certain peer is currently connected given

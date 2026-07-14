@@ -33,6 +33,13 @@ type LookupFunc func(string) ([]net.IP, error)
 func SeedFromDNS(chainParams *chaincfg.Params, reqServices wire.ServiceFlag,
 	lookupFn LookupFunc, seedFn OnSeed) {
 
+	intPort, err := strconv.ParseUint(chainParams.DefaultPort, 10, 16)
+	if err != nil {
+		log.Errorf("Invalid default port %q for DNS seeds: %v",
+			chainParams.DefaultPort, err)
+		return
+	}
+
 	for _, dnsseed := range chainParams.DNSSeeds {
 		var host string
 		if !dnsseed.HasFiltering || reqServices == wire.SFNodeNetwork {
@@ -57,8 +64,6 @@ func SeedFromDNS(chainParams *chaincfg.Params, reqServices wire.ServiceFlag,
 				return
 			}
 			addresses := make([]*wire.NetAddressV2, len(seedpeers))
-			// if this errors then we have *real* problems
-			intPort, _ := strconv.Atoi(chainParams.DefaultPort)
 			for i, peer := range seedpeers {
 				addresses[i] = wire.NetAddressV2FromBytes(
 					// bitcoind seeds with addresses from

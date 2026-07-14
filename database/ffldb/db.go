@@ -1716,13 +1716,13 @@ func (tx *transaction) PruneBlocks(targetSize uint64) ([]chainhash.Hash, error) 
 			targetSize, maxSize)
 	}
 
-	first, last, lastFileSize, err := scanBlockFiles(tx.db.store.basePath)
+	first, last, lastFileSize, hasFiles, err := scanBlockFiles(tx.db.store.basePath)
 	if err != nil {
 		return nil, err
 	}
 
 	// If we have no files on disk or just a single file on disk, return early.
-	if first == last {
+	if !hasFiles || first == last {
 		return nil, nil
 	}
 
@@ -1746,7 +1746,7 @@ func (tx *transaction) PruneBlocks(targetSize uint64) ([]chainhash.Hash, error) 
 
 	// We use < not <= so that the last file is never deleted.  There are other checks in place
 	// but setting it to < here doesn't hurt.
-	for i := uint32(first); i < uint32(last); i++ {
+	for i := first; i < last; i++ {
 		// Add the block file to be deleted to the list of files pending deletion to
 		// delete when the transaction is committed.
 		if tx.pendingDelFileNums == nil {
@@ -1791,9 +1791,12 @@ func (tx *transaction) PruneBlocks(targetSize uint64) ([]chainhash.Hash, error) 
 //
 // This function is part of the database.Tx interface implementation.
 func (tx *transaction) BeenPruned() (bool, error) {
-	first, last, _, err := scanBlockFiles(tx.db.store.basePath)
+	first, last, _, hasFiles, err := scanBlockFiles(tx.db.store.basePath)
 	if err != nil {
 		return false, err
+	}
+	if !hasFiles {
+		return false, nil
 	}
 
 	// If the database is pruned, then the first .fdb will not be there.
