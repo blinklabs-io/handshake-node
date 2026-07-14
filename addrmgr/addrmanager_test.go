@@ -222,6 +222,40 @@ func TestAddLocalAddress(t *testing.T) {
 	}
 }
 
+func TestLocalAddresses(t *testing.T) {
+	amgr := addrmgr.New("testlocaladdresses", nil)
+	first := wire.NetAddressV2FromBytes(
+		time.Now(), wire.SFNodeNetwork, net.ParseIP("204.124.1.2"), 12038,
+	)
+	second := wire.NetAddressV2FromBytes(
+		time.Now(), wire.SFNodeNetwork, net.ParseIP("204.124.1.1"), 12039,
+	)
+	if err := amgr.AddLocalAddress(first, addrmgr.InterfacePrio); err != nil {
+		t.Fatalf("AddLocalAddress first: %v", err)
+	}
+	if err := amgr.AddLocalAddress(second, addrmgr.ManualPrio); err != nil {
+		t.Fatalf("AddLocalAddress second: %v", err)
+	}
+
+	addresses := amgr.LocalAddresses()
+	if len(addresses) != 2 {
+		t.Fatalf("LocalAddresses len = %d, want 2", len(addresses))
+	}
+	if got := addresses[0].NetAddress.Addr.String(); got != "204.124.1.1" {
+		t.Fatalf("LocalAddresses first = %s, want 204.124.1.1", got)
+	}
+	if addresses[0].Score != addrmgr.ManualPrio {
+		t.Fatalf("LocalAddresses score = %d, want %d",
+			addresses[0].Score, addrmgr.ManualPrio)
+	}
+
+	addresses[0].NetAddress.Port = 1
+	again := amgr.LocalAddresses()
+	if again[0].NetAddress.Port != 12039 {
+		t.Fatalf("LocalAddresses returned mutable address copy")
+	}
+}
+
 func TestAttempt(t *testing.T) {
 	n := addrmgr.New("testattempt", lookupFunc)
 

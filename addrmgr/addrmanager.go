@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +76,13 @@ type serializedAddrManager struct {
 type localAddress struct {
 	na    *wire.NetAddressV2
 	score AddressPriority
+}
+
+// LocalAddress is a read-only snapshot of a locally advertised address and its
+// discovery priority.
+type LocalAddress struct {
+	NetAddress *wire.NetAddressV2
+	Score      AddressPriority
 }
 
 // AddressPriority type is used to describe the hierarchy of local address
@@ -1072,6 +1080,32 @@ func (a *AddrManager) AddLocalAddress(na *wire.NetAddressV2, priority AddressPri
 		}
 	}
 	return nil
+}
+
+// LocalAddresses returns the currently tracked local addresses to advertise.
+func (a *AddrManager) LocalAddresses() []LocalAddress {
+	a.lamtx.Lock()
+	defer a.lamtx.Unlock()
+
+	localAddresses := make([]LocalAddress, 0, len(a.localAddresses))
+	for _, la := range a.localAddresses {
+		netAddress := *la.na
+		localAddresses = append(localAddresses, LocalAddress{
+			NetAddress: &netAddress,
+			Score:      la.score,
+		})
+	}
+
+	sort.Slice(localAddresses, func(i, j int) bool {
+		left := localAddresses[i].NetAddress
+		right := localAddresses[j].NetAddress
+		if left.Addr.String() == right.Addr.String() {
+			return left.Port < right.Port
+		}
+		return left.Addr.String() < right.Addr.String()
+	})
+
+	return localAddresses
 }
 
 // getReachabilityFrom returns the relative reachability of the provided local

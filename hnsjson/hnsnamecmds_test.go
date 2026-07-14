@@ -67,6 +67,19 @@ func TestHNSExtNameCmds(t *testing.T) {
 			unmarshalled: &hnsjson.GetNameResourceCmd{Name: "example"},
 		},
 		{
+			name: "decoderesource",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("decoderesource", "00")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewDecodeResourceCmd("00")
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"decoderesource","params":["00"],"id":1}`,
+			unmarshalled: &hnsjson.DecodeResourceCmd{
+				HexResource: "00",
+			},
+		},
+		{
 			name: "getnameproof",
 			newCmd: func() (interface{}, error) {
 				return hnsjson.NewCmd("getnameproof", "example")

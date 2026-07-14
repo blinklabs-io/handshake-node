@@ -89,6 +89,17 @@ func NewGenerateCmd(numBlocks uint32) *GenerateCmd {
 	}
 }
 
+// DecodeResourceCmd defines the decoderesource JSON-RPC command.
+type DecodeResourceCmd struct {
+	HexResource string
+}
+
+// NewDecodeResourceCmd returns a new instance which can be used to issue a
+// decoderesource JSON-RPC command.
+func NewDecodeResourceCmd(hexResource string) *DecodeResourceCmd {
+	return &DecodeResourceCmd{HexResource: hexResource}
+}
+
 // GetBestBlockCmd defines the getbestblock JSON-RPC command.
 type GetBestBlockCmd struct{}
 
@@ -532,6 +543,7 @@ func init() {
 	flags := UsageFlag(0)
 
 	MustRegisterCmd("debuglevel", (*DebugLevelCmd)(nil), flags)
+	MustRegisterCmd("decoderesource", (*DecodeResourceCmd)(nil), flags)
 	MustRegisterCmd("node", (*NodeCmd)(nil), flags)
 	MustRegisterCmd("generate", (*GenerateCmd)(nil), flags)
 	MustRegisterCmd("generatetoaddress", (*GenerateToAddressCmd)(nil), flags)

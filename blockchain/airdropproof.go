@@ -155,7 +155,8 @@ func checkCoinbaseAirdropProofSanity(tx *hnsutil.Tx, outputIndex int) error {
 }
 
 func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int, height uint32,
-	params *chaincfg.Params) (uint64, error) {
+	params *chaincfg.Params, deploymentFlags handshakeDeploymentFlags) (
+	uint64, error) {
 
 	msgTx := tx.MsgTx()
 	if outputIndex >= len(msgTx.TxIn) ||
@@ -189,6 +190,9 @@ func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int, height uint32,
 		if key.keyType == airdropKeyGoo {
 			return 0, badCovenant("GooSig airdrop proof is disabled")
 		}
+	}
+	if deploymentFlags.hardeningActive && proof.isWeak() {
+		return 0, badCovenant("airdrop proof uses weak algorithm")
 	}
 	if !proof.verifyMerkle() {
 		return 0, badCovenant("airdrop proof merkle root mismatch")
@@ -350,6 +354,14 @@ func (p *airdropProof) isSane() bool {
 
 func (p *airdropProof) isAddress() bool {
 	return len(p.key) > 0 && p.key[0] == airdropKeyAddress
+}
+
+func (p *airdropProof) isWeak() bool {
+	key, err := parseAirdropKey(p.key)
+	if err != nil {
+		return false
+	}
+	return key.isWeak()
 }
 
 func (p *airdropProof) position() (uint32, error) {

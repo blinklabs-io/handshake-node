@@ -104,6 +104,46 @@ func TestCoinbaseClaimConjuredValueRejectsExpiredProof(t *testing.T) {
 	}
 }
 
+func TestCoinbaseClaimConjuredValueRejectsWeakAfterHardening(t *testing.T) {
+	params := chaincfg.MainNetParams
+	height := uint32(10)
+	prevTime := int64(100)
+	commitHash := chainhash.Hash{0x44}
+	commitHeight := uint32(1)
+	addr := wire.Address{
+		Version: 0,
+		Hash:    testAddressHash(),
+	}
+	value, ok := reservedNameValue(hashName([]byte("com")))
+	if !ok {
+		t.Fatal("missing reserved value for com")
+	}
+	fee := uint64(1000)
+
+	txt := testClaimTXT(t, &params, addr, fee, commitHash, commitHeight)
+	proof := testOwnershipProof(t, "com", true, txt, 50, 150)
+	tx := testCoinbaseClaimTxWithWeak(t, height, addr, value-fee,
+		commitHash, commitHeight, proof, true)
+
+	got, err := coinbaseConjuredValue(hnsutil.NewTx(tx), height, prevTime,
+		&params)
+	if err != nil {
+		t.Fatalf("coinbaseConjuredValue before hardening: %v", err)
+	}
+	if got != value {
+		t.Fatalf("coinbaseConjuredValue got %d, want %d", got, value)
+	}
+
+	_, err = coinbaseConjuredValue(hnsutil.NewTx(tx), height, prevTime,
+		&params, handshakeDeploymentFlags{hardeningActive: true})
+	if err == nil {
+		t.Fatal("coinbaseConjuredValue: expected weak CLAIM error")
+	}
+	if !strings.Contains(err.Error(), "weak algorithm") {
+		t.Fatalf("coinbaseConjuredValue weak CLAIM error = %v", err)
+	}
+}
+
 func TestCoinbaseAirdropConjuredValue(t *testing.T) {
 	proof := testHsdFaucetProof(t)
 	tx, value := testCoinbaseAirdropTxFromProof(t, proof)
@@ -127,6 +167,21 @@ func TestCoinbaseAirdropConjuredValueRejectsAirstop(t *testing.T) {
 		handshakeDeploymentFlags{airstopActive: true}); err == nil {
 
 		t.Fatal("coinbaseConjuredValue: expected airstop error")
+	}
+}
+
+func TestCoinbaseAirdropConjuredValueRejectsWeakAfterHardening(t *testing.T) {
+	proof := testWeakRSAAirdropProof(t)
+	tx, _ := testCoinbaseAirdropTxFromProof(t, proof)
+
+	_, err := coinbaseConjuredValue(hnsutil.NewTx(tx), 10, 0,
+		&chaincfg.MainNetParams,
+		handshakeDeploymentFlags{hardeningActive: true})
+	if err == nil {
+		t.Fatal("coinbaseConjuredValue: expected weak airdrop error")
+	}
+	if !strings.Contains(err.Error(), "weak algorithm") {
+		t.Fatalf("coinbaseConjuredValue weak airdrop error = %v", err)
 	}
 }
 
@@ -251,6 +306,39 @@ func testAirdropProof(t *testing.T, addr wire.Address, value, fee uint64) []byte
 	return proof.Bytes()
 }
 
+func testWeakRSAAirdropProof(t *testing.T) []byte {
+	t.Helper()
+
+	var key bytes.Buffer
+	key.WriteByte(airdropKeyRSA)
+	var sizeBytes [2]byte
+	binary.LittleEndian.PutUint16(sizeBytes[:], 128)
+	key.Write(sizeBytes[:])
+	n := make([]byte, 128)
+	n[0] = 0x80
+	key.Write(n)
+	key.WriteByte(3)
+	key.Write([]byte{0x01, 0x00, 0x01})
+	key.Write(bytes.Repeat([]byte{0x11}, 32))
+
+	var proof bytes.Buffer
+	var index [4]byte
+	proof.Write(index[:])
+	proof.WriteByte(0)
+	proof.WriteByte(0)
+	proof.WriteByte(0)
+	writeAirdropVarBytes(&proof, key.Bytes())
+	proof.WriteByte(0)
+	proof.WriteByte(20)
+	proof.Write(bytes.Repeat([]byte{0xbb}, 20))
+	if err := wire.WriteVarInt(&proof, 0, 0); err != nil {
+		t.Fatalf("WriteVarInt fee: %v", err)
+	}
+	writeAirdropVarBytes(&proof, nil)
+
+	return proof.Bytes()
+}
+
 func testAddressHash() []byte {
 	return bytes.Repeat([]byte{0xaa}, 20)
 }
@@ -258,6 +346,14 @@ func testAddressHash() []byte {
 func testCoinbaseClaimTx(t *testing.T, height uint32, addr wire.Address,
 	outputValue uint64, commitHash chainhash.Hash, commitHeight uint32,
 	proof []byte) *wire.MsgTx {
+
+	return testCoinbaseClaimTxWithWeak(t, height, addr, outputValue,
+		commitHash, commitHeight, proof, false)
+}
+
+func testCoinbaseClaimTxWithWeak(t *testing.T, height uint32,
+	addr wire.Address, outputValue uint64, commitHash chainhash.Hash,
+	commitHeight uint32, proof []byte, weak bool) *wire.MsgTx {
 
 	t.Helper()
 	if outputValue > uint64(hnsutil.MaxDoo) {
@@ -271,7 +367,7 @@ func testCoinbaseClaimTx(t *testing.T, height uint32, addr wire.Address,
 		wire.TxWitness{proof}))
 	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
 	tx.AddTxOut(wire.NewTxOut(int64(outputValue), addr,
-		claimCovenantAt("com", height, commitHash, commitHeight, false)))
+		claimCovenantAt("com", height, commitHash, commitHeight, weak)))
 	return tx
 }
 

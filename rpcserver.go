@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -440,6 +441,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"createupdate":           handleCreateUpdate,
 	"debuglevel":             handleDebugLevel,
 	"decoderawtransaction":   handleDecodeRawTransaction,
+	"decoderesource":         handleDecodeResource,
 	"decodescript":           handleDecodeScript,
 	"estimatefee":            handleEstimateFee,
 	"generate":               handleGenerate,
@@ -447,6 +449,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getbestblock":           handleGetBestBlock,
 	"getbestblockhash":       handleGetBestBlockHash,
 	"getblock":               handleGetBlock,
+	"getblockbyheight":       handleGetBlockByHeight,
 	"getblockchaininfo":      handleGetBlockChainInfo,
 	"getblockcount":          handleGetBlockCount,
 	"getblockhash":           handleGetBlockHash,
@@ -462,6 +465,9 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"gethashespersec":        handleGetHashesPerSec,
 	"getheaders":             handleGetHeaders,
 	"getinfo":                handleGetInfo,
+	"getmempoolancestors":    handleGetMempoolAncestors,
+	"getmempooldescendants":  handleGetMempoolDescendants,
+	"getmempoolentry":        handleGetMempoolEntry,
 	"getmempoolinfo":         handleGetMempoolInfo,
 	"getmininginfo":          handleGetMiningInfo,
 	"getauctioninfo":         handleGetAuctionInfo,
@@ -472,6 +478,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getnames":               handleGetNames,
 	"getnamesbyhash":         handleGetNamesByHash,
 	"getnettotals":           handleGetNetTotals,
+	"getnetworkinfo":         handleGetNetworkInfo,
 	"getnetworkhashps":       handleGetNetworkHashPS,
 	"getnodeaddresses":       handleGetNodeAddresses,
 	"getpeerinfo":            handleGetPeerInfo,
@@ -550,8 +557,6 @@ var rpcAskWallet = map[string]struct{}{
 // Commands that are currently unimplemented, but should ultimately be.
 var rpcUnimplemented = map[string]struct{}{
 	"estimatepriority": {},
-	"getmempoolentry":  {},
-	"getnetworkinfo":   {},
 	"getwork":          {},
 	"preciousblock":    {},
 }
@@ -574,11 +579,13 @@ var rpcLimited = map[string]struct{}{
 	// HTTP/S-only commands
 	"createrawtransaction":  {},
 	"decoderawtransaction":  {},
+	"decoderesource":        {},
 	"decodescript":          {},
 	"estimatefee":           {},
 	"getbestblock":          {},
 	"getbestblockhash":      {},
 	"getblock":              {},
+	"getblockbyheight":      {},
 	"getblockcount":         {},
 	"getblockhash":          {},
 	"getblockheader":        {},
@@ -589,7 +596,11 @@ var rpcLimited = map[string]struct{}{
 	"getdifficulty":         {},
 	"getheaders":            {},
 	"getinfo":               {},
+	"getmempoolancestors":   {},
+	"getmempooldescendants": {},
+	"getmempoolentry":       {},
 	"getnettotals":          {},
+	"getnetworkinfo":        {},
 	"getnetworkhashps":      {},
 	"getrawmempool":         {},
 	"getrawtransaction":     {},
@@ -1903,6 +1914,36 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	return blockReply, nil
 }
 
+// handleGetBlockByHeight implements the getblockbyheight command.
+func handleGetBlockByHeight(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetBlockByHeightCmd)
+	best := s.cfg.Chain.BestSnapshot()
+	if c.Height > uint32(best.Height) {
+		return nil, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCInvalidParameter,
+			Message: "Block height out of range",
+		}
+	}
+
+	hash, err := s.cfg.Chain.BlockHashByHeight(int32(c.Height))
+	if err != nil {
+		return nil, &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCBlockNotFound,
+			Message: "Block not found",
+		}
+	}
+
+	verbosity := 1
+	if c.Verbose != nil && !*c.Verbose {
+		verbosity = 0
+	} else if c.Details != nil && *c.Details {
+		verbosity = 2
+	}
+
+	getBlockCmd := hnsjson.NewGetBlockCmd(hash.String(), &verbosity)
+	return handleGetBlock(s, getBlockCmd, closeChan)
+}
+
 // softForkStatus converts a ThresholdState state into a human readable string
 // corresponding to the particular state.
 func softForkStatus(state blockchain.ThresholdState) (string, error) {
@@ -3170,6 +3211,24 @@ func resourceDataToJSON(resource *wire.DomainResourceData) *hnsjson.NameResource
 	return result
 }
 
+// handleDecodeResource implements the decoderesource command.
+func handleDecodeResource(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.DecodeResourceCmd)
+	data, err := hex.DecodeString(c.HexResource)
+	if err != nil {
+		return nil, rpcDecodeHexError(c.HexResource)
+	}
+	if len(data) > 512 {
+		return nil, rpcInvalidParameterError("resource exceeds 512 bytes")
+	}
+
+	resource, err := wire.NewDomainResourceDataFromBytes(data)
+	if err != nil {
+		return nil, rpcInvalidParameterError(err.Error())
+	}
+	return resourceDataToJSON(resource), nil
+}
+
 func nextFutureHeight(current, next, candidate uint32) uint32 {
 	if candidate <= current {
 		return next
@@ -3579,6 +3638,202 @@ func handleGetInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (in
 	return ret, nil
 }
 
+func mempoolSnapshotEntry(txid string, entries map[string]*hnsjson.GetRawMempoolVerboseResult) (*hnsjson.GetRawMempoolVerboseResult, string, error) {
+	hash, err := chainhash.NewHashFromStr(txid)
+	if err != nil {
+		return nil, "", rpcDecodeHexError(txid)
+	}
+
+	canonicalTxid := hash.String()
+	entry, ok := entries[canonicalTxid]
+	if !ok {
+		return nil, "", &hnsjson.RPCError{
+			Code:    hnsjson.ErrRPCInvalidAddressOrKey,
+			Message: "Transaction not in mempool",
+		}
+	}
+	return entry, canonicalTxid, nil
+}
+
+func mempoolAncestorSet(txid string, entries map[string]*hnsjson.GetRawMempoolVerboseResult) map[string]struct{} {
+	ancestors := make(map[string]struct{})
+	var visit func(string)
+	visit = func(hash string) {
+		entry := entries[hash]
+		if entry == nil {
+			return
+		}
+		for _, dependency := range entry.Depends {
+			if _, ok := entries[dependency]; !ok {
+				continue
+			}
+			if _, visited := ancestors[dependency]; visited {
+				continue
+			}
+			ancestors[dependency] = struct{}{}
+			visit(dependency)
+		}
+	}
+	visit(txid)
+	return ancestors
+}
+
+func mempoolDescendantSet(txid string, entries map[string]*hnsjson.GetRawMempoolVerboseResult) map[string]struct{} {
+	children := make(map[string][]string)
+	for hash, entry := range entries {
+		for _, dependency := range entry.Depends {
+			if _, ok := entries[dependency]; ok {
+				children[dependency] = append(children[dependency], hash)
+			}
+		}
+	}
+
+	descendants := make(map[string]struct{})
+	var visit func(string)
+	visit = func(hash string) {
+		for _, child := range children[hash] {
+			if _, visited := descendants[child]; visited {
+				continue
+			}
+			descendants[child] = struct{}{}
+			visit(child)
+		}
+	}
+	visit(txid)
+	return descendants
+}
+
+func sortedMempoolSet(set map[string]struct{}) []string {
+	hashes := make([]string, 0, len(set))
+	for hash := range set {
+		hashes = append(hashes, hash)
+	}
+	sort.Strings(hashes)
+	return hashes
+}
+
+func mempoolSetStats(txid string, related map[string]struct{},
+	entries map[string]*hnsjson.GetRawMempoolVerboseResult) (int64, int64, float64) {
+
+	entry := entries[txid]
+	if entry == nil {
+		return 0, 0, 0
+	}
+
+	count := int64(1 + len(related))
+	size := int64(entry.Vsize)
+	fees := entry.Fee
+	for hash := range related {
+		relatedEntry := entries[hash]
+		if relatedEntry == nil {
+			continue
+		}
+		size += int64(relatedEntry.Vsize)
+		fees += relatedEntry.Fee
+	}
+	return count, size, fees
+}
+
+func mempoolEntryToJSON(txid string, entries map[string]*hnsjson.GetRawMempoolVerboseResult) *hnsjson.GetMempoolEntryResult {
+	entry := entries[txid]
+	if entry == nil {
+		return nil
+	}
+
+	ancestors := mempoolAncestorSet(txid, entries)
+	descendants := mempoolDescendantSet(txid, entries)
+	ancestorCount, ancestorSize, ancestorFees := mempoolSetStats(txid,
+		ancestors, entries)
+	descendantCount, descendantSize, descendantFees := mempoolSetStats(txid,
+		descendants, entries)
+	depends := append([]string(nil), entry.Depends...)
+	sort.Strings(depends)
+
+	return &hnsjson.GetMempoolEntryResult{
+		VSize:           entry.Vsize,
+		Size:            entry.Size,
+		Weight:          int64(entry.Weight),
+		Fee:             entry.Fee,
+		ModifiedFee:     entry.Fee,
+		Time:            entry.Time,
+		Height:          entry.Height,
+		DescendantCount: descendantCount,
+		DescendantSize:  descendantSize,
+		DescendantFees:  descendantFees,
+		AncestorCount:   ancestorCount,
+		AncestorSize:    ancestorSize,
+		AncestorFees:    ancestorFees,
+		WTxId:           txid,
+		Fees: hnsjson.MempoolFees{
+			Base:       entry.Fee,
+			Modified:   entry.Fee,
+			Ancestor:   ancestorFees,
+			Descendant: descendantFees,
+		},
+		Depends: depends,
+	}
+}
+
+func mempoolRelatedResult(txid string, entries map[string]*hnsjson.GetRawMempoolVerboseResult,
+	related map[string]struct{}, verbose bool) interface{} {
+
+	hashes := sortedMempoolSet(related)
+	if !verbose {
+		return hashes
+	}
+
+	results := make([]*hnsjson.GetMempoolEntryResult, 0, len(hashes))
+	for _, hash := range hashes {
+		results = append(results, mempoolEntryToJSON(hash, entries))
+	}
+	return results
+}
+
+// handleGetMempoolAncestors implements the getmempoolancestors command.
+func handleGetMempoolAncestors(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetMempoolAncestorsCmd)
+	entries := s.cfg.TxMemPool.RawMempoolVerbose()
+	_, txid, err := mempoolSnapshotEntry(c.TxID, entries)
+	if err != nil {
+		return nil, err
+	}
+
+	verbose := false
+	if c.Verbose != nil {
+		verbose = *c.Verbose
+	}
+	return mempoolRelatedResult(txid, entries, mempoolAncestorSet(txid,
+		entries), verbose), nil
+}
+
+// handleGetMempoolDescendants implements the getmempooldescendants command.
+func handleGetMempoolDescendants(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetMempoolDescendantsCmd)
+	entries := s.cfg.TxMemPool.RawMempoolVerbose()
+	_, txid, err := mempoolSnapshotEntry(c.TxID, entries)
+	if err != nil {
+		return nil, err
+	}
+
+	verbose := false
+	if c.Verbose != nil {
+		verbose = *c.Verbose
+	}
+	return mempoolRelatedResult(txid, entries, mempoolDescendantSet(txid,
+		entries), verbose), nil
+}
+
+// handleGetMempoolEntry implements the getmempoolentry command.
+func handleGetMempoolEntry(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*hnsjson.GetMempoolEntryCmd)
+	entries := s.cfg.TxMemPool.RawMempoolVerbose()
+	_, txid, err := mempoolSnapshotEntry(c.TxID, entries)
+	if err != nil {
+		return nil, err
+	}
+	return mempoolEntryToJSON(txid, entries), nil
+}
+
 // handleGetMempoolInfo implements the getmempoolinfo command.
 func handleGetMempoolInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	mempoolTxns := s.cfg.TxMemPool.TxDescs()
@@ -3630,6 +3885,68 @@ func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 		TestNet:            cfg.RegressionTest,
 	}
 	return &result, nil
+}
+
+func localUserAgent() string {
+	return peer.FormatUserAgent(userAgentName, userAgentVersion,
+		cfg.UserAgentComments)
+}
+
+func localServiceNames(services wire.ServiceFlag) []string {
+	names := make([]string, 0, 2)
+	if services.HasFlag(wire.SFNodeNetwork) {
+		names = append(names, "NETWORK")
+	}
+	if services.HasFlag(wire.SFNodeBloom) {
+		names = append(names, "BLOOM")
+	}
+	return names
+}
+
+// handleGetNetworkInfo implements the getnetworkinfo command.
+func handleGetNetworkInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	peers := s.cfg.ConnMgr.ConnectedPeers()
+	var inbound, outbound int32
+	for _, p := range peers {
+		if p.ToPeer().Inbound() {
+			inbound++
+		} else {
+			outbound++
+		}
+	}
+
+	localAddresses := s.cfg.ConnMgr.LocalAddresses()
+	addresses := make([]hnsjson.LocalAddressesResult, 0,
+		len(localAddresses))
+	for _, localAddress := range localAddresses {
+		netAddress := localAddress.NetAddress
+		addresses = append(addresses, hnsjson.LocalAddressesResult{
+			Address: netAddress.Addr.String(),
+			Port:    netAddress.Port,
+			Score:   localAddress.Score,
+		})
+	}
+
+	services := s.cfg.ConnMgr.Services()
+	result := &hnsjson.GetNetworkInfoResult{
+		Version:           int32(1000000*appMajor + 10000*appMinor + 100*appPatch),
+		SubVersion:        localUserAgent(),
+		ProtocolVersion:   int32(wire.HnsProtocolVersion),
+		LocalServices:     fmt.Sprintf("%08x", uint32(services)),
+		LocalServiceNames: localServiceNames(services),
+		LocalRelay:        !cfg.BlocksOnly,
+		TimeOffset:        int64(s.cfg.TimeSource.Offset().Seconds()),
+		Connections:       s.cfg.ConnMgr.ConnectedCount(),
+		ConnectionsIn:     inbound,
+		ConnectionsOut:    outbound,
+		NetworkActive:     true,
+		Networks:          []hnsjson.NetworksResult{},
+		RelayFee:          cfg.minRelayTxFee.ToHNS(),
+		IncrementalFee:    0,
+		LocalAddresses:    addresses,
+		Warnings:          hnsjson.StringOrArray{},
+	}
+	return result, nil
 }
 
 // handleGetNetTotals implements the getnettotals command.
@@ -5945,6 +6262,11 @@ type rpcserverPeer interface {
 	FeeFilter() int64
 }
 
+type rpcserverLocalAddress struct {
+	NetAddress *wire.NetAddressV2
+	Score      int32
+}
+
 // rpcserverConnManager represents a connection manager for use with the RPC
 // server.
 //
@@ -5981,6 +6303,9 @@ type rpcserverConnManager interface {
 	// ConnectedCount returns the number of currently connected peers.
 	ConnectedCount() int32
 
+	// Services returns the local services advertised to peers.
+	Services() wire.ServiceFlag
+
 	// NetTotals returns the sum of all bytes received and sent across the
 	// network for all peers.
 	NetTotals() (uint64, uint64)
@@ -6008,6 +6333,9 @@ type rpcserverConnManager interface {
 	// NodeAddresses returns an array consisting node addresses which can
 	// potentially be used to find new nodes in the network.
 	NodeAddresses() []*wire.NetAddressV2
+
+	// LocalAddresses returns locally advertised addresses.
+	LocalAddresses() []rpcserverLocalAddress
 }
 
 // rpcserverSyncManager represents a sync manager for use with the RPC server.
