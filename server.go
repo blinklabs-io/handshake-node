@@ -619,6 +619,52 @@ func (sp *serverPeer) OnTx(_ *peer.Peer, msg *wire.HnsMsgTx) {
 	<-sp.txProcessed
 }
 
+// OnClaim is invoked when a peer receives a claim message.
+func (sp *serverPeer) OnClaim(_ *peer.Peer, msg *wire.HnsMsgClaim) {
+	if cfg.BlocksOnly {
+		peerLog.Tracef("Ignoring claim from %v - blocksonly enabled", sp)
+		return
+	}
+
+	hash, err := sp.server.acceptRawClaimProof(msg.Claim)
+	iv := wire.NewInvVect(wire.InvTypeClaim, &hash)
+	sp.AddKnownInventory(iv)
+	if sp.server.syncManager != nil {
+		sp.server.syncManager.QueueCoinbaseProof(&hash, sp.Peer)
+	}
+	if err != nil {
+		peerLog.Debugf("Rejected claim %x from %v: %v", hash[:], sp, err)
+		sp.PushRejectMsg(wire.HnsMsgTypeClaim, wire.RejectInvalid,
+			err.Error(), &hash, false)
+		return
+	}
+
+	sp.server.RelayInventory(iv, nil)
+}
+
+// OnAirDrop is invoked when a peer receives an airdrop message.
+func (sp *serverPeer) OnAirDrop(_ *peer.Peer, msg *wire.HnsMsgAirDrop) {
+	if cfg.BlocksOnly {
+		peerLog.Tracef("Ignoring airdrop from %v - blocksonly enabled", sp)
+		return
+	}
+
+	hash, err := sp.server.acceptRawAirdropProof(msg.Payload)
+	iv := wire.NewInvVect(wire.InvTypeAirDrop, &hash)
+	sp.AddKnownInventory(iv)
+	if sp.server.syncManager != nil {
+		sp.server.syncManager.QueueCoinbaseProof(&hash, sp.Peer)
+	}
+	if err != nil {
+		peerLog.Debugf("Rejected airdrop %x from %v: %v", hash[:], sp, err)
+		sp.PushRejectMsg(wire.HnsMsgTypeAirDrop, wire.RejectInvalid,
+			err.Error(), &hash, false)
+		return
+	}
+
+	sp.server.RelayInventory(iv, nil)
+}
+
 // OnBlock is invoked when a peer receives a block message. It blocks until the
 // block has been fully processed.
 func (sp *serverPeer) OnBlock(_ *peer.Peer, msg *wire.HnsMsgBlock, buf []byte) {
@@ -814,15 +860,127 @@ func (s *server) pushInventory(sp *serverPeer, iv *wire.InvVect,
 			sp, &iv.Hash, doneChan,
 		)
 
+	case wire.InvTypeClaim, wire.InvTypeAirDrop:
+		return s.pushCoinbaseProofMsg(sp, iv, doneChan)
+
 	default:
 		peerLog.Warnf("Unknown type in inventory request %d", iv.Type)
-
-		if doneChan != nil {
-			doneChan <- struct{}{}
-		}
-
+		signalDone(doneChan)
 		return errors.New("unknown inventory type")
 	}
+}
+
+func signalDone(doneChan chan<- struct{}) {
+	if doneChan != nil {
+		doneChan <- struct{}{}
+	}
+}
+
+func (s *server) coinbaseProofContext() (uint32, int64) {
+	best := s.chain.BestSnapshot()
+	return uint32(best.Height + 1), best.Timestamp.Unix()
+}
+
+func (s *server) airdropDisabled() (bool, error) {
+	return s.chain.IsDeploymentActive(chaincfg.DeploymentAirstop)
+}
+
+func coinbaseProofForMining(proof blockchain.RawCoinbaseProof) mining.CoinbaseProof {
+	return mining.CoinbaseProof{
+		Witness: proof.Witness,
+		Output:  proof.Output,
+		Fee:     proof.Fee,
+	}
+}
+
+func (s *server) acceptRawClaimProof(serialized []byte) (chainhash.Hash, error) {
+	hash := blockchain.RawProofHash(serialized)
+	height, prevTime := s.coinbaseProofContext()
+	proof, err := blockchain.CoinbaseClaimProofFromRaw(serialized, height,
+		prevTime, s.chainParams)
+	if err != nil {
+		return hash, err
+	}
+	if _, err := s.txMemPool.AddCoinbaseProof(
+		coinbaseProofForMining(proof)); err != nil {
+
+		return hash, err
+	}
+	return proof.Hash, nil
+}
+
+func (s *server) acceptRawAirdropProof(serialized []byte) (chainhash.Hash, error) {
+	hash := blockchain.RawProofHash(serialized)
+	height, _ := s.coinbaseProofContext()
+	active, err := s.airdropDisabled()
+	if err != nil {
+		return hash, err
+	}
+	if active {
+		return hash, fmt.Errorf("airdrop proofs are disabled")
+	}
+
+	proof, err := blockchain.CoinbaseAirdropProofFromRaw(serialized, height,
+		s.chainParams)
+	if err != nil {
+		return hash, err
+	}
+	if _, err := s.txMemPool.AddCoinbaseProof(
+		coinbaseProofForMining(proof)); err != nil {
+
+		return hash, err
+	}
+	return proof.Hash, nil
+}
+
+func (s *server) pushCoinbaseProofMsg(sp *serverPeer, iv *wire.InvVect,
+	doneChan chan<- struct{}) error {
+
+	if iv.Type == wire.InvTypeAirDrop {
+		active, err := s.airdropDisabled()
+		if err != nil {
+			signalDone(doneChan)
+			return err
+		}
+		if active {
+			signalDone(doneChan)
+			return errors.New("airdrop proofs are disabled")
+		}
+	}
+
+	proof, ok := s.txMemPool.FetchCoinbaseProof(&iv.Hash)
+	if !ok {
+		signalDone(doneChan)
+		return errors.New("coinbase proof not found")
+	}
+
+	var msg wire.HandshakeMessage
+	switch iv.Type {
+	case wire.InvTypeClaim:
+		if proof.Output == nil ||
+			proof.Output.Covenant.Type != wire.CovenantClaim {
+
+			signalDone(doneChan)
+			return errors.New("coinbase proof is not a claim")
+		}
+		msg = &wire.HnsMsgClaim{Claim: proof.Witness}
+
+	case wire.InvTypeAirDrop:
+		if proof.Output == nil ||
+			proof.Output.Covenant.Type != wire.CovenantNone {
+
+			signalDone(doneChan)
+			return errors.New("coinbase proof is not an airdrop")
+		}
+		msg = &wire.HnsMsgAirDrop{Payload: proof.Witness}
+
+	default:
+		signalDone(doneChan)
+		return errors.New("unknown coinbase proof inventory type")
+	}
+
+	sp.QueueMessage(msg, doneChan)
+	return nil
 }
 
 // OnGetBlocks is invoked when a peer receives a getblocks message.
@@ -1855,6 +2013,8 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 			OnVerAck:      sp.OnVerAck,
 			OnMemPool:     sp.OnMemPool,
 			OnTx:          sp.OnTx,
+			OnClaim:       sp.OnClaim,
+			OnAirDrop:     sp.OnAirDrop,
 			OnBlock:       sp.OnBlock,
 			OnInv:         sp.OnInv,
 			OnHeaders:     sp.OnHeaders,

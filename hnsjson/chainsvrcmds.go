@@ -956,6 +956,28 @@ func NewBitcoindSendRawTransactionCmd(hexTx string, maxFeeRate BTCPerkvB) *SendR
 	}
 }
 
+// SendRawClaimCmd defines the sendrawclaim JSON-RPC command.
+type SendRawClaimCmd struct {
+	Base64Proof string
+}
+
+// NewSendRawClaimCmd returns a new instance which can be used to issue a
+// sendrawclaim JSON-RPC command.
+func NewSendRawClaimCmd(base64Proof string) *SendRawClaimCmd {
+	return &SendRawClaimCmd{Base64Proof: base64Proof}
+}
+
+// SendRawAirdropCmd defines the sendrawairdrop JSON-RPC command.
+type SendRawAirdropCmd struct {
+	Base64Proof string
+}
+
+// NewSendRawAirdropCmd returns a new instance which can be used to issue a
+// sendrawairdrop JSON-RPC command.
+func NewSendRawAirdropCmd(base64Proof string) *SendRawAirdropCmd {
+	return &SendRawAirdropCmd{Base64Proof: base64Proof}
+}
+
 // SetGenerateCmd defines the setgenerate JSON-RPC command.
 type SetGenerateCmd struct {
 	Generate     bool
@@ -1201,6 +1223,8 @@ func init() {
 	MustRegisterCmd("preciousblock", (*PreciousBlockCmd)(nil), flags)
 	MustRegisterCmd("reconsiderblock", (*ReconsiderBlockCmd)(nil), flags)
 	MustRegisterCmd("searchrawtransactions", (*SearchRawTransactionsCmd)(nil), flags)
+	MustRegisterCmd("sendrawairdrop", (*SendRawAirdropCmd)(nil), flags)
+	MustRegisterCmd("sendrawclaim", (*SendRawClaimCmd)(nil), flags)
 	MustRegisterCmd("sendrawtransaction", (*SendRawTransactionCmd)(nil), flags)
 	MustRegisterCmd("submitpackage", (*JsonSubmitPackageCmd)(nil), flags)
 	MustRegisterCmd("setgenerate", (*SetGenerateCmd)(nil), flags)

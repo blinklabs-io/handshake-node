@@ -121,6 +121,22 @@ func TestHandshakeRawHashRPCEncoding(t *testing.T) {
 	}
 }
 
+func TestSendRawProofRPCRejectsInvalidBase64(t *testing.T) {
+	s := &rpcServer{}
+
+	if _, err := handleSendRawClaim(s, hnsjson.NewSendRawClaimCmd("%%%"),
+		nil); err == nil {
+
+		t.Fatal("handleSendRawClaim accepted invalid base64")
+	}
+
+	if _, err := handleSendRawAirdrop(s,
+		hnsjson.NewSendRawAirdropCmd("%%%"), nil); err == nil {
+
+		t.Fatal("handleSendRawAirdrop accepted invalid base64")
+	}
+}
+
 func TestNameAuctionInfoUsesRawNameHash(t *testing.T) {
 	const name = "rawhash"
 	nameHash := blockchain.HashName([]byte(name))
@@ -226,8 +242,9 @@ func (m *testRPCConnManager) PersistentPeers() []rpcserverPeer           { retur
 func (m *testRPCConnManager) BroadcastMessage(msg wire.HandshakeMessage) {}
 func (m *testRPCConnManager) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
 }
-func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc) {}
-func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2      { return nil }
+func (m *testRPCConnManager) RelayInventory(iv *wire.InvVect, data interface{}) {}
+func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc)          {}
+func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2               { return nil }
 func (m *testRPCConnManager) LocalAddresses() []rpcserverLocalAddress {
 	return m.localAddresses
 }

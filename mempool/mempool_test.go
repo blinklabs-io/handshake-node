@@ -1190,6 +1190,18 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddCoinbaseProof airdrop: %v", err)
 	}
+	airdropRawHash := blockchain.RawProofHash(airdropWitness)
+	if !mp.HaveCoinbaseProof(&airdropRawHash) {
+		t.Fatal("HaveCoinbaseProof did not find airdrop by hsd hash")
+	}
+	fetchedProof, ok := mp.FetchCoinbaseProof(&airdropRawHash)
+	if !ok {
+		t.Fatal("FetchCoinbaseProof did not find airdrop by hsd hash")
+	}
+	if !reflect.DeepEqual(fetchedProof.Witness, airdropWitness) {
+		t.Fatalf("FetchCoinbaseProof witness = %x, want %x",
+			fetchedProof.Witness, airdropWitness)
+	}
 	if mp.LastUpdated().Unix() == 0 {
 		t.Fatal("AddCoinbaseProof did not update LastUpdated")
 	}
@@ -1341,6 +1353,9 @@ func TestCoinbaseProofSourceStoresClonesAndFiltersClaims(t *testing.T) {
 
 	if !mp.RemoveCoinbaseProof(airdropHash) {
 		t.Fatal("RemoveCoinbaseProof returned false")
+	}
+	if mp.HaveCoinbaseProof(&airdropRawHash) {
+		t.Fatal("HaveCoinbaseProof found removed airdrop")
 	}
 	proofs, err = mp.CoinbaseProofs(11)
 	if err != nil {
