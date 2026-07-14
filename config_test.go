@@ -73,9 +73,9 @@ func TestDefaultRPCPorts(t *testing.T) {
 			mainNetParams.rpcPort, "12037")
 	}
 
-	if regressionNetParams.rpcPort != "18334" {
+	if regressionNetParams.rpcPort != "14037" {
 		t.Fatalf("regtest RPC port: got %q, want %q",
-			regressionNetParams.rpcPort, "18334")
+			regressionNetParams.rpcPort, "14037")
 	}
 
 	if defaultMetricsPort != "12039" {

@@ -12,12 +12,10 @@ import (
 
 func TestNormalizeAddressDefaultPorts(t *testing.T) {
 	tests := []struct {
-		name      string
-		addr      string
-		chain     *chaincfg.Params
-		useWallet bool
-		want      string
-		wantErr   bool
+		name  string
+		addr  string
+		chain *chaincfg.Params
+		want  string
 	}{
 		{
 			name:  "mainnet node",
@@ -26,43 +24,22 @@ func TestNormalizeAddressDefaultPorts(t *testing.T) {
 			want:  "localhost:12037",
 		},
 		{
-			name:      "mainnet wallet",
-			addr:      "localhost",
-			chain:     &chaincfg.MainNetParams,
-			useWallet: true,
-			want:      "localhost:8332",
-		},
-		{
 			name:  "regtest node",
 			addr:  "localhost",
 			chain: &chaincfg.RegressionNetParams,
-			want:  "localhost:18334",
+			want:  "localhost:14037",
 		},
 		{
-			name:    "explicit port",
-			addr:    "localhost:1234",
-			chain:   &chaincfg.MainNetParams,
-			want:    "localhost:1234",
-			wantErr: false,
-		},
-		{
-			name:      "regtest wallet unsupported",
-			addr:      "localhost",
-			chain:     &chaincfg.RegressionNetParams,
-			useWallet: true,
-			wantErr:   true,
+			name:  "explicit port",
+			addr:  "localhost:1234",
+			chain: &chaincfg.MainNetParams,
+			want:  "localhost:1234",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := normalizeAddress(test.addr, test.chain, test.useWallet)
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("normalizeAddress: expected error, got nil")
-				}
-				return
-			}
+			got, err := normalizeAddress(test.addr, test.chain)
 			if err != nil {
 				t.Fatalf("normalizeAddress: %v", err)
 			}

@@ -36,7 +36,7 @@ We pass all needed arguments to *handshake-node* as command line parameters in o
 ```bash
 Error creating a default config file: open /sample-handshake-node.conf: no such file or directory
 ...
-[WRN] BTCD: open /home/handshake/.handshake-node/handshake-node.conf: no such file or directory
+[WRN] HNSN: open /home/handshake/.handshake-node/handshake-node.conf: no such file or directory
 ```
 
 ## Examples
@@ -134,7 +134,7 @@ volumes:
 ### Full node with RPC port running on regtest
 
 To run a node on regtest, provide the `--regtest` argument. The default ports
-for regtest are 14038 (P2P) and 18334 (RPC):
+for regtest are 14038 (P2P) and 14037 (RPC):
 
 ```yaml
 version: "2"
@@ -149,7 +149,7 @@ services:
       - handshake-node-data:/home/handshake/.handshake-node
     ports:
       - 14038:14038
-      - 18334:18334
+      - 14037:14037
     command: [
         "--regtest",
         "--rpcuser=[CHOOSE_A_USERNAME]",

@@ -13,13 +13,12 @@ transactions, Urkel-backed name state, Brontide P2P transport, mempool,
 mining, JSON-RPC, websocket notifications, and command-line control through
 `hnsctl`.
 
-handshake-node does *not* include wallet functionality.  Wallet signing and
-wallet-facing state belong in the [bursa](https://github.com/blinklabs-io/bursa)
-project.
+handshake-node does *not* include wallet functionality. Wallet signing and
+wallet-facing state belong in external wallet software.
 
 ## Documentation
 
-Documentation is a work-in-progress for the current 0.1.0-rc1 mainnet release
+Documentation is a work-in-progress for the current 0.1.1-rc1 mainnet release
 candidate.
 
 ## Contents

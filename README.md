@@ -10,12 +10,12 @@ fork of [btcd](https://github.com/btcsuite/btcd), but its target behavior is the
 Handshake network: Handshake block headers, proof-of-work, transactions,
 covenants, name state, P2P transport, mining, and RPCs.
 
-This is not a Bitcoin node, and it does not include a wallet. Wallet
-functionality belongs in [bursa](https://github.com/blinklabs-io/bursa).
+This is not a Bitcoin node, and it does not include a wallet. Wallet software
+must manage keys, signing, coin selection, and wallet state externally.
 
 ## Current Status
 
-The current release is 0.1.0-rc1, a mainnet release candidate. It includes:
+The current release is 0.1.1-rc1, a mainnet release candidate. It includes:
 
 - Handshake mainnet and regtest chain parameters.
 - Blake2b/SHA3 Handshake proof-of-work and 236-byte block headers.

@@ -1,17 +1,16 @@
 # Wallet
 
-handshake-node was intentionally developed without an integrated wallet for security
-reasons.  Please see [bursa](https://github.com/blinklabs-io/bursa) for more
-information.
+handshake-node intentionally does not include an integrated wallet. No wallet
+implementation is currently provided by this repository.
 
-## Bursa Integration Contract
+## Wallet Integration Contract
 
-Bursa owns keys, signing, account state, coin selection, and balance tracking.
-handshake-node owns chain validation, UTXO lookup, mempool admission, block
-notifications, name state, and block production.
+A wallet must own keys, signing, account state, coin selection, and balance
+tracking. handshake-node owns chain validation, UTXO lookup, mempool admission,
+block notifications, name state, and block production.
 
 The wallet should connect to handshake-node over authenticated JSON-RPC.  The
-default node RPC endpoint is `localhost:12037` on mainnet and `localhost:18334`
+default node RPC endpoint is `localhost:12037` on mainnet and `localhost:14037`
 on regtest.  TLS is enabled by default unless the node is explicitly configured
 with `notls=1` on localhost.
 
@@ -26,7 +25,7 @@ Required chain RPCs:
 | `getnameinfo`, `getnamebyhash`, `getnameresource`, `getauctioninfo` | Query current name lifecycle and resource state. |
 | `getnameproof`, `verifynameproof` | Build and verify Urkel name proofs for light-client workflows. |
 
-Covenant construction RPCs return unsigned transaction hex.  Bursa supplies
+Covenant construction RPCs return unsigned transaction hex. The wallet supplies
 explicit inputs, signs the returned transaction, and broadcasts it with
 `sendrawtransaction`.
 
