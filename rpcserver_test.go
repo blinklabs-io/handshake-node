@@ -242,8 +242,9 @@ func (m *testRPCConnManager) PersistentPeers() []rpcserverPeer           { retur
 func (m *testRPCConnManager) BroadcastMessage(msg wire.HandshakeMessage) {}
 func (m *testRPCConnManager) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
 }
-func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc) {}
-func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2      { return nil }
+func (m *testRPCConnManager) RelayInventory(iv *wire.InvVect, data interface{}) {}
+func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc)          {}
+func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2               { return nil }
 func (m *testRPCConnManager) LocalAddresses() []rpcserverLocalAddress {
 	return m.localAddresses
 }

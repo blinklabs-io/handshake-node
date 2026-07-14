@@ -550,7 +550,8 @@ func TestHandleInvMsgTracksRequestedCoinbaseProofs(t *testing.T) {
 
 	proofHash := chainhash.Hash{0x01, 0x02, 0x03}
 	inv := wire.NewHnsMsgInv()
-	inv.AddInvVect(wire.NewInvVect(wire.InvTypeClaim, &proofHash))
+	require.NoError(t, inv.AddInvVect(wire.NewInvVect(wire.InvTypeClaim,
+		&proofHash)))
 	sm.handleInvMsg(&invMsg{inv: inv, peer: p})
 
 	msg := readSyncTestPeerMessage(t, remote, &params)

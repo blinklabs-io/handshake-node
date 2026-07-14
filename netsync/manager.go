@@ -1396,12 +1396,16 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 			fallthrough
 		case wire.InvTypeAirDrop:
 			if _, exists := sm.requestedProofs[iv.Hash]; !exists {
+				if err := gdmsg.AddInvVect(iv); err != nil {
+					log.Warnf("Unable to add coinbase proof inventory "+
+						"to getdata message: %v", err)
+					continue
+				}
 				limitAdd(sm.requestedProofs, iv.Hash,
 					maxRequestedProofs)
 				limitAdd(state.requestedProofs, iv.Hash,
 					maxRequestedProofs)
 
-				gdmsg.AddInvVect(iv)
 				numRequested++
 			}
 		}

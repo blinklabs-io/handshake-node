@@ -860,26 +860,29 @@ func (s *server) pushInventory(sp *serverPeer, iv *wire.InvVect,
 			sp, &iv.Hash, doneChan,
 		)
 
-	case wire.InvTypeClaim:
-		return s.pushCoinbaseProofMsg(sp, iv, doneChan)
-
-	case wire.InvTypeAirDrop:
+	case wire.InvTypeClaim, wire.InvTypeAirDrop:
 		return s.pushCoinbaseProofMsg(sp, iv, doneChan)
 
 	default:
 		peerLog.Warnf("Unknown type in inventory request %d", iv.Type)
-
-		if doneChan != nil {
-			doneChan <- struct{}{}
-		}
-
+		signalDone(doneChan)
 		return errors.New("unknown inventory type")
+	}
+}
+
+func signalDone(doneChan chan<- struct{}) {
+	if doneChan != nil {
+		doneChan <- struct{}{}
 	}
 }
 
 func (s *server) coinbaseProofContext() (uint32, int64) {
 	best := s.chain.BestSnapshot()
 	return uint32(best.Height + 1), best.Timestamp.Unix()
+}
+
+func (s *server) airdropDisabled() (bool, error) {
+	return s.chain.IsDeploymentActive(chaincfg.DeploymentAirstop)
 }
 
 func coinbaseProofForMining(proof blockchain.RawCoinbaseProof) mining.CoinbaseProof {
@@ -909,7 +912,7 @@ func (s *server) acceptRawClaimProof(serialized []byte) (chainhash.Hash, error) 
 func (s *server) acceptRawAirdropProof(serialized []byte) (chainhash.Hash, error) {
 	hash := blockchain.RawProofHash(serialized)
 	height, _ := s.coinbaseProofContext()
-	active, err := s.chain.IsDeploymentActive(chaincfg.DeploymentAirstop)
+	active, err := s.airdropDisabled()
 	if err != nil {
 		return hash, err
 	}
@@ -934,27 +937,20 @@ func (s *server) pushCoinbaseProofMsg(sp *serverPeer, iv *wire.InvVect,
 	doneChan chan<- struct{}) error {
 
 	if iv.Type == wire.InvTypeAirDrop {
-		active, err := s.chain.IsDeploymentActive(
-			chaincfg.DeploymentAirstop)
+		active, err := s.airdropDisabled()
 		if err != nil {
-			if doneChan != nil {
-				doneChan <- struct{}{}
-			}
+			signalDone(doneChan)
 			return err
 		}
 		if active {
-			if doneChan != nil {
-				doneChan <- struct{}{}
-			}
+			signalDone(doneChan)
 			return errors.New("airdrop proofs are disabled")
 		}
 	}
 
 	proof, ok := s.txMemPool.FetchCoinbaseProof(&iv.Hash)
 	if !ok {
-		if doneChan != nil {
-			doneChan <- struct{}{}
-		}
+		signalDone(doneChan)
 		return errors.New("coinbase proof not found")
 	}
 
@@ -964,9 +960,7 @@ func (s *server) pushCoinbaseProofMsg(sp *serverPeer, iv *wire.InvVect,
 		if proof.Output == nil ||
 			proof.Output.Covenant.Type != wire.CovenantClaim {
 
-			if doneChan != nil {
-				doneChan <- struct{}{}
-			}
+			signalDone(doneChan)
 			return errors.New("coinbase proof is not a claim")
 		}
 		msg = &wire.HnsMsgClaim{Claim: proof.Witness}
@@ -975,17 +969,13 @@ func (s *server) pushCoinbaseProofMsg(sp *serverPeer, iv *wire.InvVect,
 		if proof.Output == nil ||
 			proof.Output.Covenant.Type != wire.CovenantNone {
 
-			if doneChan != nil {
-				doneChan <- struct{}{}
-			}
+			signalDone(doneChan)
 			return errors.New("coinbase proof is not an airdrop")
 		}
 		msg = &wire.HnsMsgAirDrop{Payload: proof.Witness}
 
 	default:
-		if doneChan != nil {
-			doneChan <- struct{}{}
-		}
+		signalDone(doneChan)
 		return errors.New("unknown coinbase proof inventory type")
 	}
 

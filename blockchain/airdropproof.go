@@ -171,16 +171,24 @@ func verifyCoinbaseAirdropProof(tx *hnsutil.Tx, outputIndex int, height uint32,
 	}
 
 	txOut := msgTx.TxOut[outputIndex]
-	if txOut.Covenant.Type != wire.CovenantNone {
-		return 0, badCovenant("coinbase airdrop output is invalid")
-	}
-
 	proof, err := parseAirdropProof(txIn.Witness[0])
 	if err != nil {
 		return 0, badCovenant("airdrop proof is invalid")
 	}
+
+	return verifyCoinbaseAirdropProofData(txOut, height, params, proof,
+		deploymentFlags)
+}
+
+func verifyCoinbaseAirdropProofData(txOut *wire.TxOut, height uint32,
+	params *chaincfg.Params, proof *airdropProof,
+	deploymentFlags handshakeDeploymentFlags) (uint64, error) {
+
 	if !proof.isSane() {
 		return 0, badCovenant("airdrop proof is not sane")
+	}
+	if txOut.Covenant.Type != wire.CovenantNone {
+		return 0, badCovenant("coinbase airdrop output is invalid")
 	}
 	if params == nil || height >= params.AirdropGooSigStop {
 		key, err := parseAirdropKey(proof.key)

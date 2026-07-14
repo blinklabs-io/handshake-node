@@ -56,9 +56,6 @@ func CoinbaseClaimProofFromRaw(serialized []byte, height uint32, prevTime int64,
 	if data == nil {
 		return RawCoinbaseProof{}, badCovenant("CLAIM ownership proof data is invalid")
 	}
-	if data.version == 31 {
-		return RawCoinbaseProof{}, badCovenant("CLAIM nulldata address is invalid")
-	}
 	if data.commitHeight == 0 {
 		return RawCoinbaseProof{}, badCovenant("CLAIM ownership proof height mismatch")
 	}
@@ -118,18 +115,13 @@ func CoinbaseClaimProofFromRaw(serialized []byte, height uint32, prevTime int64,
 func CoinbaseAirdropProofFromRaw(serialized []byte, height uint32,
 	params *chaincfg.Params) (RawCoinbaseProof, error) {
 
+	if params == nil {
+		return RawCoinbaseProof{}, fmt.Errorf("missing chain parameters")
+	}
+
 	proof, err := parseAirdropProof(serialized)
 	if err != nil {
 		return RawCoinbaseProof{}, badCovenant("airdrop proof is invalid")
-	}
-	if !proof.isSane() {
-		return RawCoinbaseProof{}, badCovenant("airdrop proof is not sane")
-	}
-	if !proof.verifyMerkle() {
-		return RawCoinbaseProof{}, badCovenant("airdrop proof merkle root mismatch")
-	}
-	if !proof.verifySignature() {
-		return RawCoinbaseProof{}, badCovenant("airdrop proof signature invalid")
 	}
 
 	value := proof.value()
@@ -146,11 +138,9 @@ func CoinbaseAirdropProofFromRaw(serialized []byte, height uint32,
 		Hash:    append([]byte(nil), proof.address...),
 	}, wire.Covenant{})
 
-	tx := coinbaseProofTx(serialized, output)
-	if err := checkCoinbaseAirdropProofSanity(tx, 1); err != nil {
-		return RawCoinbaseProof{}, err
-	}
-	if _, err := verifyCoinbaseAirdropProof(tx, 1, height, params); err != nil {
+	if _, err := verifyCoinbaseAirdropProofData(output, height, params, proof,
+		handshakeDeploymentFlags{}); err != nil {
+
 		return RawCoinbaseProof{}, err
 	}
 
@@ -160,18 +150,6 @@ func CoinbaseAirdropProofFromRaw(serialized []byte, height uint32,
 		Output:  output,
 		Fee:     int64(proof.fee),
 	}, nil
-}
-
-func coinbaseProofTx(witness []byte, output *wire.TxOut) *hnsutil.Tx {
-	msgTx := wire.NewMsgTx(wire.TxVersion)
-	nullOut := wire.OutPoint{Hash: zeroHash, Index: wire.MaxPrevOutIndex}
-	msgTx.AddTxIn(wire.NewTxIn(&nullOut, wire.MaxTxInSequenceNum,
-		wire.TxWitness{[]byte{0x00}}))
-	msgTx.AddTxIn(wire.NewTxIn(&nullOut, wire.MaxTxInSequenceNum,
-		wire.TxWitness{append([]byte(nil), witness...)}))
-	msgTx.AddTxOut(wire.NewTxOut(0, wire.Address{}, wire.Covenant{}))
-	msgTx.AddTxOut(output)
-	return hnsutil.NewTx(msgTx)
 }
 
 func proofRelayHashItem(hash chainhash.Hash) []byte {

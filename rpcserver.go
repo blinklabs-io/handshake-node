@@ -5123,7 +5123,7 @@ func (s *rpcServer) addRawCoinbaseProof(
 	raw blockchain.RawCoinbaseProof) error {
 
 	mp, ok := s.cfg.TxMemPool.(coinbaseProofPool)
-	if !ok || mp == nil {
+	if !ok {
 		return fmt.Errorf("coinbase proof mempool is unavailable")
 	}
 	if _, err := mp.AddCoinbaseProof(coinbaseProofForMining(raw)); err != nil {

@@ -266,10 +266,9 @@ func verifyCoinbaseClaimProofData(txOut *wire.TxOut, covenant wire.Covenant,
 	height uint32, params *chaincfg.Params, data *claimProofData) (
 	uint64, error) {
 
-	if data == nil {
-		return 0, badCovenant("CLAIM ownership proof data is invalid")
+	if data.version == 31 {
+		return 0, badCovenant("CLAIM nulldata address is invalid")
 	}
-
 	if txOut.Address.Version != data.version ||
 		!bytes.Equal(txOut.Address.Hash, data.hash) {
 

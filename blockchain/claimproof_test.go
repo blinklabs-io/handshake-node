@@ -100,8 +100,26 @@ func TestCoinbaseClaimProofFromRaw(t *testing.T) {
 	}
 }
 
+func TestVerifyCoinbaseClaimProofDataRejectsNullData(t *testing.T) {
+	txOut := wire.NewTxOut(0, wire.Address{Version: 31}, wire.Covenant{
+		Type: wire.CovenantClaim,
+	})
+	_, err := verifyCoinbaseClaimProofData(txOut, txOut.Covenant, 10,
+		&chaincfg.MainNetParams, &claimProofData{version: 31})
+	if err == nil || !strings.Contains(err.Error(), "nulldata") {
+		t.Fatalf("verifyCoinbaseClaimProofData error = %v, want nulldata rejection",
+			err)
+	}
+}
+
 func TestCoinbaseAirdropProofFromRaw(t *testing.T) {
 	serialized := testHsdFaucetProof(t)
+	if _, err := CoinbaseAirdropProofFromRaw(serialized, 10, nil); err == nil ||
+		!strings.Contains(err.Error(), "missing chain parameters") {
+
+		t.Fatalf("CoinbaseAirdropProofFromRaw nil params error = %v", err)
+	}
+
 	proof, err := CoinbaseAirdropProofFromRaw(serialized, 10,
 		&chaincfg.MainNetParams)
 	if err != nil {
