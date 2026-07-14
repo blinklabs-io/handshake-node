@@ -12,8 +12,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -359,6 +359,37 @@ func TestChainSvrCmds(t *testing.T) {
 			},
 		},
 		{
+			name: "getblockbyheight",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("getblockbyheight", 100)
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewGetBlockByHeightCmd(100, nil, nil)
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"getblockbyheight","params":[100],"id":1}`,
+			unmarshalled: &hnsjson.GetBlockByHeightCmd{
+				Height:  100,
+				Verbose: hnsjson.Bool(true),
+				Details: hnsjson.Bool(false),
+			},
+		},
+		{
+			name: "getblockbyheight details",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("getblockbyheight", 100, true, true)
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewGetBlockByHeightCmd(100,
+					hnsjson.Bool(true), hnsjson.Bool(true))
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"getblockbyheight","params":[100,true,true],"id":1}`,
+			unmarshalled: &hnsjson.GetBlockByHeightCmd{
+				Height:  100,
+				Verbose: hnsjson.Bool(true),
+				Details: hnsjson.Bool(true),
+			},
+		},
+		{
 			name: "getblockchaininfo",
 			newCmd: func() (interface{}, error) {
 				return hnsjson.NewCmd("getblockchaininfo")
@@ -699,6 +730,64 @@ func TestChainSvrCmds(t *testing.T) {
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getinfo","params":[],"id":1}`,
 			unmarshalled: &hnsjson.GetInfoCmd{},
+		},
+		{
+			name: "getmempoolancestors",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("getmempoolancestors", "txhash")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewGetMempoolAncestorsCmd("txhash", nil)
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"getmempoolancestors","params":["txhash"],"id":1}`,
+			unmarshalled: &hnsjson.GetMempoolAncestorsCmd{
+				TxID:    "txhash",
+				Verbose: hnsjson.Bool(false),
+			},
+		},
+		{
+			name: "getmempoolancestors verbose",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("getmempoolancestors", "txhash", true)
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewGetMempoolAncestorsCmd("txhash",
+					hnsjson.Bool(true))
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"getmempoolancestors","params":["txhash",true],"id":1}`,
+			unmarshalled: &hnsjson.GetMempoolAncestorsCmd{
+				TxID:    "txhash",
+				Verbose: hnsjson.Bool(true),
+			},
+		},
+		{
+			name: "getmempooldescendants",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("getmempooldescendants", "txhash")
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewGetMempoolDescendantsCmd("txhash", nil)
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"getmempooldescendants","params":["txhash"],"id":1}`,
+			unmarshalled: &hnsjson.GetMempoolDescendantsCmd{
+				TxID:    "txhash",
+				Verbose: hnsjson.Bool(false),
+			},
+		},
+		{
+			name: "getmempooldescendants verbose",
+			newCmd: func() (interface{}, error) {
+				return hnsjson.NewCmd("getmempooldescendants", "txhash", true)
+			},
+			staticCmd: func() interface{} {
+				return hnsjson.NewGetMempoolDescendantsCmd("txhash",
+					hnsjson.Bool(true))
+			},
+			marshalled: `{"jsonrpc":"1.0","method":"getmempooldescendants","params":["txhash",true],"id":1}`,
+			unmarshalled: &hnsjson.GetMempoolDescendantsCmd{
+				TxID:    "txhash",
+				Verbose: hnsjson.Bool(true),
+			},
 		},
 		{
 			name: "getmempoolentry",

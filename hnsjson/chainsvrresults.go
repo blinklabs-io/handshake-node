@@ -445,21 +445,23 @@ func (h *StringOrArray) UnmarshalJSON(data []byte) error {
 // GetNetworkInfoResult models the data returned from the getnetworkinfo
 // command.
 type GetNetworkInfoResult struct {
-	Version         int32                  `json:"version"`
-	SubVersion      string                 `json:"subversion"`
-	ProtocolVersion int32                  `json:"protocolversion"`
-	LocalServices   string                 `json:"localservices"`
-	LocalRelay      bool                   `json:"localrelay"`
-	TimeOffset      int64                  `json:"timeoffset"`
-	Connections     int32                  `json:"connections"`
-	ConnectionsIn   int32                  `json:"connections_in"`
-	ConnectionsOut  int32                  `json:"connections_out"`
-	NetworkActive   bool                   `json:"networkactive"`
-	Networks        []NetworksResult       `json:"networks"`
-	RelayFee        float64                `json:"relayfee"`
-	IncrementalFee  float64                `json:"incrementalfee"`
-	LocalAddresses  []LocalAddressesResult `json:"localaddresses"`
-	Warnings        StringOrArray          `json:"warnings"`
+	Version           int32                  `json:"version"`
+	SubVersion        string                 `json:"subversion"`
+	ProtocolVersion   int32                  `json:"protocolversion"`
+	IdentityKey       string                 `json:"identitykey,omitempty"`
+	LocalServices     string                 `json:"localservices"`
+	LocalServiceNames []string               `json:"localservicenames,omitempty"`
+	LocalRelay        bool                   `json:"localrelay"`
+	TimeOffset        int64                  `json:"timeoffset"`
+	Connections       int32                  `json:"connections"`
+	ConnectionsIn     int32                  `json:"connections_in"`
+	ConnectionsOut    int32                  `json:"connections_out"`
+	NetworkActive     bool                   `json:"networkactive"`
+	Networks          []NetworksResult       `json:"networks"`
+	RelayFee          float64                `json:"relayfee"`
+	IncrementalFee    float64                `json:"incrementalfee"`
+	LocalAddresses    []LocalAddressesResult `json:"localaddresses"`
+	Warnings          StringOrArray          `json:"warnings"`
 }
 
 // GetNodeAddressesResult models the data returned from the getnodeaddresses

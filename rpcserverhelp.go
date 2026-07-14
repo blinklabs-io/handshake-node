@@ -105,6 +105,11 @@ var helpDescsEnUS = map[string]string{
 	"decoderawtransaction--synopsis": "Returns a JSON object representing the provided serialized, hex-encoded transaction.",
 	"decoderawtransaction-hextx":     "Serialized, hex-encoded transaction",
 
+	// DecodeResourceCmd help.
+	"decoderesource--synopsis":   "Decodes a hex-encoded Handshake DNS resource.",
+	"decoderesource-hexresource": "Hex-encoded Handshake DNS resource data",
+	"decoderesource--result0":    "Decoded resource data",
+
 	// DecodeScriptResult help.
 	"decodescriptresult-asm":       "Disassembly of the script",
 	"decodescriptresult-reqSigs":   "(DEPRECATED) The number of required signatures",
@@ -168,6 +173,16 @@ var helpDescsEnUS = map[string]string{
 	"getblock--condition0": "verbosity=0",
 	"getblock--condition1": "verbosity=1",
 	"getblock--result0":    "Hex-encoded bytes of the serialized block",
+
+	// GetBlockByHeightCmd help.
+	"getblockbyheight--synopsis":   "Returns information about a block given its height.",
+	"getblockbyheight-height":      "The block height",
+	"getblockbyheight-verbose":     "Whether to return parsed block data instead of hex",
+	"getblockbyheight-details":     "Whether to include parsed transaction data when verbose is true",
+	"getblockbyheight--condition0": "verbose=false",
+	"getblockbyheight--condition1": "verbose=true",
+	"getblockbyheight--result0":    "Hex-encoded bytes of the serialized block",
+	"getblockbyheight--result1":    "JSON object with information about the block",
 
 	// GetBlockChainInfoCmd help.
 	"getblockchaininfo--synopsis": "Returns information about the current blockchain state and the status of any active soft-fork deployments.",
@@ -676,6 +691,51 @@ var helpDescsEnUS = map[string]string{
 	// GetMempoolInfoCmd help.
 	"getmempoolinfo--synopsis": "Returns memory pool information",
 
+	// GetMempoolAncestorsCmd help.
+	"getmempoolancestors--synopsis":   "Returns mempool ancestors for a transaction.",
+	"getmempoolancestors-txid":        "Transaction hash to query",
+	"getmempoolancestors-verbose":     "Whether to return verbose entry objects instead of hashes",
+	"getmempoolancestors--condition0": "verbose=false",
+	"getmempoolancestors--condition1": "verbose=true",
+	"getmempoolancestors--result0":    "Ancestor transaction hashes",
+	"getmempoolancestors--result1":    "Verbose ancestor entries",
+
+	// GetMempoolDescendantsCmd help.
+	"getmempooldescendants--synopsis":   "Returns mempool descendants for a transaction.",
+	"getmempooldescendants-txid":        "Transaction hash to query",
+	"getmempooldescendants-verbose":     "Whether to return verbose entry objects instead of hashes",
+	"getmempooldescendants--condition0": "verbose=false",
+	"getmempooldescendants--condition1": "verbose=true",
+	"getmempooldescendants--result0":    "Descendant transaction hashes",
+	"getmempooldescendants--result1":    "Verbose descendant entries",
+
+	// GetMempoolEntryCmd help.
+	"getmempoolentry--synopsis": "Returns mempool information for a transaction.",
+	"getmempoolentry-txid":      "Transaction hash to query",
+	"getmempoolentry--result0":  "Verbose mempool entry",
+
+	// GetMempoolEntryResult help.
+	"getmempoolentryresult-vsize":           "Transaction virtual size",
+	"getmempoolentryresult-size":            "Transaction size in bytes",
+	"getmempoolentryresult-weight":          "Transaction weight",
+	"getmempoolentryresult-fee":             "Transaction fee in HNS",
+	"getmempoolentryresult-modifiedfee":     "Modified transaction fee in HNS",
+	"getmempoolentryresult-time":            "Local time transaction entered the pool in seconds since 1 Jan 1970 GMT",
+	"getmempoolentryresult-height":          "Block height when transaction entered the pool",
+	"getmempoolentryresult-descendantcount": "Number of in-mempool descendants including this transaction",
+	"getmempoolentryresult-descendantsize":  "Virtual size of in-mempool descendants including this transaction",
+	"getmempoolentryresult-descendantfees":  "Fees of in-mempool descendants including this transaction",
+	"getmempoolentryresult-ancestorcount":   "Number of in-mempool ancestors including this transaction",
+	"getmempoolentryresult-ancestorsize":    "Virtual size of in-mempool ancestors including this transaction",
+	"getmempoolentryresult-ancestorfees":    "Fees of in-mempool ancestors including this transaction",
+	"getmempoolentryresult-wtxid":           "Witness transaction hash when available",
+	"getmempoolentryresult-fees":            "Fee summary",
+	"getmempoolentryresult-depends":         "Unconfirmed transactions used as inputs for this transaction",
+	"mempoolfees-base":                      "Base transaction fee in HNS",
+	"mempoolfees-modified":                  "Modified transaction fee in HNS",
+	"mempoolfees-ancestor":                  "Ancestor package fees in HNS",
+	"mempoolfees-descendant":                "Descendant package fees in HNS",
+
 	// GetMempoolInfoResult help.
 	"getmempoolinforesult-bytes": "Size in bytes of the mempool",
 	"getmempoolinforesult-size":  "Number of transactions in the mempool",
@@ -702,6 +762,37 @@ var helpDescsEnUS = map[string]string{
 	"getnetworkhashps-blocks":    "The number of blocks, or -1 for blocks since last difficulty change",
 	"getnetworkhashps-height":    "Perform estimate ending with this height or -1 for current best chain block height",
 	"getnetworkhashps--result0":  "Estimated hashes per second",
+
+	// GetNetworkInfoCmd help.
+	"getnetworkinfo--synopsis": "Returns network state and local service information.",
+	"getnetworkinfo--result0":  "Network information",
+
+	// GetNetworkInfoResult help.
+	"getnetworkinforesult-version":               "The server version",
+	"getnetworkinforesult-subversion":            "The server user agent",
+	"getnetworkinforesult-protocolversion":       "The highest supported Handshake protocol version",
+	"getnetworkinforesult-identitykey":           "The local Brontide identity key when available",
+	"getnetworkinforesult-localservices":         "Hex-encoded local service flags",
+	"getnetworkinforesult-localservicenames":     "Human-readable local service names",
+	"getnetworkinforesult-localrelay":            "Whether transaction relay is enabled",
+	"getnetworkinforesult-timeoffset":            "The local clock offset in seconds",
+	"getnetworkinforesult-connections":           "Number of connected peers",
+	"getnetworkinforesult-connections_in":        "Number of inbound peers",
+	"getnetworkinforesult-connections_out":       "Number of outbound peers",
+	"getnetworkinforesult-networkactive":         "Whether networking is active",
+	"getnetworkinforesult-networks":              "Network reachability details",
+	"getnetworkinforesult-relayfee":              "Minimum relay fee in HNS per kB",
+	"getnetworkinforesult-incrementalfee":        "Incremental relay fee in HNS per kB",
+	"getnetworkinforesult-localaddresses":        "Advertised local addresses",
+	"getnetworkinforesult-warnings":              "Network warnings",
+	"networksresult-name":                        "Network name",
+	"networksresult-limited":                     "Whether the network is limited",
+	"networksresult-reachable":                   "Whether the network is reachable",
+	"networksresult-proxy":                       "Configured proxy",
+	"networksresult-proxy_randomize_credentials": "Whether proxy credentials are randomized",
+	"localaddressesresult-address":               "Advertised local address",
+	"localaddressesresult-port":                  "Advertised local port",
+	"localaddressesresult-score":                 "Local address discovery score",
 
 	// GetNetTotalsCmd help.
 	"getnettotals--synopsis": "Returns a JSON object containing network traffic statistics.",
@@ -1035,6 +1126,7 @@ var rpcResultTypes = map[string][]interface{}{
 	"createupdate":           {(*string)(nil)},
 	"debuglevel":             {(*string)(nil), (*string)(nil)},
 	"decoderawtransaction":   {(*hnsjson.TxRawDecodeResult)(nil)},
+	"decoderesource":         {(*hnsjson.NameResourceDataResult)(nil)},
 	"decodescript":           {(*hnsjson.DecodeScriptResult)(nil)},
 	"estimatefee":            {(*float64)(nil)},
 	"generate":               {(*[]string)(nil)},
@@ -1042,6 +1134,7 @@ var rpcResultTypes = map[string][]interface{}{
 	"getbestblock":           {(*hnsjson.GetBestBlockResult)(nil)},
 	"getbestblockhash":       {(*string)(nil)},
 	"getblock":               {(*string)(nil), (*hnsjson.GetBlockVerboseResult)(nil)},
+	"getblockbyheight":       {(*string)(nil), (*hnsjson.GetBlockVerboseResult)(nil)},
 	"getblockcount":          {(*int64)(nil)},
 	"getblockhash":           {(*string)(nil)},
 	"getblockheader":         {(*string)(nil), (*hnsjson.GetBlockHeaderVerboseResult)(nil)},
@@ -1057,6 +1150,9 @@ var rpcResultTypes = map[string][]interface{}{
 	"gethashespersec":        {(*float64)(nil)},
 	"getheaders":             {(*[]string)(nil)},
 	"getinfo":                {(*hnsjson.InfoChainResult)(nil)},
+	"getmempoolancestors":    {(*[]string)(nil), (*[]hnsjson.GetMempoolEntryResult)(nil)},
+	"getmempooldescendants":  {(*[]string)(nil), (*[]hnsjson.GetMempoolEntryResult)(nil)},
+	"getmempoolentry":        {(*hnsjson.GetMempoolEntryResult)(nil)},
 	"getmempoolinfo":         {(*hnsjson.GetMempoolInfoResult)(nil)},
 	"getmininginfo":          {(*hnsjson.GetMiningInfoResult)(nil)},
 	"getauctioninfo":         {(*hnsjson.GetAuctionInfoResult)(nil)},
@@ -1067,6 +1163,7 @@ var rpcResultTypes = map[string][]interface{}{
 	"getnames":               {(*[]hnsjson.NameStateResult)(nil)},
 	"getnamesbyhash":         {(*[]hnsjson.GetNameInfoResult)(nil)},
 	"getnettotals":           {(*hnsjson.GetNetTotalsResult)(nil)},
+	"getnetworkinfo":         {(*hnsjson.GetNetworkInfoResult)(nil)},
 	"getnetworkhashps":       {(*float64)(nil)},
 	"getnodeaddresses":       {(*[]hnsjson.GetNodeAddressesResult)(nil)},
 	"getpeerinfo":            {(*[]hnsjson.GetPeerInfoResult)(nil)},

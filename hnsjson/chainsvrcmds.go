@@ -216,6 +216,23 @@ func NewGetBlockCmd(hash string, verbosity *int) *GetBlockCmd {
 	}
 }
 
+// GetBlockByHeightCmd defines the getblockbyheight JSON-RPC command.
+type GetBlockByHeightCmd struct {
+	Height  uint32
+	Verbose *bool `jsonrpcdefault:"true"`
+	Details *bool `jsonrpcdefault:"false"`
+}
+
+// NewGetBlockByHeightCmd returns a new instance which can be used to issue a
+// getblockbyheight JSON-RPC command.
+func NewGetBlockByHeightCmd(height uint32, verbose, details *bool) *GetBlockByHeightCmd {
+	return &GetBlockByHeightCmd{
+		Height:  height,
+		Verbose: verbose,
+		Details: details,
+	}
+}
+
 // GetBlockChainInfoCmd defines the getblockchaininfo JSON-RPC command.
 type GetBlockChainInfoCmd struct{}
 
@@ -551,6 +568,36 @@ type GetMempoolEntryCmd struct {
 func NewGetMempoolEntryCmd(txHash string) *GetMempoolEntryCmd {
 	return &GetMempoolEntryCmd{
 		TxID: txHash,
+	}
+}
+
+// GetMempoolAncestorsCmd defines the getmempoolancestors JSON-RPC command.
+type GetMempoolAncestorsCmd struct {
+	TxID    string
+	Verbose *bool `jsonrpcdefault:"false"`
+}
+
+// NewGetMempoolAncestorsCmd returns a new instance which can be used to issue a
+// getmempoolancestors JSON-RPC command.
+func NewGetMempoolAncestorsCmd(txHash string, verbose *bool) *GetMempoolAncestorsCmd {
+	return &GetMempoolAncestorsCmd{
+		TxID:    txHash,
+		Verbose: verbose,
+	}
+}
+
+// GetMempoolDescendantsCmd defines the getmempooldescendants JSON-RPC command.
+type GetMempoolDescendantsCmd struct {
+	TxID    string
+	Verbose *bool `jsonrpcdefault:"false"`
+}
+
+// NewGetMempoolDescendantsCmd returns a new instance which can be used to issue
+// a getmempooldescendants JSON-RPC command.
+func NewGetMempoolDescendantsCmd(txHash string, verbose *bool) *GetMempoolDescendantsCmd {
+	return &GetMempoolDescendantsCmd{
+		TxID:    txHash,
+		Verbose: verbose,
 	}
 }
 
@@ -1114,6 +1161,7 @@ func init() {
 	MustRegisterCmd("getaddednodeinfo", (*GetAddedNodeInfoCmd)(nil), flags)
 	MustRegisterCmd("getbestblockhash", (*GetBestBlockHashCmd)(nil), flags)
 	MustRegisterCmd("getblock", (*GetBlockCmd)(nil), flags)
+	MustRegisterCmd("getblockbyheight", (*GetBlockByHeightCmd)(nil), flags)
 	MustRegisterCmd("getblockchaininfo", (*GetBlockChainInfoCmd)(nil), flags)
 	MustRegisterCmd("getblockcount", (*GetBlockCountCmd)(nil), flags)
 	MustRegisterCmd("getblockfilter", (*GetBlockFilterCmd)(nil), flags)
@@ -1131,6 +1179,8 @@ func init() {
 	MustRegisterCmd("getgenerate", (*GetGenerateCmd)(nil), flags)
 	MustRegisterCmd("gethashespersec", (*GetHashesPerSecCmd)(nil), flags)
 	MustRegisterCmd("getinfo", (*GetInfoCmd)(nil), flags)
+	MustRegisterCmd("getmempoolancestors", (*GetMempoolAncestorsCmd)(nil), flags)
+	MustRegisterCmd("getmempooldescendants", (*GetMempoolDescendantsCmd)(nil), flags)
 	MustRegisterCmd("getmempoolentry", (*GetMempoolEntryCmd)(nil), flags)
 	MustRegisterCmd("getmempoolinfo", (*GetMempoolInfoCmd)(nil), flags)
 	MustRegisterCmd("getmininginfo", (*GetMiningInfoCmd)(nil), flags)

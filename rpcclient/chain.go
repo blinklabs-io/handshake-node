@@ -271,6 +271,121 @@ func (c *Client) GetBlockVerboseTx(blockHash *chainhash.Hash) (*hnsjson.GetBlock
 	return c.GetBlockVerboseTxAsync(blockHash).Receive()
 }
 
+// FutureGetBlockByHeightResult is a future promise to deliver the result of a
+// GetBlockByHeightAsync RPC invocation (or an applicable error).
+type FutureGetBlockByHeightResult chan *Response
+
+// Receive waits for the Response promised by the future and returns the raw
+// block requested from the server given its height.
+func (r FutureGetBlockByHeightResult) Receive() (*wire.MsgBlock, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var blockHex string
+	err = json.Unmarshal(res, &blockHex)
+	if err != nil {
+		return nil, err
+	}
+
+	serializedBlock, err := hex.DecodeString(blockHex)
+	if err != nil {
+		return nil, err
+	}
+
+	var msgBlock wire.MsgBlock
+	err = msgBlock.Deserialize(bytes.NewReader(serializedBlock))
+	if err != nil {
+		return nil, err
+	}
+	return &msgBlock, nil
+}
+
+// GetBlockByHeightAsync returns an instance of a type that can be used to get
+// the result of the RPC at some future time by invoking the Receive function on
+// the returned instance.
+func (c *Client) GetBlockByHeightAsync(height uint32) FutureGetBlockByHeightResult {
+	cmd := hnsjson.NewGetBlockByHeightCmd(height, hnsjson.Bool(false), nil)
+	return c.SendCmd(cmd)
+}
+
+// GetBlockByHeight returns a raw block from the server given its height.
+func (c *Client) GetBlockByHeight(height uint32) (*wire.MsgBlock, error) {
+	return c.GetBlockByHeightAsync(height).Receive()
+}
+
+// FutureGetBlockByHeightVerboseResult is a future promise to deliver the result
+// of a GetBlockByHeightVerboseAsync RPC invocation (or an applicable error).
+type FutureGetBlockByHeightVerboseResult chan *Response
+
+// Receive waits for the Response promised by the future and returns verbose
+// block information for the requested height.
+func (r FutureGetBlockByHeightVerboseResult) Receive() (*hnsjson.GetBlockVerboseResult, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var blockResult hnsjson.GetBlockVerboseResult
+	err = json.Unmarshal(res, &blockResult)
+	if err != nil {
+		return nil, err
+	}
+	return &blockResult, nil
+}
+
+// GetBlockByHeightVerboseAsync returns an instance of a type that can be used
+// to get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+func (c *Client) GetBlockByHeightVerboseAsync(height uint32) FutureGetBlockByHeightVerboseResult {
+	cmd := hnsjson.NewGetBlockByHeightCmd(height, hnsjson.Bool(true),
+		hnsjson.Bool(false))
+	return c.SendCmd(cmd)
+}
+
+// GetBlockByHeightVerbose returns verbose block information for the requested
+// height.
+func (c *Client) GetBlockByHeightVerbose(height uint32) (*hnsjson.GetBlockVerboseResult, error) {
+	return c.GetBlockByHeightVerboseAsync(height).Receive()
+}
+
+// FutureGetBlockByHeightVerboseTxResult is a future promise to deliver the
+// result of a GetBlockByHeightVerboseTxAsync RPC invocation (or an applicable
+// error).
+type FutureGetBlockByHeightVerboseTxResult chan *Response
+
+// Receive waits for the Response promised by the future and returns verbose
+// block information with verbose transactions for the requested height.
+func (r FutureGetBlockByHeightVerboseTxResult) Receive() (*hnsjson.GetBlockVerboseTxResult, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var blockResult hnsjson.GetBlockVerboseTxResult
+	err = json.Unmarshal(res, &blockResult)
+	if err != nil {
+		return nil, err
+	}
+	return &blockResult, nil
+}
+
+// GetBlockByHeightVerboseTxAsync returns an instance of a type that can be used
+// to get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+func (c *Client) GetBlockByHeightVerboseTxAsync(height uint32) FutureGetBlockByHeightVerboseTxResult {
+	cmd := hnsjson.NewGetBlockByHeightCmd(height, hnsjson.Bool(true),
+		hnsjson.Bool(true))
+	return c.SendCmd(cmd)
+}
+
+// GetBlockByHeightVerboseTx returns verbose block and transaction information
+// for the requested height.
+func (c *Client) GetBlockByHeightVerboseTx(height uint32) (*hnsjson.GetBlockVerboseTxResult, error) {
+	return c.GetBlockByHeightVerboseTxAsync(height).Receive()
+}
+
 // FutureGetBlockCountResult is a future promise to deliver the result of a
 // GetBlockCountAsync RPC invocation (or an applicable error).
 type FutureGetBlockCountResult chan *Response
@@ -721,6 +836,144 @@ func (c *Client) GetChainTipsAsync() FutureGetChainTipsResult {
 // current chain tips that this node is aware of.
 func (c *Client) GetChainTips() ([]*hnsjson.GetChainTipsResult, error) {
 	return c.GetChainTipsAsync().Receive()
+}
+
+// FutureGetMempoolAncestorsResult is a future promise to deliver the result of
+// a GetMempoolAncestorsAsync RPC invocation (or an applicable error).
+type FutureGetMempoolAncestorsResult chan *Response
+
+// Receive waits for the Response promised by the future and returns ancestor
+// transaction hashes.
+func (r FutureGetMempoolAncestorsResult) Receive() ([]string, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var ancestors []string
+	err = json.Unmarshal(res, &ancestors)
+	if err != nil {
+		return nil, err
+	}
+	return ancestors, nil
+}
+
+// GetMempoolAncestorsAsync returns an instance of a type that can be used to
+// get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+func (c *Client) GetMempoolAncestorsAsync(txHash string) FutureGetMempoolAncestorsResult {
+	cmd := hnsjson.NewGetMempoolAncestorsCmd(txHash, hnsjson.Bool(false))
+	return c.SendCmd(cmd)
+}
+
+// GetMempoolAncestors returns ancestor transaction hashes for the transaction
+// in the memory pool.
+func (c *Client) GetMempoolAncestors(txHash string) ([]string, error) {
+	return c.GetMempoolAncestorsAsync(txHash).Receive()
+}
+
+// FutureGetMempoolAncestorsVerboseResult is a future promise to deliver the
+// result of a GetMempoolAncestorsVerboseAsync RPC invocation (or an applicable
+// error).
+type FutureGetMempoolAncestorsVerboseResult chan *Response
+
+// Receive waits for the Response promised by the future and returns verbose
+// ancestor entries.
+func (r FutureGetMempoolAncestorsVerboseResult) Receive() ([]hnsjson.GetMempoolEntryResult, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var ancestors []hnsjson.GetMempoolEntryResult
+	err = json.Unmarshal(res, &ancestors)
+	if err != nil {
+		return nil, err
+	}
+	return ancestors, nil
+}
+
+// GetMempoolAncestorsVerboseAsync returns an instance of a type that can be
+// used to get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+func (c *Client) GetMempoolAncestorsVerboseAsync(txHash string) FutureGetMempoolAncestorsVerboseResult {
+	cmd := hnsjson.NewGetMempoolAncestorsCmd(txHash, hnsjson.Bool(true))
+	return c.SendCmd(cmd)
+}
+
+// GetMempoolAncestorsVerbose returns verbose ancestor entries for the
+// transaction in the memory pool.
+func (c *Client) GetMempoolAncestorsVerbose(txHash string) ([]hnsjson.GetMempoolEntryResult, error) {
+	return c.GetMempoolAncestorsVerboseAsync(txHash).Receive()
+}
+
+// FutureGetMempoolDescendantsResult is a future promise to deliver the result
+// of a GetMempoolDescendantsAsync RPC invocation (or an applicable error).
+type FutureGetMempoolDescendantsResult chan *Response
+
+// Receive waits for the Response promised by the future and returns descendant
+// transaction hashes.
+func (r FutureGetMempoolDescendantsResult) Receive() ([]string, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var descendants []string
+	err = json.Unmarshal(res, &descendants)
+	if err != nil {
+		return nil, err
+	}
+	return descendants, nil
+}
+
+// GetMempoolDescendantsAsync returns an instance of a type that can be used to
+// get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+func (c *Client) GetMempoolDescendantsAsync(txHash string) FutureGetMempoolDescendantsResult {
+	cmd := hnsjson.NewGetMempoolDescendantsCmd(txHash, hnsjson.Bool(false))
+	return c.SendCmd(cmd)
+}
+
+// GetMempoolDescendants returns descendant transaction hashes for the
+// transaction in the memory pool.
+func (c *Client) GetMempoolDescendants(txHash string) ([]string, error) {
+	return c.GetMempoolDescendantsAsync(txHash).Receive()
+}
+
+// FutureGetMempoolDescendantsVerboseResult is a future promise to deliver the
+// result of a GetMempoolDescendantsVerboseAsync RPC invocation (or an
+// applicable error).
+type FutureGetMempoolDescendantsVerboseResult chan *Response
+
+// Receive waits for the Response promised by the future and returns verbose
+// descendant entries.
+func (r FutureGetMempoolDescendantsVerboseResult) Receive() ([]hnsjson.GetMempoolEntryResult, error) {
+	res, err := ReceiveFuture(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var descendants []hnsjson.GetMempoolEntryResult
+	err = json.Unmarshal(res, &descendants)
+	if err != nil {
+		return nil, err
+	}
+	return descendants, nil
+}
+
+// GetMempoolDescendantsVerboseAsync returns an instance of a type that can be
+// used to get the result of the RPC at some future time by invoking the Receive
+// function on the returned instance.
+func (c *Client) GetMempoolDescendantsVerboseAsync(txHash string) FutureGetMempoolDescendantsVerboseResult {
+	cmd := hnsjson.NewGetMempoolDescendantsCmd(txHash, hnsjson.Bool(true))
+	return c.SendCmd(cmd)
+}
+
+// GetMempoolDescendantsVerbose returns verbose descendant entries for the
+// transaction in the memory pool.
+func (c *Client) GetMempoolDescendantsVerbose(txHash string) ([]hnsjson.GetMempoolEntryResult, error) {
+	return c.GetMempoolDescendantsVerboseAsync(txHash).Receive()
 }
 
 // FutureGetMempoolEntryResult is a future promise to deliver the result of a

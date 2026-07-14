@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -133,6 +134,140 @@ func TestNameAuctionInfoUsesRawNameHash(t *testing.T) {
 	if got.NameHash == nameHash.String() {
 		t.Fatal("NameHash used byte-reversed chainhash string encoding")
 	}
+}
+
+func testRPCHashString(tag byte) string {
+	var hash chainhash.Hash
+	hash[0] = tag
+	return hash.String()
+}
+
+func TestMempoolEntryGraphRPCResults(t *testing.T) {
+	parent := testRPCHashString(0x01)
+	child := testRPCHashString(0x02)
+	grandchild := testRPCHashString(0x03)
+	entries := map[string]*hnsjson.GetRawMempoolVerboseResult{
+		parent: {
+			Size:   100,
+			Vsize:  100,
+			Weight: 400,
+			Fee:    1,
+			Time:   10,
+			Height: 1,
+		},
+		child: {
+			Size:    200,
+			Vsize:   200,
+			Weight:  800,
+			Fee:     2,
+			Time:    20,
+			Height:  2,
+			Depends: []string{parent},
+		},
+		grandchild: {
+			Size:    300,
+			Vsize:   300,
+			Weight:  1200,
+			Fee:     3,
+			Time:    30,
+			Height:  3,
+			Depends: []string{child},
+		},
+	}
+
+	mm := &mempool.MockTxMempool{}
+	mm.On("RawMempoolVerbose").Return(entries).Times(3)
+	s := &rpcServer{cfg: rpcserverConfig{TxMemPool: mm}}
+
+	entryResult, err := handleGetMempoolEntry(s,
+		hnsjson.NewGetMempoolEntryCmd(child), nil)
+	require.NoError(t, err)
+	entry := entryResult.(*hnsjson.GetMempoolEntryResult)
+	require.Equal(t, int64(2), entry.AncestorCount)
+	require.Equal(t, int64(300), entry.AncestorSize)
+	require.Equal(t, float64(3), entry.AncestorFees)
+	require.Equal(t, int64(2), entry.DescendantCount)
+	require.Equal(t, int64(500), entry.DescendantSize)
+	require.Equal(t, float64(5), entry.DescendantFees)
+	require.Equal(t, []string{parent}, entry.Depends)
+
+	ancestorResult, err := handleGetMempoolAncestors(s,
+		hnsjson.NewGetMempoolAncestorsCmd(grandchild, nil), nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{parent, child}, ancestorResult)
+
+	descendantResult, err := handleGetMempoolDescendants(s,
+		hnsjson.NewGetMempoolDescendantsCmd(parent, hnsjson.Bool(true)),
+		nil)
+	require.NoError(t, err)
+	descendants := descendantResult.([]*hnsjson.GetMempoolEntryResult)
+	require.Len(t, descendants, 2)
+	require.Equal(t, child, descendants[0].WTxId)
+	require.Equal(t, grandchild, descendants[1].WTxId)
+	mm.AssertExpectations(t)
+}
+
+type testRPCConnManager struct {
+	services       wire.ServiceFlag
+	localAddresses []rpcserverLocalAddress
+	connectedCount int32
+}
+
+func (m *testRPCConnManager) Connect(addr string, permanent bool) error  { return nil }
+func (m *testRPCConnManager) RemoveByID(id int32) error                  { return nil }
+func (m *testRPCConnManager) RemoveByAddr(addr string) error             { return nil }
+func (m *testRPCConnManager) DisconnectByID(id int32) error              { return nil }
+func (m *testRPCConnManager) DisconnectByAddr(addr string) error         { return nil }
+func (m *testRPCConnManager) ConnectedCount() int32                      { return m.connectedCount }
+func (m *testRPCConnManager) Services() wire.ServiceFlag                 { return m.services }
+func (m *testRPCConnManager) NetTotals() (uint64, uint64)                { return 0, 0 }
+func (m *testRPCConnManager) ConnectedPeers() []rpcserverPeer            { return nil }
+func (m *testRPCConnManager) PersistentPeers() []rpcserverPeer           { return nil }
+func (m *testRPCConnManager) BroadcastMessage(msg wire.HandshakeMessage) {}
+func (m *testRPCConnManager) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
+}
+func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc) {}
+func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2      { return nil }
+func (m *testRPCConnManager) LocalAddresses() []rpcserverLocalAddress {
+	return m.localAddresses
+}
+
+func TestGetNetworkInfo(t *testing.T) {
+	oldCfg := cfg
+	cfg = &config{
+		UserAgentComments: []string{"test"},
+		minRelayTxFee:     hnsutil.Amount(1000),
+	}
+	t.Cleanup(func() {
+		cfg = oldCfg
+	})
+
+	localAddr := wire.NetAddressV2FromBytes(time.Now(),
+		wire.SFNodeNetwork|wire.SFNodeBloom, net.ParseIP("204.124.1.1"),
+		12038)
+	connMgr := &testRPCConnManager{
+		services:       wire.SFNodeNetwork | wire.SFNodeBloom,
+		localAddresses: []rpcserverLocalAddress{{NetAddress: localAddr, Score: 3}},
+		connectedCount: 0,
+	}
+	s := &rpcServer{cfg: rpcserverConfig{
+		ConnMgr:    connMgr,
+		TimeSource: blockchain.NewMedianTime(),
+	}}
+
+	result, err := handleGetNetworkInfo(s, hnsjson.NewGetNetworkInfoCmd(),
+		nil)
+	require.NoError(t, err)
+	info := result.(*hnsjson.GetNetworkInfoResult)
+	require.Equal(t, int32(wire.HnsProtocolVersion), info.ProtocolVersion)
+	require.Equal(t, "00000003", info.LocalServices)
+	require.Equal(t, []string{"NETWORK", "BLOOM"}, info.LocalServiceNames)
+	require.True(t, info.LocalRelay)
+	require.Equal(t, float64(0.001), info.RelayFee)
+	require.Len(t, info.LocalAddresses, 1)
+	require.Equal(t, "204.124.1.1", info.LocalAddresses[0].Address)
+	require.Equal(t, uint16(12038), info.LocalAddresses[0].Port)
+	require.Equal(t, int32(3), info.LocalAddresses[0].Score)
 }
 
 type gbtTestTxSource struct {

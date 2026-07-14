@@ -276,6 +276,19 @@ type Config struct {
 	UsingV2Conn bool
 }
 
+// FormatUserAgent returns the local user-agent string advertised to peers.
+func FormatUserAgent(name, version string, comments []string) string {
+	agent := wire.DefaultUserAgent
+	if name != "" || version != "" {
+		comment := ""
+		if len(comments) > 0 {
+			comment = "(" + strings.Join(comments, "; ") + ")"
+		}
+		agent += fmt.Sprintf("%s:%s%s/", name, version, comment)
+	}
+	return agent
+}
+
 // minUint32 is a helper function to return the minimum of two uint32s.
 // This avoids a math import and the need to cast to floats.
 func minUint32(a, b uint32) uint32 {
@@ -2122,24 +2135,15 @@ func (p *Peer) localVersionMsg() (*wire.HnsMsgVersion, error) {
 	nonce := uint64(rand.Int63())
 	sentNonces.Add(nonce)
 
-	agent := wire.DefaultUserAgent
-	if p.cfg.UserAgentName != "" || p.cfg.UserAgentVersion != "" {
-		comment := ""
-		if len(p.cfg.UserAgentComments) > 0 {
-			comment = "(" + strings.Join(p.cfg.UserAgentComments, "; ") + ")"
-		}
-		agent += fmt.Sprintf("%s:%s%s/",
-			p.cfg.UserAgentName, p.cfg.UserAgentVersion, comment)
-	}
-
 	msg := &wire.HnsMsgVersion{
 		Version:  p.cfg.ProtocolVersion,
 		Services: uint64(p.cfg.Services),
 		Time:     uint64(time.Now().Unix()), //nolint:gosec
 		Remote:   wire.NewHnsNetAddress(theirNA),
-		Agent:    agent,
-		Height:   uint32(blockNum), //nolint:gosec
-		NoRelay:  p.cfg.DisableRelayTx,
+		Agent: FormatUserAgent(p.cfg.UserAgentName,
+			p.cfg.UserAgentVersion, p.cfg.UserAgentComments),
+		Height:  uint32(blockNum), //nolint:gosec
+		NoRelay: p.cfg.DisableRelayTx,
 	}
 	msg.SetNonce(nonce)
 	return msg, nil
