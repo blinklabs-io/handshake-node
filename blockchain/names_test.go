@@ -110,24 +110,31 @@ func TestCheckCovenantSanityOpenRejectsHashMismatch(t *testing.T) {
 
 func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 	t.Run("allows hsd max item size", func(t *testing.T) {
+		const maxSingleItemSize = 580
+
 		tx := wire.NewMsgTx(1)
 		tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32,
 			nil))
 		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
 			Type: wire.CovenantRevoke + 1,
 			Items: [][]byte{
-				make([]byte, maxCovenantSize-
-					wire.VarIntSerializeSize(uint64(maxCovenantSize))),
+				make([]byte, maxSingleItemSize),
 			},
 		}))
 
+		if got := tx.TxOut[0].Covenant.SerializeSize(); got != maxCovenantSize {
+			t.Fatalf("covenant size = %d, want %d", got,
+				maxCovenantSize)
+		}
 		if err := CheckTransactionSanity(hnsutil.NewTx(tx)); err != nil {
 			t.Fatalf("CheckTransactionSanity: %v", err)
 		}
 	})
 
 	t.Run("allows hsd max empty item count by size", func(t *testing.T) {
-		items := make([][]byte, maxCovenantSize)
+		const maxEmptyItemsBySize = 581
+
+		items := make([][]byte, maxEmptyItemsBySize)
 		for i := range items {
 			items[i] = []byte{}
 		}
@@ -140,6 +147,10 @@ func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 			Items: items,
 		}))
 
+		if got := tx.TxOut[0].Covenant.SerializeSize(); got != maxCovenantSize {
+			t.Fatalf("covenant size = %d, want %d", got,
+				maxCovenantSize)
+		}
 		if err := CheckTransactionSanity(hnsutil.NewTx(tx)); err != nil {
 			t.Fatalf("CheckTransactionSanity: %v", err)
 		}
@@ -152,7 +163,7 @@ func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
 			Type: wire.CovenantRevoke + 1,
 			Items: [][]byte{
-				make([]byte, maxCovenantSize),
+				make([]byte, 581),
 			},
 		}))
 

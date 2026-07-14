@@ -21,8 +21,8 @@ const (
 	maxNameSize     = 63
 	maxResourceSize = 512
 
-	maxCovenantItems = 1000
-	maxCovenantSize  = 1 + 32 + 1 + 4 + 2 + maxResourceSize + 1 + 32
+	// This matches hsd's MAX_COVENANT_SIZE formula for unknown covenants.
+	maxCovenantSize = 1 + 32 + 1 + 4 + 2 + maxResourceSize + 1 + 32
 
 	maxBlockNameOpens    = 300
 	maxBlockNameUpdates  = 600
@@ -881,21 +881,13 @@ func checkCovenantSanity(tx *hnsutil.Tx) error {
 }
 
 func checkUnknownCovenant(covenant wire.Covenant) error {
-	if len(covenant.Items) > maxCovenantItems {
+	if len(covenant.Items) > wire.MaxCovenantItems {
 		return badCovenant("unknown covenant has too many items")
 	}
-	if covenantItemsSize(covenant) > maxCovenantSize {
+	if covenant.SerializeSize() > maxCovenantSize {
 		return badCovenant("unknown covenant is too large")
 	}
 	return nil
-}
-
-func covenantItemsSize(covenant wire.Covenant) int {
-	size := 0
-	for _, item := range covenant.Items {
-		size += wire.VarIntSerializeSize(uint64(len(item))) + len(item)
-	}
-	return size
 }
 
 func checkTransactionNameLimits(tx *hnsutil.Tx) error {

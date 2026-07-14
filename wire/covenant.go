@@ -49,9 +49,11 @@ const (
 	// maxCovenantType is the highest known covenant type value.
 	maxCovenantType = CovenantRevoke
 
-	// maxCovenantItems is the maximum number of items a covenant can have.
+	// MaxCovenantItems is the maximum number of items a covenant can have.
 	// This matches hsd's consensus MAX_SCRIPT_STACK bound.
-	maxCovenantItems = 1000
+	MaxCovenantItems = 1000
+
+	maxCovenantItems = MaxCovenantItems
 
 	// maxCovenantItemSize is the maximum size of a single covenant item.
 	// It is large enough to admit every hsd-sane unknown covenant while still
