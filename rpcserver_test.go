@@ -29,6 +29,89 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHandshakeDeploymentNames(t *testing.T) {
+	tests := []struct {
+		id   int
+		name string
+	}{
+		{chaincfg.DeploymentHardening, "hardening"},
+		{chaincfg.DeploymentICANNLockup, "icann-lockup"},
+		{chaincfg.DeploymentAirstop, "airstop"},
+	}
+
+	for _, test := range tests {
+		got, ok := deploymentName(test.id)
+		if !ok || got != test.name {
+			t.Errorf("deploymentName(%d) = %q, %v; want %q, true",
+				test.id, got, ok, test.name)
+		}
+	}
+}
+
+func TestHandshakeDeploymentStatuses(t *testing.T) {
+	tests := []struct {
+		state blockchain.ThresholdState
+		want  string
+	}{
+		{blockchain.ThresholdDefined, "defined"},
+		{blockchain.ThresholdStarted, "started"},
+		{blockchain.ThresholdLockedIn, "lockedin"},
+		{blockchain.ThresholdActive, "active"},
+		{blockchain.ThresholdFailed, "failed"},
+	}
+	for _, test := range tests {
+		got, err := softForkStatus(test.state)
+		if err != nil || got != test.want {
+			t.Errorf("softForkStatus(%v) = %q, %v; want %q, nil",
+				test.state, got, err, test.want)
+		}
+	}
+}
+
+func TestConfiguredDeploymentNamesByNetwork(t *testing.T) {
+	tests := []struct {
+		name   string
+		params *chaincfg.Params
+		want   map[string]bool
+	}{
+		{
+			name:   "mainnet",
+			params: &chaincfg.MainNetParams,
+			want: map[string]bool{
+				"dummy": true, "hardening": true,
+				"icann-lockup": true, "airstop": true,
+			},
+		},
+		{
+			name:   "regtest",
+			params: &chaincfg.RegressionNetParams,
+			want: map[string]bool{
+				"dummy": true, "dummy-min-activation": true,
+				"dummy-always-active": true, "csv": true,
+				"segwit": true, "hardening": true,
+				"icann-lockup": true, "airstop": true,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := make(map[string]bool)
+			for id, deployment := range test.params.Deployments {
+				if !deploymentConfigured(&deployment) {
+					continue
+				}
+				name, ok := deploymentName(id)
+				if !ok {
+					t.Fatalf("configured deployment %d has no RPC name", id)
+				}
+				got[name] = true
+			}
+			require.Equal(t, test.want, got, "configured deployment names mismatch")
+		})
+	}
+}
+
 func TestHnsutilAddressToWireRejectsTaprootShapedAddress(t *testing.T) {
 	addr, err := hnsutil.NewAddress(1, make([]byte, 32),
 		&chaincfg.RegressionNetParams)

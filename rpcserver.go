@@ -1977,6 +1977,44 @@ func softForkStatus(state blockchain.ThresholdState) (string, error) {
 	}
 }
 
+// deploymentName maps the stable deployment array index to the name exposed
+// by getblockchaininfo.  Keep this mapping independent from whether a given
+// network configures the deployment: Params.Deployments is a fixed-size array
+// and sparse networks legitimately leave entries at their zero value.
+func deploymentName(deployment int) (string, bool) {
+	switch deployment {
+	case chaincfg.DeploymentTestDummy:
+		return "dummy", true
+	case chaincfg.DeploymentTestDummyMinActivation:
+		return "dummy-min-activation", true
+	case chaincfg.DeploymentCSV:
+		return "csv", true
+	case chaincfg.DeploymentSegwit:
+		return "segwit", true
+	case chaincfg.DeploymentTaproot:
+		return "taproot", true
+	case chaincfg.DeploymentTestDummyAlwaysActive:
+		return "dummy-always-active", true
+	case chaincfg.DeploymentHardening:
+		return "hardening", true
+	case chaincfg.DeploymentICANNLockup:
+		return "icann-lockup", true
+	case chaincfg.DeploymentAirstop:
+		return "airstop", true
+	default:
+		return "", false
+	}
+}
+
+// deploymentConfigured reports whether a fixed deployment slot is populated
+// for a network.  In particular, a zero BitNumber is valid and cannot be used
+// as the sentinel.
+func deploymentConfigured(deployment *chaincfg.ConsensusDeployment) bool {
+	return deployment.DeploymentStarter != nil ||
+		deployment.DeploymentEnder != nil ||
+		deployment.AlwaysActiveHeight != 0
+}
+
 // handleGetBlockChainInfo implements the getblockchaininfo command.
 func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	// Obtain a snapshot of the current best known blockchain state. We'll
@@ -2035,29 +2073,14 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 	// Finally, query the BIP0009 version bits state for all currently
 	// defined BIP0009 soft-fork deployments.
 	for deployment, deploymentDetails := range params.Deployments {
+		if !deploymentConfigured(&deploymentDetails) {
+			continue
+		}
+
 		// Map the integer deployment ID into a human readable
 		// fork-name.
-		var forkName string
-		switch deployment {
-		case chaincfg.DeploymentTestDummy:
-			forkName = "dummy"
-
-		case chaincfg.DeploymentTestDummyMinActivation:
-			forkName = "dummy-min-activation"
-
-		case chaincfg.DeploymentTestDummyAlwaysActive:
-			forkName = "dummy-always-active"
-
-		case chaincfg.DeploymentCSV:
-			forkName = "csv"
-
-		case chaincfg.DeploymentSegwit:
-			forkName = "segwit"
-
-		case chaincfg.DeploymentTaproot:
-			forkName = "taproot"
-
-		default:
+		forkName, ok := deploymentName(deployment)
+		if !ok {
 			return nil, &hnsjson.RPCError{
 				Code: hnsjson.ErrRPCInternal.Code,
 				Message: fmt.Sprintf("Unknown deployment %v "+
