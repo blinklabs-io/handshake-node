@@ -777,11 +777,11 @@ func scanBlockFiles(dbPath string) (uint32, uint32, uint32, bool, error) {
 	// Grab the first and last file's number.
 	firstFile, err := parseBlockFileNum(files[0])
 	if err != nil {
-		return 0, 0, 0, false, fmt.Errorf("scanBlockFiles error: %v", err)
+		return 0, 0, 0, false, fmt.Errorf("scanBlockFiles error: %w", err)
 	}
 	lastFile, err := parseBlockFileNum(files[len(files)-1])
 	if err != nil {
-		return 0, 0, 0, false, fmt.Errorf("scanBlockFiles error: %v", err)
+		return 0, 0, 0, false, fmt.Errorf("scanBlockFiles error: %w", err)
 	}
 
 	// Get the last file's length.
