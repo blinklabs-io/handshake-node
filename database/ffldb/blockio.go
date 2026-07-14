@@ -748,46 +748,57 @@ func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
 	}
 }
 
+func parseBlockFileNum(file string) (uint32, error) {
+	raw := strings.TrimSuffix(filepath.Base(file), blockFileExtension)
+	fileNum, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid block file number %q: %w", raw, err)
+	}
+	return uint32(fileNum), nil
+}
+
 // scanBlockFiles searches the database directory for all flat block files to
 // find the first file, last file, and the end of the most recent file.  The
 // position at the last file is considered the current write cursor which is
 // also stored in the metadata.  Thus, it is used to detect unexpected shutdowns
 // in the middle of writes so the block files can be reconciled.
-func scanBlockFiles(dbPath string) (int, int, uint32, error) {
-	firstFile, lastFile, lastFileLen, err := int(-1), int(-1), uint32(0), error(nil)
-
+func scanBlockFiles(dbPath string) (uint32, uint32, uint32, bool, error) {
 	files, err := filepath.Glob(filepath.Join(dbPath, "*"+blockFileExtension))
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, false, err
 	}
 	sort.Strings(files)
 
 	// Return early if there's no block files.
 	if len(files) == 0 {
-		return firstFile, lastFile, lastFileLen, nil
+		return 0, 0, 0, false, nil
 	}
 
 	// Grab the first and last file's number.
-	firstFile, err = strconv.Atoi(strings.TrimSuffix(filepath.Base(files[0]), blockFileExtension))
+	firstFile, err := parseBlockFileNum(files[0])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("scanBlockFiles error: %v", err)
+		return 0, 0, 0, false, fmt.Errorf("scanBlockFiles error: %v", err)
 	}
-	lastFile, err = strconv.Atoi(strings.TrimSuffix(filepath.Base(files[len(files)-1]), blockFileExtension))
+	lastFile, err := parseBlockFileNum(files[len(files)-1])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("scanBlockFiles error: %v", err)
+		return 0, 0, 0, false, fmt.Errorf("scanBlockFiles error: %v", err)
 	}
 
 	// Get the last file's length.
-	filePath := blockFilePath(dbPath, uint32(lastFile))
+	filePath := blockFilePath(dbPath, lastFile)
 	st, err := os.Stat(filePath)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, false, err
 	}
-	lastFileLen = uint32(st.Size())
+	if st.Size() < 0 || uint64(st.Size()) > uint64(1<<32-1) {
+		return 0, 0, 0, false, fmt.Errorf("block file %s size %d overflows uint32",
+			filePath, st.Size())
+	}
+	lastFileLen := uint32(st.Size())
 
 	log.Tracef("Scan found latest block file #%d with length %d", lastFile, lastFileLen)
 
-	return firstFile, lastFile, lastFileLen, err
+	return firstFile, lastFile, lastFileLen, true, nil
 }
 
 // newBlockStore returns a new block store with the current block file number
@@ -796,11 +807,11 @@ func newBlockStore(basePath string, network wire.BitcoinNet) (*blockStore, error
 	// Look for the end of the latest block to file to determine what the
 	// write cursor position is from the viewpoint of the block files on
 	// disk.
-	_, fileNum, fileOff, err := scanBlockFiles(basePath)
+	_, fileNum, fileOff, hasFiles, err := scanBlockFiles(basePath)
 	if err != nil {
 		return nil, err
 	}
-	if fileNum == -1 {
+	if !hasFiles {
 		fileNum = 0
 		fileOff = 0
 	}
@@ -815,7 +826,7 @@ func newBlockStore(basePath string, network wire.BitcoinNet) (*blockStore, error
 
 		writeCursor: &writeCursor{
 			curFile:    &lockableFile{},
-			curFileNum: uint32(fileNum),
+			curFileNum: fileNum,
 			curOffset:  fileOff,
 		},
 	}
