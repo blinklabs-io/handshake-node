@@ -139,7 +139,7 @@ func (c *rpcClient) call(ctx context.Context, method string, params ...any) (jso
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return nil, err
@@ -165,11 +165,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		fmt.Fprintf(stderr, "hnsparity: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "hnsparity: %v\n", err)
 		return 2
 	}
 	if err := execute(cfg, stdout); err != nil {
-		fmt.Fprintf(stderr, "hnsparity: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "hnsparity: %v\n", err)
 		return 1
 	}
 	return 0
@@ -274,7 +274,7 @@ func execute(cfg *config, stdout io.Writer) error {
 			if err == nil && nodeHeight >= height {
 				break
 			}
-			fmt.Fprintf(stdout, "waiting for handshake-node height=%d target=%d\n", nodeHeight, target)
+			_, _ = fmt.Fprintf(stdout, "waiting for handshake-node height=%d target=%d\n", nodeHeight, target)
 			time.Sleep(cfg.poll)
 		}
 		if err := compareHeight(ctx, node, hsd, height, cfg, rep); err != nil {
@@ -293,7 +293,7 @@ func execute(cfg *config, stdout io.Writer) error {
 			return fmt.Errorf("write checkpoint: %w", err)
 		}
 		if height%1000 == 0 || height == target {
-			fmt.Fprintf(stdout, "verified height=%d target=%d\n", height, target)
+			_, _ = fmt.Fprintf(stdout, "verified height=%d target=%d\n", height, target)
 		}
 	}
 	rep.Status = "pass"
@@ -549,20 +549,20 @@ func writeReports(cfg *config, rep *report) error {
 }
 func writeMarkdown(path string, rep *report) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Handshake mainnet parity report\n\n- Status: **%s**\n- Network: `%s`\n- hsd oracle: `%s` (`%s`)\n- Target: `%d` (`%s`)\n- Last verified: `%d`\n- Deployment check: `%s`\n- Duration: `%s`\n- Started: `%s`\n- Finished: `%s`\n- Resumed from: `%d`\n- Mismatches: `%d`\n", rep.Status, rep.Network, rep.HSDPin, rep.HSDCommit, rep.TargetHeight, rep.TargetHash, rep.LastVerifiedHeight, rep.DeploymentCheck, rep.Duration, rep.StartedAt, rep.FinishedAt, rep.ResumedFrom, len(rep.Mismatches))
+	_, _ = fmt.Fprintf(&b, "# Handshake mainnet parity report\n\n- Status: **%s**\n- Network: `%s`\n- hsd oracle: `%s` (`%s`)\n- Target: `%d` (`%s`)\n- Last verified: `%d`\n- Deployment check: `%s`\n- Duration: `%s`\n- Started: `%s`\n- Finished: `%s`\n- Resumed from: `%d`\n- Mismatches: `%d`\n", rep.Status, rep.Network, rep.HSDPin, rep.HSDCommit, rep.TargetHeight, rep.TargetHash, rep.LastVerifiedHeight, rep.DeploymentCheck, rep.Duration, rep.StartedAt, rep.FinishedAt, rep.ResumedFrom, len(rep.Mismatches))
 	if rep.FinalNodeError != "" || rep.FinalHSDError != "" {
-		fmt.Fprintf(&b, "- Final handshake-node height error: `%s`\n- Final hsd height error: `%s`\n", rep.FinalNodeError, rep.FinalHSDError)
+		_, _ = fmt.Fprintf(&b, "- Final handshake-node height error: `%s`\n- Final hsd height error: `%s`\n", rep.FinalNodeError, rep.FinalHSDError)
 	}
 	if len(rep.Mismatches) > 0 {
 		b.WriteString("\n## Mismatches\n\n| Height | Check | Node | hsd |\n|---:|---|---|---|\n")
 		for _, m := range rep.Mismatches {
-			fmt.Fprintf(&b, "| %d | %s | `%s` | `%s` |\n", m.Height, m.Check, m.Node, m.HSD)
+			_, _ = fmt.Fprintf(&b, "| %d | %s | `%s` | `%s` |\n", m.Height, m.Check, m.Node, m.HSD)
 		}
 	}
 	if len(rep.RestartHistory) > 0 {
 		b.WriteString("\n## Restart history\n\n")
 		for _, restart := range rep.RestartHistory {
-			fmt.Fprintf(&b, "- %s\n", restart)
+			_, _ = fmt.Fprintf(&b, "- %s\n", restart)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
