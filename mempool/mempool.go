@@ -207,11 +207,13 @@ type coinbaseProofPolicy struct {
 	kind            coinbaseProofKind
 	claimNameHash   chainhash.Hash
 	claimHeight     uint32
+	claimInception  uint32
 	claimExpiration uint32
 	airdropPosition uint32
 	airdropWeak     bool
 	airdropGooSig   bool
 	hasClaimHeight  bool
+	hasClaimWindow  bool
 	hasClaimExpiry  bool
 }
 
@@ -1006,7 +1008,9 @@ func (mp *TxPool) coinbaseClaimPolicy(proof mining.CoinbaseProof) (
 		return coinbaseProofPolicy{}, err
 	}
 
+	policy.claimInception = meta.Inception
 	policy.claimExpiration = meta.Expiration
+	policy.hasClaimWindow = true
 	policy.hasClaimExpiry = true
 	return policy, nil
 }
@@ -1144,10 +1148,18 @@ func (mp *TxPool) validateClaimProofForHeight(
 		return coinbaseProofPrune("CLAIM proof height = %d, before %d",
 			policy.claimHeight, nextBlockHeight)
 	}
-	if policy.hasClaimExpiry && mp.cfg.MedianTimePast != nil &&
-		mp.cfg.MedianTimePast().Unix() > int64(policy.claimExpiration) {
+	if mp.cfg.MedianTimePast != nil {
+		medianTime := mp.cfg.MedianTimePast().Unix()
+		if policy.hasClaimWindow &&
+			medianTime < int64(policy.claimInception) {
 
-		return coinbaseProofPrune("CLAIM proof is expired")
+			return coinbaseProofPrune("CLAIM proof is not active")
+		}
+		if policy.hasClaimExpiry &&
+			medianTime > int64(policy.claimExpiration) {
+
+			return coinbaseProofPrune("CLAIM proof is expired")
+		}
 	}
 
 	return nil

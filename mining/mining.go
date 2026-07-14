@@ -508,7 +508,8 @@ type coinbaseProofCandidate struct {
 }
 
 func selectCoinbaseProofs(coinbaseTx *hnsutil.Tx, proofs []CoinbaseProof,
-	maxBlockWeight uint32) ([]CoinbaseProof, error) {
+	nextBlockHeight int32, maxBlockWeight uint32,
+	params *chaincfg.Params) ([]CoinbaseProof, error) {
 
 	if len(proofs) == 0 {
 		return nil, nil
@@ -521,9 +522,15 @@ func selectCoinbaseProofs(coinbaseTx *hnsutil.Tx, proofs []CoinbaseProof,
 			return nil, fmt.Errorf("coinbase proof %d: %w", i, err)
 		}
 
+		rate, err := coinbaseProofRate(coinbaseTx, proof,
+			nextBlockHeight, params)
+		if err != nil {
+			return nil, fmt.Errorf("coinbase proof %d: %w", i, err)
+		}
+
 		candidate := coinbaseProofCandidate{
 			proof: proof,
-			rate:  coinbaseProofRate(proof),
+			rate:  rate,
 			index: i,
 		}
 		switch proof.Output.Covenant.Type {
@@ -579,17 +586,32 @@ func sortCoinbaseProofCandidates(candidates []coinbaseProofCandidate) {
 	})
 }
 
-func coinbaseProofRate(proof CoinbaseProof) int64 {
-	if proof.Fee <= 0 {
-		return 0
+func coinbaseProofRate(coinbaseTx *hnsutil.Tx, proof CoinbaseProof,
+	nextBlockHeight int32, params *chaincfg.Params) (int64, error) {
+
+	minerFee, err := coinbaseProofMinerFee(proof, nextBlockHeight,
+		params)
+	if err != nil {
+		return 0, err
 	}
-	virtualSize := int64((len(proof.Witness) +
-		blockchain.WitnessScaleFactor - 1) /
-		blockchain.WitnessScaleFactor)
+	if minerFee <= 0 {
+		return 0, nil
+	}
+
+	baseWeight := blockchain.GetTransactionWeight(coinbaseTx)
+	msgTx := coinbaseTx.MsgTx().Copy()
+	appendCoinbaseProof(msgTx, proof)
+	proofWeight := blockchain.GetTransactionWeight(hnsutil.NewTx(msgTx)) -
+		baseWeight
+	if proofWeight <= 0 {
+		return 0, nil
+	}
+	virtualSize := (proofWeight + blockchain.WitnessScaleFactor - 1) /
+		blockchain.WitnessScaleFactor
 	if virtualSize == 0 {
-		return 0
+		return 0, nil
 	}
-	return proof.Fee * 1000 / virtualSize
+	return minerFee * 1000 / virtualSize, nil
 }
 
 func coinbaseProofFits(coinbaseTx *hnsutil.Tx, proof CoinbaseProof,
@@ -803,7 +825,7 @@ func (g *BlkTmplGenerator) NewBlockTemplate(payToAddress hnsutil.Address) (*Bloc
 			return nil, err
 		}
 		proofs, err = selectCoinbaseProofs(coinbaseTx, proofs,
-			g.policy.BlockMaxWeight)
+			nextBlockHeight, g.policy.BlockMaxWeight, g.chainParams)
 		if err != nil {
 			return nil, err
 		}

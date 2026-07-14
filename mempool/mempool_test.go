@@ -1439,6 +1439,40 @@ func TestAddCoinbaseProofRejectsStaleAndDisabledProofs(t *testing.T) {
 	}
 }
 
+func TestValidateClaimProofForHeightChecksDNSSECWindow(t *testing.T) {
+	t.Parallel()
+
+	medianTime := int64(99)
+	mp := New(&Config{
+		MedianTimePast: func() time.Time {
+			return time.Unix(medianTime, 0)
+		},
+	})
+	policy := coinbaseProofPolicy{
+		kind:            coinbaseProofKindClaim,
+		claimInception:  100,
+		claimExpiration: 200,
+		hasClaimWindow:  true,
+		hasClaimExpiry:  true,
+	}
+
+	err := mp.validateClaimProofForHeight(policy, 1)
+	if err == nil || !coinbaseProofErrorPrunable(err) {
+		t.Fatalf("future CLAIM error = %v, want prunable error", err)
+	}
+
+	medianTime = 100
+	if err := mp.validateClaimProofForHeight(policy, 1); err != nil {
+		t.Fatalf("active CLAIM: %v", err)
+	}
+
+	medianTime = 201
+	err = mp.validateClaimProofForHeight(policy, 1)
+	if err == nil || !coinbaseProofErrorPrunable(err) {
+		t.Fatalf("expired CLAIM error = %v, want prunable error", err)
+	}
+}
+
 func TestRemoveCoinbaseProofsRemovesMinedProofs(t *testing.T) {
 	t.Parallel()
 

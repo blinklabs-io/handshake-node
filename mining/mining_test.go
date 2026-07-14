@@ -1229,6 +1229,77 @@ func TestAddCoinbaseProofsRejectsDuplicateWitness(t *testing.T) {
 	}
 }
 
+func TestCoinbaseProofRateUsesMinerFeeAfterDeflation(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.NameDeflationHeight = 1
+
+	addr := wire.Address{
+		Version: 0,
+		Hash:    bytes.Repeat([]byte{0x01}, 20),
+	}
+	coinbaseTx := hnsutil.NewTx(wire.NewMsgTx(wire.TxVersion))
+	commitHash := chainhash.Hash{0x02}
+	proof := CoinbaseProof{
+		Witness: []byte{0x01, 0x02, 0x03},
+		Output: wire.NewTxOut(10, addr,
+			miningTestClaimCovenant("com", 1, commitHash, 2,
+				false)),
+		Fee: 1000,
+	}
+
+	rate, err := coinbaseProofRate(coinbaseTx, proof, 1, &params)
+	if err != nil {
+		t.Fatalf("coinbaseProofRate non-initial claim: %v", err)
+	}
+	if rate != 0 {
+		t.Fatalf("non-initial post-deflation rate = %d, want 0", rate)
+	}
+
+	proof.Output = wire.NewTxOut(10, addr,
+		miningTestClaimCovenant("com", 1, commitHash, 1, false))
+	rate, err = coinbaseProofRate(coinbaseTx, proof, 1, &params)
+	if err != nil {
+		t.Fatalf("coinbaseProofRate initial claim: %v", err)
+	}
+	if rate <= 0 {
+		t.Fatalf("initial post-deflation rate = %d, want positive", rate)
+	}
+}
+
+func TestCoinbaseProofRateUsesIncrementalCoinbaseWeight(t *testing.T) {
+	coinbaseTx := hnsutil.NewTx(wire.NewMsgTx(wire.TxVersion))
+	witness := bytes.Repeat([]byte{0xaa}, 16)
+	smallProof := CoinbaseProof{
+		Witness: witness,
+		Output: wire.NewTxOut(1, wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x01}, 20),
+		}, wire.Covenant{}),
+		Fee: 1000,
+	}
+	largeProof := CoinbaseProof{
+		Witness: witness,
+		Output: wire.NewTxOut(1, wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x02}, 64),
+		}, wire.Covenant{}),
+		Fee: 1000,
+	}
+
+	smallRate, err := coinbaseProofRate(coinbaseTx, smallProof, 0, nil)
+	if err != nil {
+		t.Fatalf("coinbaseProofRate small proof: %v", err)
+	}
+	largeRate, err := coinbaseProofRate(coinbaseTx, largeProof, 0, nil)
+	if err != nil {
+		t.Fatalf("coinbaseProofRate large proof: %v", err)
+	}
+	if smallRate <= largeRate {
+		t.Fatalf("proof rates small=%d large=%d, want small higher",
+			smallRate, largeRate)
+	}
+}
+
 func TestNewBlockTemplateIncludesCoinbaseClaimProof(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil
