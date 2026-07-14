@@ -11,7 +11,6 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -108,9 +107,7 @@ func TestConfiguredDeploymentNamesByNetwork(t *testing.T) {
 				}
 				got[name] = true
 			}
-			if !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("configured deployment names = %v, want %v", got, test.want)
-			}
+			require.Equal(t, test.want, got, "configured deployment names mismatch")
 		})
 	}
 }
