@@ -712,33 +712,44 @@ func sortNameStateViews(states []*NameState) {
 // FetchNameProof returns an hsd-compatible Urkel proof for the provided name
 // tree root and key.
 func (b *BlockChain) FetchNameProof(root, key chainhash.Hash) ([]byte, error) {
-	// Keep the active-chain tip and its name undo journal stable while the
-	// committed tree is reconstructed.
-	b.chainLock.RLock()
-	defer b.chainLock.RUnlock()
+	tree, err := b.fetchNameProofTree(root)
+	if err != nil {
+		return nil, err
+	}
 
+	proof := proveUrkel(tree, key)
+	return proof.Encode()
+}
+
+func (b *BlockChain) fetchNameProofTree(root chainhash.Hash) (urkelNode, error) {
 	b.nameProofCacheMtx.Lock()
 	defer b.nameProofCacheMtx.Unlock()
 
-	if !b.nameProofCacheValid || b.nameProofCacheRoot != root {
-		rollbackHashes := b.nameProofRollbackHashes()
-		var tree urkelNode
-		err := b.db.View(func(dbTx database.Tx) error {
-			var err error
-			tree, err = dbBuildNameProofTree(dbTx, root, rollbackHashes)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		b.nameProofCacheRoot = root
-		b.nameProofCacheTree = tree
-		b.nameProofCacheValid = true
+	if b.nameProofCacheValid && b.nameProofCacheRoot == root {
+		return b.nameProofCacheTree, nil
 	}
 
-	proof := proveUrkel(b.nameProofCacheTree, key)
-	return proof.Encode()
+	// Keep the active-chain tip and its name undo journal stable only while
+	// reconstructing a cache miss. Cache waiters must not retain a chain read
+	// lock because doing so could delay block connection and reorganization.
+	b.chainLock.RLock()
+	defer b.chainLock.RUnlock()
+
+	rollbackHashes := b.nameProofRollbackHashes()
+	var tree urkelNode
+	err := b.db.View(func(dbTx database.Tx) error {
+		var err error
+		tree, err = dbBuildNameProofTree(dbTx, root, rollbackHashes)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	b.nameProofCacheRoot = root
+	b.nameProofCacheTree = tree
+	b.nameProofCacheValid = true
+	return tree, nil
 }
 
 // nameProofRollbackHashes returns active-chain block hashes after the latest
