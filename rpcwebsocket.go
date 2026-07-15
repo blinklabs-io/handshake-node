@@ -2111,6 +2111,8 @@ func (c *wsClient) WaitForShutdown() {
 func newWebsocketClient(server *rpcServer, conn *websocket.Conn,
 	remoteAddr string, authenticated bool, isAdmin bool) (*wsClient, error) {
 
+	conn.SetReadLimit(maxRPCRequestSize)
+
 	sessionID, err := wire.RandomUint64()
 	if err != nil {
 		return nil, err

@@ -96,6 +96,9 @@ A few things to note regarding the RPC server:
   addresses are allowed subject to authentication.
 * The `--rpclisten` flag can be specified multiple times to listen on multiple
   interfaces as a couple of the examples below illustrate.
+* HTTP and websocket JSON-RPC requests are limited to 16 MiB. This admits a
+  maximum-size Handshake wire object after hex encoding while bounding memory
+  use per request. Split larger batches into separate requests.
 * The RPC server is disabled by default when using the `--regtest` and
   `--simnet` networks.  You can override this by specifying listen interfaces.
 

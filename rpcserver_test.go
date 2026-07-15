@@ -9,8 +9,12 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +32,69 @@ import (
 	"github.com/btcsuite/btclog"
 	"github.com/stretchr/testify/require"
 )
+
+func TestReadLimitedRPCRequestBody(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		limit   int64
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "at limit",
+			body:  "1234",
+			limit: 4,
+			want:  "1234",
+		},
+		{
+			name:    "chunked over limit",
+			body:    "12345",
+			limit:   4,
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/",
+				strings.NewReader(test.body))
+			if test.wantErr {
+				req.ContentLength = -1
+			}
+			got, err := readLimitedRPCRequestBody(httptest.NewRecorder(),
+				req, test.limit)
+			if test.wantErr {
+				var maxBytesErr *http.MaxBytesError
+				if !errors.As(err, &maxBytesErr) {
+					t.Fatalf("error = %v, want *http.MaxBytesError", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readLimitedRPCRequestBody: %v", err)
+			}
+			if string(got) != test.want {
+				t.Fatalf("body = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestJSONRPCReadRejectsDeclaredOversizeBody(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}"))
+	req.ContentLength = maxRPCRequestSize + 1
+	recorder := httptest.NewRecorder()
+
+	server := &rpcServer{}
+	server.jsonRPCRead(recorder, req, true)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		body, _ := io.ReadAll(recorder.Result().Body)
+		t.Fatalf("status = %d, want %d (body %q)", recorder.Code,
+			http.StatusRequestEntityTooLarge, body)
+	}
+}
 
 func TestHandshakeDeploymentNames(t *testing.T) {
 	tests := []struct {
