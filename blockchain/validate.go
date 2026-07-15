@@ -27,11 +27,19 @@ const (
 	// hours.
 	MaxTimeOffsetSeconds = 2 * 60 * 60
 
-	// MinCoinbaseScriptLen is the minimum length a coinbase script can be.
-	MinCoinbaseScriptLen = 2
+	// MaxCoinbaseWitnessSize is the maximum serialized size of the first
+	// coinbase input's witness items, excluding the witness item-count
+	// varint. This matches hsd's Witness.getSize consensus check.
+	MaxCoinbaseWitnessSize = 1000
 
-	// MaxCoinbaseScriptLen is the maximum length a coinbase script can be.
-	MaxCoinbaseScriptLen = 100
+	// MinCoinbaseScriptLen is retained for source compatibility. Handshake
+	// consensus permits an empty first coinbase witness.
+	// Deprecated: use MaxCoinbaseWitnessSize when validating coinbases.
+	MinCoinbaseScriptLen = 0
+
+	// MaxCoinbaseScriptLen is retained for source compatibility.
+	// Deprecated: use MaxCoinbaseWitnessSize when validating coinbases.
+	MaxCoinbaseScriptLen = MaxCoinbaseWitnessSize
 
 	// medianTimeBlocks is the number of previous blocks which should be
 	// used to calculate the median time used to validate block timestamps.
@@ -347,12 +355,11 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 			}
 		}
 
-		coinbaseScript := coinbaseWitnessScript(msgTx.TxIn[0].Witness)
-		slen := len(coinbaseScript)
-		if slen < MinCoinbaseScriptLen || slen > MaxCoinbaseScriptLen {
-			str := fmt.Sprintf("coinbase transaction script length "+
-				"of %d is out of range (min: %d, max: %d)",
-				slen, MinCoinbaseScriptLen, MaxCoinbaseScriptLen)
+		witnessSize := coinbaseWitnessSize(msgTx.TxIn[0].Witness)
+		if witnessSize > MaxCoinbaseWitnessSize {
+			str := fmt.Sprintf("coinbase transaction witness size "+
+				"of %d exceeds max %d", witnessSize,
+				MaxCoinbaseWitnessSize)
 			return ruleError(ErrBadCoinbaseScriptLen, str)
 		}
 	} else {
@@ -657,6 +664,17 @@ func checkBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 	}
 
 	return nil
+}
+
+// coinbaseWitnessSize returns the size hsd uses for its first coinbase input
+// witness limit: each item's varint length prefix and data, excluding the
+// witness item-count varint.
+func coinbaseWitnessSize(witness wire.TxWitness) int {
+	size := 0
+	for _, item := range witness {
+		size += wire.VarIntSerializeSize(uint64(len(item))) + len(item)
+	}
+	return size
 }
 
 // CheckBlockSanity performs some preliminary checks on a block to ensure it is

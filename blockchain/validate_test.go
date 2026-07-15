@@ -90,6 +90,78 @@ func TestCoinbaseTransactionIsFinalized(t *testing.T) {
 	}
 }
 
+func TestCoinbaseWitnessSizeMatchesHsdConsensus(t *testing.T) {
+	exactItemLimit := wire.TxWitness{make([]byte, 997)}
+	overItemLimit := wire.TxWitness{make([]byte, 998)}
+	exactEmptyItemLimit := make(wire.TxWitness, MaxCoinbaseWitnessSize)
+	overEmptyItemLimit := make(wire.TxWitness, MaxCoinbaseWitnessSize+1)
+
+	tests := []struct {
+		name     string
+		witness  wire.TxWitness
+		wantSize int
+		wantErr  bool
+	}{
+		{name: "no items", wantSize: 0},
+		{name: "empty item", witness: wire.TxWitness{nil}, wantSize: 1},
+		{
+			name:     "exact limit with one item",
+			witness:  exactItemLimit,
+			wantSize: MaxCoinbaseWitnessSize,
+		},
+		{
+			name:     "over limit with one item",
+			witness:  overItemLimit,
+			wantSize: MaxCoinbaseWitnessSize + 1,
+			wantErr:  true,
+		},
+		{
+			name:     "exact limit with empty items",
+			witness:  exactEmptyItemLimit,
+			wantSize: MaxCoinbaseWitnessSize,
+		},
+		{
+			name:     "over limit with empty items",
+			witness:  overEmptyItemLimit,
+			wantSize: MaxCoinbaseWitnessSize + 1,
+			wantErr:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := coinbaseWitnessSize(test.witness); got != test.wantSize {
+				t.Fatalf("coinbaseWitnessSize = %d, want %d", got,
+					test.wantSize)
+			}
+
+			coinbaseOutpoint := wire.NewOutPoint(&chainhash.Hash{},
+				math.MaxUint32)
+			coinbaseTx := wire.NewMsgTx(wire.TxVersion)
+			coinbaseTx.AddTxIn(wire.NewTxIn(coinbaseOutpoint,
+				wire.MaxTxInSequenceNum, test.witness))
+			coinbaseTx.AddTxOut(wire.NewTxOut(1, wire.Address{
+				Version: 0,
+				Hash:    make([]byte, 20),
+			}, wire.Covenant{}))
+
+			err := CheckTransactionSanity(hnsutil.NewTx(coinbaseTx))
+			if test.wantErr {
+				if ruleErr, ok := err.(RuleError); !ok ||
+					ruleErr.ErrorCode != ErrBadCoinbaseScriptLen {
+
+					t.Fatalf("CheckTransactionSanity error = %T %v, "+
+						"want ErrBadCoinbaseScriptLen", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CheckTransactionSanity: %v", err)
+			}
+		})
+	}
+}
+
 func TestHandshakeLockTimeTransactionFinality(t *testing.T) {
 	prevHash := chainhash.Hash{0x01}
 	prevOut := wire.NewOutPoint(&prevHash, 0)
