@@ -45,6 +45,7 @@ const (
 	defaultMaxPeers              = 125
 	defaultBanDuration           = time.Hour * 24
 	defaultBanThreshold          = 100
+	defaultMaxProofRPS           = 100
 	defaultConnectTimeout        = time.Second * 30
 	defaultMaxRPCClients         = 10
 	defaultMaxRPCWebsockets      = 25
@@ -138,6 +139,7 @@ type config struct {
 	LogDir               string        `long:"logdir" description:"Directory to log output."`
 	MaxOrphanTxs         int           `long:"maxorphantx" description:"Max number of orphan transactions to keep in memory"`
 	MaxPeers             int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
+	MaxProofRPS          uint32        `long:"maxproofrps" description:"Maximum name proof requests per second accepted from each peer before banning"`
 	MetricsListeners     []string      `long:"metricslisten" description:"Enable the Prometheus metrics endpoint on the specified interface/port (disabled by default; default port 12039 when no port is specified)"`
 	MetricsAllowPublic   bool          `long:"metricsallowpublic" description:"Allow the Prometheus metrics endpoint to bind to non-loopback interfaces"`
 	MiningAddrs          []string      `long:"miningaddr" description:"Add the specified payment address to the list of addresses to use for generated blocks -- At least one address is required if the generate option is set"`
@@ -616,6 +618,7 @@ func loadConfig() (*config, []string, error) {
 		MaxPeers:             defaultMaxPeers,
 		BanDuration:          defaultBanDuration,
 		BanThreshold:         defaultBanThreshold,
+		MaxProofRPS:          defaultMaxProofRPS,
 		RPCMaxClients:        defaultMaxRPCClients,
 		RPCMaxWebsockets:     defaultMaxRPCWebsockets,
 		RPCMaxConcurrentReqs: defaultMaxRPCConcurrentReqs,
@@ -841,6 +844,14 @@ func loadConfig() (*config, []string, error) {
 	if cfg.BanDuration < time.Second {
 		str := "%s: The banduration option may not be less than 1s -- parsed [%v]"
 		err := fmt.Errorf(str, funcName, cfg.BanDuration)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	if cfg.MaxProofRPS == 0 {
+		str := "%s: the maxproofrps option may not be zero"
+		err := fmt.Errorf(str, funcName)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err

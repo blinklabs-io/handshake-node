@@ -96,6 +96,7 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 		BanDuration:  time.Second,
 		AddPeers:     []string{"from-file"},
 		BlockMaxSize: 1,
+		MaxProofRPS:  100,
 		Prune:        1,
 		ConfigFile:   "from-file.conf",
 	}
@@ -105,6 +106,7 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 		"HANDSHAKE_NODE_BANDURATION":  "2m",
 		"HANDSHAKE_NODE_ADDPEER":      "127.0.0.1,127.0.0.2",
 		"HANDSHAKE_NODE_BLOCKMAXSIZE": "010",
+		"HANDSHAKE_NODE_MAXPROOFRPS":  "25",
 		"HANDSHAKE_NODE_PRUNE":        "010",
 		"HANDSHAKE_NODE_CONFIGFILE":   "from-env.conf",
 		"HANDSHAKE_NODE_VERSION":      "true",
@@ -134,6 +136,9 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 	if cfg.BlockMaxSize != 10 {
 		t.Fatalf("BlockMaxSize: got %d, want %d", cfg.BlockMaxSize,
 			10)
+	}
+	if cfg.MaxProofRPS != 25 {
+		t.Fatalf("MaxProofRPS: got %d, want %d", cfg.MaxProofRPS, 25)
 	}
 	if cfg.Prune != 10 {
 		t.Fatalf("Prune: got %d, want %d", cfg.Prune, uint64(10))
