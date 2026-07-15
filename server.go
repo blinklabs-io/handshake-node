@@ -239,6 +239,7 @@ type server struct {
 	db                   database.DB
 	timeSource           blockchain.MedianTimeSource
 	services             wire.ServiceFlag
+	maxProofRPS          uint32
 
 	// The following fields are used for optional indexes.  They will be nil
 	// if the associated index is not enabled.  These fields are set during
@@ -286,6 +287,7 @@ type serverPeer struct {
 	addressesMtx   sync.RWMutex
 	knownAddresses lru.Cache
 	banScore       connmgr.DynamicBanScore
+	proofRequests  *proofRequestWindow
 	quit           chan struct{}
 	// The following chans are used to sync blockmanager and server.
 	txProcessed    chan struct{}
@@ -300,6 +302,7 @@ func newServerPeer(s *server, isPersistent bool) *serverPeer {
 		persistent:     isPersistent,
 		filter:         bloom.LoadFilter(nil),
 		knownAddresses: lru.NewCache(5000),
+		proofRequests:  newProofRequestWindow(s.maxProofRPS),
 		quit:           make(chan struct{}),
 		txProcessed:    make(chan struct{}, 1),
 		blockProcessed: make(chan struct{}, 1),
@@ -1057,6 +1060,9 @@ func (sp *serverPeer) OnGetProof(_ *peer.Peer, hnsMsg *wire.HnsMsgGetProof) {
 	if !sp.server.syncManager.IsCurrent() {
 		return
 	}
+	if !sp.allowProofRequest() {
+		return
+	}
 
 	root := chainhash.Hash(hnsMsg.Root)
 	key := chainhash.Hash(hnsMsg.Key)
@@ -1079,6 +1085,25 @@ func (sp *serverPeer) OnGetProof(_ *peer.Peer, hnsMsg *wire.HnsMsgGetProof) {
 		Key:   hnsMsg.Key,
 		Proof: proof,
 	}, nil)
+}
+
+func (sp *serverPeer) allowProofRequest() bool {
+	if sp.proofRequests.allow(time.Now()) {
+		return true
+	}
+
+	peerLog.Warnf("Peer %s exceeded the name proof request rate limit", sp)
+	if cfg == nil || cfg.DisableBanning {
+		return false
+	}
+	if sp.isWhitelisted {
+		peerLog.Debugf("Rate limiting whitelisted peer %s", sp)
+		return false
+	}
+
+	sp.server.BanPeer(sp)
+	sp.Disconnect()
+	return false
 }
 
 // enforceNodeBloomFlag disconnects the peer if the server is not configured to
@@ -2849,6 +2874,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		brontideStaticKey:    brontideStaticKey,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
+		maxProofRPS:          cfg.MaxProofRPS,
 		sigCache:             txscript.NewSigCache(cfg.SigCacheMaxSize),
 		hashCache:            txscript.NewHashCache(cfg.SigCacheMaxSize),
 		cfCheckptCaches:      make(map[wire.FilterType][]cfHeaderKV),
