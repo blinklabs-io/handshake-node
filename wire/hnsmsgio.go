@@ -69,8 +69,6 @@ func ReadHnsMessageN(r io.Reader,
 	}
 
 	if hdr.PayloadLength > HnsMaxMessagePayload {
-		discardInput(r, hdr.PayloadLength)
-		totalBytes += int(hdr.PayloadLength)
 		str := fmt.Sprintf("message payload is too large - header "+
 			"indicates %d bytes, but max message payload is %d "+
 			"bytes.", hdr.PayloadLength, HnsMaxMessagePayload)
@@ -78,8 +76,6 @@ func ReadHnsMessageN(r io.Reader,
 	}
 
 	if BitcoinNet(hdr.NetworkMagic) != hnsnet {
-		discardInput(r, hdr.PayloadLength)
-		totalBytes += int(hdr.PayloadLength)
 		str := fmt.Sprintf("message from other network [%v]",
 			BitcoinNet(hdr.NetworkMagic))
 		return totalBytes, nil, nil, messageError("ReadHnsMessage", str)
@@ -87,15 +83,13 @@ func ReadHnsMessageN(r io.Reader,
 
 	msg, err := newEmptyHnsMessage(hdr.MessageType)
 	if err != nil {
-		discardInput(r, hdr.PayloadLength)
-		totalBytes += int(hdr.PayloadLength)
+		totalBytes += discardHnsPayload(r, hdr.PayloadLength)
 		return totalBytes, nil, nil, err
 	}
 
 	mpl := maxHnsPayloadLength(hdr.MessageType)
 	if hdr.PayloadLength > mpl {
-		discardInput(r, hdr.PayloadLength)
-		totalBytes += int(hdr.PayloadLength)
+		totalBytes += discardHnsPayload(r, hdr.PayloadLength)
 		str := fmt.Sprintf("payload exceeds max length - header "+
 			"indicates %v bytes, but max payload size for "+
 			"messages of type [%v] is %v.", hdr.PayloadLength,
@@ -117,6 +111,16 @@ func ReadHnsMessageN(r io.Reader,
 	}
 
 	return totalBytes, msg, payload, nil
+}
+
+// discardHnsPayload discards at most n bytes and returns the number actually
+// consumed. Handshake callers use the result for peer byte accounting, so a
+// truncated rejected payload must not be counted at its advertised length.
+func discardHnsPayload(r io.Reader, n uint32) int {
+	discarded, _ := io.CopyN(io.Discard, r, int64(n))
+	// The caller has already bounded n by HnsMaxMessagePayload, which fits
+	// in an int on every supported architecture.
+	return int(discarded) //nolint:gosec
 }
 
 // ReadHnsMessage reads, validates, and parses the next Handshake message from
