@@ -403,6 +403,29 @@ func TestMerkleBlockOverflowErrors(t *testing.T) {
 	}
 }
 
+// TestMerkleBlockImpossibleHashCount ensures a truncated payload cannot cause
+// allocation of large hash slices before their serialized bytes are present.
+func TestMerkleBlockImpossibleHashCount(t *testing.T) {
+	var payload bytes.Buffer
+	if err := blockOne.Header.Serialize(&payload); err != nil {
+		t.Fatalf("Serialize header: %v", err)
+	}
+	payload.Write(make([]byte, 4)) // Total transaction count.
+	if err := WriteVarInt(&payload, ProtocolVersion, maxTxPerBlock-1); err != nil {
+		t.Fatalf("WriteVarInt: %v", err)
+	}
+
+	var msg MsgMerkleBlock
+	err := msg.BtcDecode(bytes.NewReader(payload.Bytes()), ProtocolVersion,
+		BaseEncoding)
+	if _, ok := err.(*MessageError); !ok {
+		t.Fatalf("BtcDecode error type: got %T, want *MessageError", err)
+	}
+	if msg.Hashes != nil {
+		t.Fatalf("allocated %d hashes", len(msg.Hashes))
+	}
+}
+
 // merkleBlockOne is a merkle block created from block one of the block chain
 // where the first transaction matches.
 var merkleBlockOne = MsgMerkleBlock{

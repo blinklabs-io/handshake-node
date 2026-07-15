@@ -746,6 +746,74 @@ func TestTxOverflowErrors(t *testing.T) {
 	}
 }
 
+// TestTxImpossibleCounts ensures plausible-but-impossible collection counts
+// are rejected before their backing arrays are allocated.
+func TestTxImpossibleCounts(t *testing.T) {
+	t.Run("inputs", func(t *testing.T) {
+		var payload bytes.Buffer
+		payload.Write(make([]byte, 4)) // Version.
+		require.NoError(t, WriteVarInt(&payload, ProtocolVersion,
+			maxTxInPerMessage-1))
+
+		var msg MsgTx
+		err := msg.BtcDecode(bytes.NewReader(payload.Bytes()),
+			ProtocolVersion, WitnessEncoding)
+		require.IsType(t, &MessageError{}, err)
+		require.Nil(t, msg.TxIn)
+	})
+
+	t.Run("outputs", func(t *testing.T) {
+		var payload bytes.Buffer
+		payload.Write(make([]byte, 4)) // Version.
+		require.NoError(t, WriteVarInt(&payload, ProtocolVersion, 0))
+		require.NoError(t, WriteVarInt(&payload, ProtocolVersion,
+			maxTxOutPerMessage-1))
+
+		var msg MsgTx
+		err := msg.BtcDecode(bytes.NewReader(payload.Bytes()),
+			ProtocolVersion, WitnessEncoding)
+		require.IsType(t, &MessageError{}, err)
+		require.Nil(t, msg.TxOut)
+	})
+}
+
+// TestTxWitnessItemLimit verifies the hsd consensus MAX_SCRIPT_STACK boundary.
+func TestTxWitnessItemLimit(t *testing.T) {
+	makeTx := func(itemCount int) *MsgTx {
+		tx := NewMsgTx(TxVersion)
+		tx.AddTxIn(NewTxIn(NewOutPoint(&chainhash.Hash{}, 0), 0,
+			make([][]byte, itemCount)))
+		return tx
+	}
+
+	t.Run("maximum accepted", func(t *testing.T) {
+		var payload bytes.Buffer
+		require.NoError(t, makeTx(maxWitnessItemsPerInput).Serialize(&payload))
+
+		var decoded MsgTx
+		require.NoError(t, decoded.Deserialize(bytes.NewReader(payload.Bytes())))
+		require.Len(t, decoded.TxIn, 1)
+		require.Len(t, decoded.TxIn[0].Witness, maxWitnessItemsPerInput)
+	})
+
+	t.Run("over maximum rejected", func(t *testing.T) {
+		var payload bytes.Buffer
+		require.NoError(t, makeTx(maxWitnessItemsPerInput+1).Serialize(&payload))
+
+		var decoded MsgTx
+		err := decoded.Deserialize(bytes.NewReader(payload.Bytes()))
+		require.IsType(t, &MessageError{}, err)
+		require.Nil(t, decoded.TxIn[0].Witness)
+	})
+}
+
+// TestScriptPoolRetentionBound prevents the decoder scratch cache from
+// retaining more memory than a Handshake message can carry.
+func TestScriptPoolRetentionBound(t *testing.T) {
+	retained := cap(scriptPool) * scriptSlabSize
+	require.LessOrEqual(t, retained, HnsMaxMessagePayload)
+}
+
 // TestTxSerializeSizeStripped performs tests to ensure the stripped serialize
 // size for various transactions is accurate.
 func TestTxSerializeSizeStripped(t *testing.T) {

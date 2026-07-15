@@ -64,18 +64,18 @@ const (
 	// + Sequence (4 bytes) = 40 bytes.
 	minTxInPayload = 40
 
-	// maxTxInPerMessage is the maximum number of transactions inputs that
+	// maxTxInPerMessage is the maximum number of transaction inputs that
 	// a transaction which fits into a message could possibly have.
-	maxTxInPerMessage = (MaxMessagePayload / minTxInPayload) + 1
+	maxTxInPerMessage = (MaxBlockPayload / minTxInPayload) + 1
 
 	// MinTxOutPayload is the minimum payload size for a transaction output.
 	// Value (8 bytes) + address version (1 byte) + address hash length (1 byte)
 	// + covenant type (1 byte) + covenant items varint (1 byte) = 12 bytes.
 	MinTxOutPayload = 12
 
-	// maxTxOutPerMessage is the maximum number of transactions outputs that
+	// maxTxOutPerMessage is the maximum number of transaction outputs that
 	// a transaction which fits into a message could possibly have.
-	maxTxOutPerMessage = (MaxMessagePayload / MinTxOutPayload) + 1
+	maxTxOutPerMessage = (MaxBlockPayload / MinTxOutPayload) + 1
 
 	// minTxPayload is the minimum payload size for a transaction.  Note
 	// that any realistically usable transaction must have at least one
@@ -86,20 +86,13 @@ const (
 	// payload + min output payload.
 	minTxPayload = 10
 
-	// freeListMaxItems is the number of buffers to keep in the free list
-	// to use for script deserialization.  This value allows up to 100
-	// scripts per transaction being simultaneously deserialized by 125
-	// peers.  Thus, the peak usage of the free list is 12,500 * 512 =
-	// 6,400,000 bytes.
-	freeListMaxItems = 125
+	// freeListMaxItems bounds retained witness decode scratch memory to one
+	// slab, which is below Handshake's maximum P2P message payload. Additional
+	// buffers needed by concurrent decoders are left for the garbage collector.
+	freeListMaxItems = HnsMaxMessagePayload / scriptSlabSize
 
-	// maxWitnessItemsPerInput is the maximum number of witness items to
-	// be read for the witness data for a single TxIn. This number is
-	// derived using a possible lower bound for the encoding of a witness
-	// item: 1 byte for length + 1 byte for the witness item itself, or two
-	// bytes. This value is then divided by the currently allowed maximum
-	// "cost" for a transaction.
-	maxWitnessItemsPerInput = 4_000_000
+	// maxWitnessItemsPerInput matches hsd's consensus MAX_SCRIPT_STACK.
+	maxWitnessItemsPerInput = 1000
 
 	// maxWitnessItemSize is the maximum allowed size for an item within
 	// an input's witness data.
@@ -483,6 +476,12 @@ func (msg *MsgTx) btcDecode(r io.Reader, pver uint32, enc MessageEncoding,
 			maxTxInPerMessage)
 		return messageError("MsgTx.BtcDecode", str)
 	}
+	if count > defaultTxInOutAlloc {
+		if err := ensureElementCountFitsRemaining(r, count,
+			minTxInPayload, "transaction input", "MsgTx.BtcDecode"); err != nil {
+			return err
+		}
+	}
 
 	// Deserialize the inputs.
 	txIns := make([]TxIn, count)
@@ -509,6 +508,12 @@ func (msg *MsgTx) btcDecode(r io.Reader, pver uint32, enc MessageEncoding,
 			"max message size [count %d, max %d]", count,
 			maxTxOutPerMessage)
 		return messageError("MsgTx.BtcDecode", str)
+	}
+	if count > defaultTxInOutAlloc {
+		if err := ensureElementCountFitsRemaining(r, count,
+			MinTxOutPayload, "transaction output", "MsgTx.BtcDecode"); err != nil {
+			return err
+		}
 	}
 
 	// Deserialize the outputs.
@@ -875,6 +880,12 @@ func readScriptBuf(r io.Reader, pver uint32, buf, s []byte, slabRemaining int,
 			"[count %d, max %d]", fieldName, count,
 			maxWitnessItemSize)
 		return nil, messageError("readScript", str)
+	}
+	if remaining, ok := readerRemaining(r); ok && count > remaining {
+		if remaining == 0 {
+			return nil, io.EOF
+		}
+		return nil, io.ErrUnexpectedEOF
 	}
 
 	// Ensure the claimed script length fits in the remaining

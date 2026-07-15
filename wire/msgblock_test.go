@@ -472,6 +472,45 @@ func TestBlockOverflowErrors(t *testing.T) {
 	}
 }
 
+// TestBlockImpossibleTransactionCount ensures a truncated block cannot cause
+// allocation of a large transaction pointer slice before payload validation.
+func TestBlockImpossibleTransactionCount(t *testing.T) {
+	var payload bytes.Buffer
+	if err := blockOne.Header.Serialize(&payload); err != nil {
+		t.Fatalf("Serialize header: %v", err)
+	}
+	if err := WriteVarInt(&payload, ProtocolVersion, maxTxPerBlock-1); err != nil {
+		t.Fatalf("WriteVarInt: %v", err)
+	}
+	serialized := payload.Bytes()
+
+	t.Run("decode", func(t *testing.T) {
+		var msg MsgBlock
+		err := msg.BtcDecode(bytes.NewReader(serialized), ProtocolVersion,
+			WitnessEncoding)
+		if _, ok := err.(*MessageError); !ok {
+			t.Fatalf("BtcDecode error type: got %T, want *MessageError", err)
+		}
+		if msg.Transactions != nil {
+			t.Fatalf("allocated %d transactions", len(msg.Transactions))
+		}
+	})
+
+	t.Run("transaction locations", func(t *testing.T) {
+		var msg MsgBlock
+		locations, err := msg.DeserializeTxLoc(bytes.NewBuffer(serialized))
+		if _, ok := err.(*MessageError); !ok {
+			t.Fatalf("DeserializeTxLoc error type: got %T, want *MessageError", err)
+		}
+		if locations != nil {
+			t.Fatalf("returned %d transaction locations", len(locations))
+		}
+		if msg.Transactions != nil {
+			t.Fatalf("allocated %d transactions", len(msg.Transactions))
+		}
+	})
+}
+
 // TestBlockSerializeSize performs tests to ensure the serialize size for
 // various blocks is accurate.
 func TestBlockSerializeSize(t *testing.T) {

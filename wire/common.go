@@ -662,6 +662,12 @@ func readVarStringBuf(r io.Reader, pver uint32, buf []byte) (string, error) {
 			"[count %d, max %d]", count, MaxMessagePayload)
 		return "", messageError("ReadVarString", str)
 	}
+	if remaining, ok := readerRemaining(r); ok && count > remaining {
+		if remaining == 0 {
+			return "", io.EOF
+		}
+		return "", io.ErrUnexpectedEOF
+	}
 
 	str := make([]byte, count)
 	_, err = io.ReadFull(r, str)
@@ -743,6 +749,12 @@ func ReadVarBytesBuf(r io.Reader, pver uint32, buf []byte, maxAllowed uint32,
 			"[count %d, max %d]", fieldName, count, maxAllowed)
 		return nil, messageError("ReadVarBytes", str)
 	}
+	if remaining, ok := readerRemaining(r); ok && count > remaining {
+		if remaining == 0 {
+			return nil, io.EOF
+		}
+		return nil, io.ErrUnexpectedEOF
+	}
 
 	bytes := make([]byte, count)
 	_, err = io.ReadFull(r, bytes)
@@ -750,6 +762,53 @@ func ReadVarBytesBuf(r io.Reader, pver uint32, buf []byte, maxAllowed uint32,
 		return nil, err
 	}
 	return bytes, nil
+}
+
+// readerRemaining returns the number of bytes still available from readers
+// that expose their buffered or limited length.  Network messages and stored
+// blocks are decoded from bytes.Buffer or bytes.Reader instances, so callers
+// can use this to reject impossible attacker-controlled lengths before
+// allocating memory.  Generic streaming readers retain their existing bounded
+// decode behavior.
+func readerRemaining(r io.Reader) (uint64, bool) {
+	if lr, ok := r.(*io.LimitedReader); ok {
+		if lr.N <= 0 {
+			return 0, true
+		}
+		return uint64(lr.N), true
+	}
+
+	type lenReader interface {
+		Len() int
+	}
+	if lr, ok := r.(lenReader); ok {
+		remaining := lr.Len()
+		if remaining < 0 {
+			return 0, false
+		}
+		return uint64(remaining), true
+	}
+
+	return 0, false
+}
+
+// ensureElementCountFitsRemaining rejects collection counts whose minimum
+// serialized size cannot fit in the bytes still available from r.
+func ensureElementCountFitsRemaining(r io.Reader, count uint64,
+	minElementSize uint64, fieldName, funcName string) error {
+	if minElementSize == 0 {
+		return nil
+	}
+
+	remaining, ok := readerRemaining(r)
+	if !ok || count <= remaining/minElementSize {
+		return nil
+	}
+
+	str := fmt.Sprintf("%s count exceeds remaining payload "+
+		"[count %d, min element size %d, remaining %d]",
+		fieldName, count, minElementSize, remaining)
+	return messageError(funcName, str)
 }
 
 // WriteVarBytes serializes a variable length byte array to w as a varInt
