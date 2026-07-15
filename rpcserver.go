@@ -59,6 +59,12 @@ const (
 	// is closed.
 	rpcAuthTimeoutSeconds = 10
 
+	// maxRPCRequestSize is the largest JSON-RPC request accepted over HTTP or
+	// websocket.  The Handshake wire envelope caps an object at 8,000,000
+	// bytes, so 16 MiB leaves room for hex encoding and the surrounding JSON
+	// while preventing clients from forcing unbounded allocations.
+	maxRPCRequestSize = 16 * 1024 * 1024
+
 	// uint256Size is the number of bytes needed to represent an unsigned
 	// 256-bit integer.
 	uint256Size = 32
@@ -6048,10 +6054,13 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 	}
 
 	// Read and close the JSON-RPC request body from the caller.
-	body, err := io.ReadAll(r.Body)
-	r.Body.Close()
+	body, err := readLimitedRPCRequestBody(w, r, maxRPCRequestSize)
 	if err != nil {
 		errCode := http.StatusBadRequest
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			errCode = http.StatusRequestEntityTooLarge
+		}
 		http.Error(w, fmt.Sprintf("%d error reading JSON message: %v",
 			errCode, err), errCode)
 		return
@@ -6279,6 +6288,21 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 	if err := buf.WriteByte('\n'); err != nil {
 		rpcsLog.Errorf("Failed to append terminating newline to reply: %v", err)
 	}
+}
+
+func readLimitedRPCRequestBody(w http.ResponseWriter, r *http.Request,
+	limit int64) ([]byte, error) {
+
+	if r.ContentLength > limit {
+		_ = r.Body.Close()
+		return nil, &http.MaxBytesError{Limit: limit}
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	defer func() {
+		_ = r.Body.Close()
+	}()
+	return io.ReadAll(r.Body)
 }
 
 // jsonAuthFail sends a message back to the client if the http auth is rejected.
