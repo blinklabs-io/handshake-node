@@ -13,8 +13,6 @@ import (
 // TestScriptTokenizer ensures a wide variety of behavior provided by the script
 // tokenizer performs as expected.
 func TestScriptTokenizer(t *testing.T) {
-	t.Skip()
-
 	type expectedResult struct {
 		op    byte   // expected parsed opcode
 		data  []byte // expected parsed data
@@ -28,11 +26,21 @@ func TestScriptTokenizer(t *testing.T) {
 		finalIdx int32            // the expected final byte index
 		err      error            // expected error
 	}
+	concat := func(parts ...[]byte) []byte {
+		var size int
+		for _, part := range parts {
+			size += len(part)
+		}
+		script := make([]byte, 0, size)
+		for _, part := range parts {
+			script = append(script, part...)
+		}
+		return script
+	}
 
 	// Add both positive and negative tests for OP_DATA_1 through OP_DATA_75.
-	const numTestsHint = 100 // Make prealloc linter happy.
-	tests := make([]tokenizerTest, 0, numTestsHint)
-	for op := byte(OP_DATA_1); op < OP_DATA_75; op++ {
+	tests := make([]tokenizerTest, 0, 2*int(OP_DATA_75-OP_DATA_1+1))
+	for op := byte(OP_DATA_1); op <= OP_DATA_75; op++ {
 		data := bytes.Repeat([]byte{0x01}, int(op))
 		tests = append(tests, tokenizerTest{
 			name:     fmt.Sprintf("OP_DATA_%d", op),
@@ -53,58 +61,62 @@ func TestScriptTokenizer(t *testing.T) {
 	}
 
 	// Add both positive and negative tests for OP_PUSHDATA{1,2,4}.
-	data := mustParseShortForm("0x01{76}")
+	data := bytes.Repeat([]byte{0x01}, 76)
 	tests = append(tests, []tokenizerTest{{
 		name:     "OP_PUSHDATA1",
-		script:   mustParseShortForm("OP_PUSHDATA1 0x4c 0x01{76}"),
+		script:   concat([]byte{OP_PUSHDATA1, byte(len(data))}, data),
 		expected: []expectedResult{{OP_PUSHDATA1, data, 2 + int32(len(data))}},
 		finalIdx: 2 + int32(len(data)),
 		err:      nil,
 	}, {
 		name:     "OP_PUSHDATA1 no data length",
-		script:   mustParseShortForm("OP_PUSHDATA1"),
+		script:   []byte{OP_PUSHDATA1},
 		expected: nil,
 		finalIdx: 0,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
 		name:     "OP_PUSHDATA1 short data by 1 byte",
-		script:   mustParseShortForm("OP_PUSHDATA1 0x4c 0x01{75}"),
+		script:   concat([]byte{OP_PUSHDATA1, byte(len(data))}, data[1:]),
 		expected: nil,
 		finalIdx: 0,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
 		name:     "OP_PUSHDATA2",
-		script:   mustParseShortForm("OP_PUSHDATA2 0x4c00 0x01{76}"),
+		script:   concat([]byte{OP_PUSHDATA2, byte(len(data)), 0x00}, data),
 		expected: []expectedResult{{OP_PUSHDATA2, data, 3 + int32(len(data))}},
 		finalIdx: 3 + int32(len(data)),
 		err:      nil,
 	}, {
 		name:     "OP_PUSHDATA2 no data length",
-		script:   mustParseShortForm("OP_PUSHDATA2"),
+		script:   []byte{OP_PUSHDATA2},
 		expected: nil,
 		finalIdx: 0,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
 		name:     "OP_PUSHDATA2 short data by 1 byte",
-		script:   mustParseShortForm("OP_PUSHDATA2 0x4c00 0x01{75}"),
+		script:   concat([]byte{OP_PUSHDATA2, byte(len(data)), 0x00}, data[1:]),
 		expected: nil,
 		finalIdx: 0,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
-		name:     "OP_PUSHDATA4",
-		script:   mustParseShortForm("OP_PUSHDATA4 0x4c000000 0x01{76}"),
+		name: "OP_PUSHDATA4",
+		script: concat(
+			[]byte{OP_PUSHDATA4, byte(len(data)), 0x00, 0x00, 0x00}, data,
+		),
 		expected: []expectedResult{{OP_PUSHDATA4, data, 5 + int32(len(data))}},
 		finalIdx: 5 + int32(len(data)),
 		err:      nil,
 	}, {
 		name:     "OP_PUSHDATA4 no data length",
-		script:   mustParseShortForm("OP_PUSHDATA4"),
+		script:   []byte{OP_PUSHDATA4},
 		expected: nil,
 		finalIdx: 0,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
-		name:     "OP_PUSHDATA4 short data by 1 byte",
-		script:   mustParseShortForm("OP_PUSHDATA4 0x4c000000 0x01{75}"),
+		name: "OP_PUSHDATA4 short data by 1 byte",
+		script: concat(
+			[]byte{OP_PUSHDATA4, byte(len(data)), 0x00, 0x00, 0x00}, data[1:],
+		),
 		expected: nil,
 		finalIdx: 0,
 		err:      scriptError(ErrMalformedPush, ""),
@@ -112,7 +124,7 @@ func TestScriptTokenizer(t *testing.T) {
 
 	// Add tests for OP_0, and OP_1 through OP_16 (small integers/true/false).
 	opcodes := []byte{OP_0}
-	for op := byte(OP_1); op < OP_16; op++ {
+	for op := byte(OP_1); op <= OP_16; op++ {
 		opcodes = append(opcodes, op)
 	}
 	for _, op := range opcodes {
@@ -126,58 +138,71 @@ func TestScriptTokenizer(t *testing.T) {
 	}
 
 	// Add various positive and negative tests for multi-opcode scripts.
+	data17 := bytes.Repeat([]byte{0x01}, 17)
+	data18 := bytes.Repeat([]byte{0x01}, 18)
+	data19 := bytes.Repeat([]byte{0x01}, 19)
+	data20 := bytes.Repeat([]byte{0x01}, 20)
 	tests = append(tests, []tokenizerTest{{
-		name:   "pay-to-pubkey-hash",
-		script: mustParseShortForm("DUP HASH160 DATA_20 0x01{20} EQUAL CHECKSIG"),
+		name: "multi-opcode script",
+		script: concat(
+			[]byte{OP_DUP, OP_HASH160, OP_DATA_20}, data20,
+			[]byte{OP_EQUAL, OP_CHECKSIG},
+		),
 		expected: []expectedResult{
 			{OP_DUP, nil, 1}, {OP_HASH160, nil, 2},
-			{OP_DATA_20, mustParseShortForm("0x01{20}"), 23},
+			{OP_DATA_20, data20, 23},
 			{OP_EQUAL, nil, 24}, {OP_CHECKSIG, nil, 25},
 		},
 		finalIdx: 25,
 		err:      nil,
 	}, {
-		name:   "almost pay-to-pubkey-hash (short data)",
-		script: mustParseShortForm("DUP HASH160 DATA_20 0x01{17} EQUAL CHECKSIG"),
+		name: "multi-opcode script with short data",
+		script: concat(
+			[]byte{OP_DUP, OP_HASH160, OP_DATA_20}, data17,
+			[]byte{OP_EQUAL, OP_CHECKSIG},
+		),
 		expected: []expectedResult{
 			{OP_DUP, nil, 1}, {OP_HASH160, nil, 2},
 		},
 		finalIdx: 2,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
-		name:   "almost pay-to-pubkey-hash (overlapped data)",
-		script: mustParseShortForm("DUP HASH160 DATA_20 0x01{19} EQUAL CHECKSIG"),
+		name: "multi-opcode script with overlapped data",
+		script: concat(
+			[]byte{OP_DUP, OP_HASH160, OP_DATA_20}, data19,
+			[]byte{OP_EQUAL, OP_CHECKSIG},
+		),
 		expected: []expectedResult{
 			{OP_DUP, nil, 1}, {OP_HASH160, nil, 2},
-			{OP_DATA_20, mustParseShortForm("0x01{19} EQUAL"), 23},
+			{OP_DATA_20, concat(data19, []byte{OP_EQUAL}), 23},
 			{OP_CHECKSIG, nil, 24},
 		},
 		finalIdx: 24,
 		err:      nil,
 	}, {
-		name:   "pay-to-script-hash",
-		script: mustParseShortForm("HASH160 DATA_20 0x01{20} EQUAL"),
+		name:   "short multi-opcode script",
+		script: concat([]byte{OP_HASH160, OP_DATA_20}, data20, []byte{OP_EQUAL}),
 		expected: []expectedResult{
 			{OP_HASH160, nil, 1},
-			{OP_DATA_20, mustParseShortForm("0x01{20}"), 22},
+			{OP_DATA_20, data20, 22},
 			{OP_EQUAL, nil, 23},
 		},
 		finalIdx: 23,
 		err:      nil,
 	}, {
-		name:   "almost pay-to-script-hash (short data)",
-		script: mustParseShortForm("HASH160 DATA_20 0x01{18} EQUAL"),
+		name:   "short multi-opcode script with short data",
+		script: concat([]byte{OP_HASH160, OP_DATA_20}, data18, []byte{OP_EQUAL}),
 		expected: []expectedResult{
 			{OP_HASH160, nil, 1},
 		},
 		finalIdx: 1,
 		err:      scriptError(ErrMalformedPush, ""),
 	}, {
-		name:   "almost pay-to-script-hash (overlapped data)",
-		script: mustParseShortForm("HASH160 DATA_20 0x01{19} EQUAL"),
+		name:   "short multi-opcode script with overlapped data",
+		script: concat([]byte{OP_HASH160, OP_DATA_20}, data19, []byte{OP_EQUAL}),
 		expected: []expectedResult{
 			{OP_HASH160, nil, 1},
-			{OP_DATA_20, mustParseShortForm("0x01{19} EQUAL"), 22},
+			{OP_DATA_20, concat(data19, []byte{OP_EQUAL}), 22},
 		},
 		finalIdx: 22,
 		err:      nil,
