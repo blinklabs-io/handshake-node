@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	maxOwnershipProofSize = 10000
+	maxOwnershipProofSize = wire.HnsMaxClaimProofSize
 	strongRSAKeyBits      = 2041
 )
 

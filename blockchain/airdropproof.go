@@ -27,7 +27,7 @@ const (
 	airdropReward       = uint64(4246994314)
 	airdropSponsorFee   = uint64(500000000)
 	airdropRecipientFee = uint64(100000000)
-	maxAirdropProof     = 3400
+	maxAirdropProof     = wire.HnsMaxAirdropProofSize
 	airdropDepth        = 18
 	airdropSubDepth     = 3
 	airdropLeaves       = 216199
