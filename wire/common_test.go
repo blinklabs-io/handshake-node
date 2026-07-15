@@ -34,6 +34,18 @@ var mainNetGenesisMerkleRoot = chainhash.Hash([chainhash.HashSize]byte{ // Make 
 	0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
 })
 
+type trackingLenReader struct {
+	*bytes.Reader
+	maxReadSize int
+}
+
+func (r *trackingLenReader) Read(p []byte) (int, error) {
+	if len(p) > r.maxReadSize {
+		r.maxReadSize = len(p)
+	}
+	return r.Reader.Read(p)
+}
+
 // fakeRandReader implements the io.Reader interface and is used to force
 // errors in the RandomUint64 function.
 type fakeRandReader struct {
@@ -707,6 +719,47 @@ func TestVarBytesOverflowErrors(t *testing.T) {
 		}
 	}
 
+}
+
+// TestVarPayloadExceedsRemaining ensures bounded variable-length decoders do
+// not allocate a declared payload that cannot fit in the available message.
+func TestVarPayloadExceedsRemaining(t *testing.T) {
+	const claimedLength = 1 << 20
+
+	var encoded bytes.Buffer
+	if err := WriteVarInt(&encoded, ProtocolVersion, claimedLength); err != nil {
+		t.Fatalf("WriteVarInt: %v", err)
+	}
+	payload := encoded.Bytes()
+
+	t.Run("bytes", func(t *testing.T) {
+		reader := &trackingLenReader{Reader: bytes.NewReader(payload)}
+		value, err := ReadVarBytes(reader, ProtocolVersion,
+			claimedLength, "test payload")
+		if err != io.EOF {
+			t.Fatalf("ReadVarBytes error: got %v, want EOF", err)
+		}
+		if value != nil {
+			t.Fatalf("ReadVarBytes returned %d bytes, want nil", len(value))
+		}
+		if reader.maxReadSize > MaxVarIntPayload {
+			t.Fatalf("ReadVarBytes requested %d bytes from reader", reader.maxReadSize)
+		}
+	})
+
+	t.Run("string", func(t *testing.T) {
+		reader := &trackingLenReader{Reader: bytes.NewReader(payload)}
+		value, err := ReadVarString(reader, ProtocolVersion)
+		if err != io.EOF {
+			t.Fatalf("ReadVarString error: got %v, want EOF", err)
+		}
+		if value != "" {
+			t.Fatalf("ReadVarString returned %d bytes, want empty", len(value))
+		}
+		if reader.maxReadSize > MaxVarIntPayload {
+			t.Fatalf("ReadVarString requested %d bytes from reader", reader.maxReadSize)
+		}
+	})
 }
 
 // TestRandomUint64 exercises the randomness of the random number generator on

@@ -72,6 +72,12 @@ func (msg *MsgMerkleBlock) BtcDecode(r io.Reader, pver uint32, enc MessageEncodi
 			"[count %v, max %v]", count, maxTxPerBlock)
 		return messageError("MsgMerkleBlock.BtcDecode", str)
 	}
+	if count > defaultTransactionAlloc {
+		if err := ensureElementCountFitsRemaining(r, count, chainhash.HashSize,
+			"merkle block hash", "MsgMerkleBlock.BtcDecode"); err != nil {
+			return err
+		}
+	}
 
 	// Create a contiguous slice of hashes to deserialize into in order to
 	// reduce the number of allocations.
