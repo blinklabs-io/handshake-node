@@ -8,29 +8,26 @@
 package integration
 
 import (
-	"encoding/hex"
+	"encoding/json"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsjson"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/integration/rpctest"
 	"github.com/blinklabs-io/handshake-node/rpcclient"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/stretchr/testify/require"
 )
 
-// TestTestMempoolAccept checks that `TestTestMempoolAccept` behaves as
-// expected. It checks that,
-// - an error is returned when invalid params are used.
-// - orphan tx is rejected.
-// - fee rate above the max is rejected.
-// - a mixed of both allowed and rejected can be returned in the same response.
+// TestTestMempoolAccept checks typed parameter validation, malformed wire data,
+// context-free rejection, orphan handling, fee limits, and mixed results for
+// the TestMempoolAccept RPC.
 func TestTestMempoolAccept(t *testing.T) {
-	t.Skip("TODO: update for Handshake witness format")
 	t.Parallel()
 
-	// Boilerplate codetestDir to make a pruned node.
+	// Enable standardness checks so the test exercises mainnet-style mempool
+	// policy on the regtest harness.
 	hnsCfg := []string{"--rejectnonstd", "--debuglevel=debug"}
 	r, err := rpctest.New(&chaincfg.RegressionNetParams, nil, hnsCfg, "")
 	require.NoError(t, err)
@@ -41,12 +38,40 @@ func TestTestMempoolAccept(t *testing.T) {
 		require.NoError(t, r.TearDown())
 	})
 
-	// Create testing txns.
-	invalidTx := decodeHex(t, missingParentsHex)
+	// Create a fully signed Handshake witness transaction, then copy it and
+	// replace its input with an unknown outpoint to produce a well-formed
+	// orphan without relying on an inherited Bitcoin serialization fixture.
 	validTx := createTestTx(t, r)
+	require.NotEqual(t, validTx.TxHash(), validTx.WitnessHash())
+	orphanTx := validTx.Copy()
+	orphanTx.TxIn[0].PreviousOutPoint = wire.OutPoint{
+		Hash:  chainhash.Hash{0xff},
+		Index: 0,
+	}
+	invalidTx := wire.NewMsgTx(wire.TxVersion)
+	for range 2 {
+		invalidTx.AddTxOut(wire.NewTxOut(
+			validTx.TxOut[0].Value,
+			validTx.TxOut[0].Address,
+			wire.Covenant{},
+		))
+	}
 
-	// Create testing constants.
-	const feeRate = 10
+	// The typed client only accepts MsgTx values and therefore cannot send
+	// malformed wire bytes. Exercise the server's deserialization failure via
+	// a raw request so syntactic and consensus-invalid transactions remain
+	// distinct cases.
+	t.Run("malformed raw tx", func(t *testing.T) {
+		_, err := r.Client.RawRequest("testmempoolaccept", []json.RawMessage{
+			json.RawMessage(`["00"]`),
+			json.RawMessage(`0`),
+		})
+
+		var rpcErr *hnsjson.RPCError
+		require.ErrorAs(t, err, &rpcErr)
+		require.Equal(t, hnsjson.ErrRPCDeserialization, rpcErr.Code)
+		require.Contains(t, rpcErr.Message, "TX decode failed")
+	})
 
 	testCases := []struct {
 		name           string
@@ -74,24 +99,28 @@ func TestTestMempoolAccept(t *testing.T) {
 			expectedResult: nil,
 		},
 		{
-			// When a corrupted txn is provided, the method should
-			// return an error.
-			name:           "corrupted tx",
-			txns:           []*wire.MsgTx{{}},
-			maxFeeRate:     0,
-			expectedErr:    rpcclient.ErrInvalidParam,
-			expectedResult: nil,
+			// A syntactically valid transaction that fails context-free
+			// consensus checks receives an ordinary rejection result.
+			name:       "consensus invalid tx",
+			txns:       []*wire.MsgTx{invalidTx},
+			maxFeeRate: 0,
+			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
+				Txid:         invalidTx.TxHash().String(),
+				Wtxid:        invalidTx.WitnessHash().String(),
+				Allowed:      false,
+				RejectReason: "transaction has no inputs",
+			}},
 		},
 		{
 			// When an orphan tx is provided, the method should
 			// return a test mempool accept result which says this
 			// tx is not allowed.
 			name:       "orphan tx",
-			txns:       []*wire.MsgTx{invalidTx},
+			txns:       []*wire.MsgTx{orphanTx},
 			maxFeeRate: 0,
 			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
-				Txid:         invalidTx.TxHash().String(),
-				Wtxid:        invalidTx.TxHash().String(),
+				Txid:         orphanTx.TxHash().String(),
+				Wtxid:        orphanTx.WitnessHash().String(),
 				Allowed:      false,
 				RejectReason: "missing-inputs",
 			}},
@@ -105,46 +134,42 @@ func TestTestMempoolAccept(t *testing.T) {
 			maxFeeRate: 1e-5,
 			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
 				Txid:         validTx.TxHash().String(),
-				Wtxid:        validTx.TxHash().String(),
+				Wtxid:        validTx.WitnessHash().String(),
 				Allowed:      false,
 				RejectReason: "max-fee-exceeded",
 			}},
 		},
 		{
-			// When a valid tx is provided and it doesn't exceeds
+			// When a valid tx is provided and it doesn't exceed
 			// the max fee rate, the method should return a test
 			// mempool accept result which says it's allowed.
 			name: "valid tx and sane fee rate",
 			txns: []*wire.MsgTx{validTx},
 			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
 				Txid:    validTx.TxHash().String(),
-				Wtxid:   validTx.TxHash().String(),
+				Wtxid:   validTx.WitnessHash().String(),
 				Allowed: true,
-				// TODO(yy): need to calculate the fees, atm
-				// there's no easy way.
-				// Fees: &hnsjson.TestMempoolAcceptFees{},
 			}},
 		},
 		{
 			// When multiple txns are provided, the method should
 			// return the correct results for each of the txns.
 			name: "multiple txns",
-			txns: []*wire.MsgTx{invalidTx, validTx},
+			txns: []*wire.MsgTx{orphanTx, validTx},
 			expectedResult: []*hnsjson.TestMempoolAcceptResult{{
-				Txid:         invalidTx.TxHash().String(),
-				Wtxid:        invalidTx.TxHash().String(),
+				Txid:         orphanTx.TxHash().String(),
+				Wtxid:        orphanTx.WitnessHash().String(),
 				Allowed:      false,
 				RejectReason: "missing-inputs",
 			}, {
 				Txid:    validTx.TxHash().String(),
-				Wtxid:   validTx.TxHash().String(),
+				Wtxid:   validTx.WitnessHash().String(),
 				Allowed: true,
 			}},
 		},
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 
@@ -156,29 +181,33 @@ func TestTestMempoolAccept(t *testing.T) {
 			require.Len(results, len(tc.expectedResult))
 
 			// Check each item is returned as expected.
-			for i, r := range results {
+			for i, result := range results {
 				expected := tc.expectedResult[i]
 
-				// TODO(yy): check all the fields?
-				require.Equal(expected.Txid, r.Txid)
-				require.Equal(expected.Wtxid, r.Wtxid)
-				require.Equal(expected.Allowed, r.Allowed)
+				require.Equal(expected.Txid, result.Txid)
+				require.Equal(expected.Wtxid, result.Wtxid)
+				require.Equal(expected.Allowed, result.Allowed)
 				require.Equal(expected.RejectReason,
-					r.RejectReason)
+					result.RejectReason)
+				require.Empty(result.PackageError)
+				if expected.Allowed {
+					require.Positive(result.Vsize)
+					require.NotNil(result.Fees)
+					require.Positive(result.Fees.Base)
+					require.Positive(result.Fees.EffectiveFeeRate)
+				} else {
+					require.Zero(result.Vsize)
+					require.Nil(result.Fees)
+				}
 			}
 		})
 	}
 }
 
-var (
-	//nolint:lll
-	missingParentsHex = "0100000003bcb2054607a921b3c6df992a9486776863b28485e731a805931b6feb14221acff2000000001c75619cdff9d694a434b13abfbbd618e2ece4460f24b4821cf47d5afc481a386c59565c4900000000cff75994dceb5f5568f8ada45d428630f512fb8efacd46682b4367b4edaf1985c5e4af4b07010000003c029216047236f3000000000017a9141d5a2c690c3e2dacb3cead240f0ce4a273b9d0e48758020000000000001600149d38710eb90e420b159c7a9263994c88e6810bc758020000000000001976a91490770ceff2b1c32e9dbf952fbe65b04a54d1949388ac580200000000000017a914f017945d4d088c7d42ab3bcbc1adce51d74fbd9f8784d7ee4b"
-)
-
 // createTestTx creates a `wire.MsgTx` and asserts its creation.
 func createTestTx(t *testing.T, h *rpctest.Harness) *wire.MsgTx {
 	output := &wire.TxOut{
-		Address: wire.Address{},
+		Address: testWitnessPubKeyHashAddress(t, h.ActiveNet),
 		Value:   1e6,
 	}
 
@@ -186,16 +215,4 @@ func createTestTx(t *testing.T, h *rpctest.Harness) *wire.MsgTx {
 	require.NoError(t, err)
 
 	return tx
-}
-
-// decodeHex takes a tx hexstring and asserts it can be decoded into a
-// `wire.MsgTx`.
-func decodeHex(t *testing.T, txHex string) *wire.MsgTx {
-	serializedTx, err := hex.DecodeString(txHex)
-	require.NoError(t, err)
-
-	tx, err := hnsutil.NewTxFromBytes(serializedTx)
-	require.NoError(t, err)
-
-	return tx.MsgTx()
 }
