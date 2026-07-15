@@ -517,8 +517,8 @@ func dbStoreCurrentNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
 	return root, nil
 }
 
-func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
-	[]byte, error) {
+func dbBuildNameProofTree(dbTx database.Tx, root chainhash.Hash,
+	rollbackHashes []chainhash.Hash) (urkelNode, error) {
 
 	leaves, found, err := dbFetchNameSnapshot(dbTx, root)
 	if err != nil {
@@ -534,18 +534,43 @@ func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
 				root)
 		}
 
-		currentLeaves, currentRoot, err := dbCalcNameTree(dbTx)
+		leaves, err = dbFetchNameLeaves(dbTx)
 		if err != nil {
 			return nil, err
 		}
-		if currentRoot != root {
-			return nil, database.Error{
-				ErrorCode: database.ErrCorruption,
-				Description: fmt.Sprintf("name root snapshot "+
-					"%v not found", root),
+
+		leavesByKey := make(map[chainhash.Hash][]byte, len(leaves))
+		for _, leaf := range leaves {
+			leavesByKey[leaf.key] = leaf.value
+		}
+
+		// The committed name root only advances at tree intervals, while the
+		// live name-state bucket advances after every block. Rewind the live
+		// leaves through the per-block undo journal to reconstruct the exact
+		// state committed by the current root.
+		for _, blockHash := range rollbackHashes {
+			entries, err := dbFetchNameUndo(dbTx, &blockHash)
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				if !entry.existed {
+					delete(leavesByKey, entry.nameHash)
+					continue
+				}
+
+				serialized, err := entry.state.encode()
+				if err != nil {
+					return nil, err
+				}
+				leavesByKey[entry.nameHash] = serialized
 			}
 		}
-		leaves = currentLeaves
+
+		leaves = make([]urkelLeaf, 0, len(leavesByKey))
+		for key, value := range leavesByKey {
+			leaves = append(leaves, urkelLeaf{key: key, value: value})
+		}
 	}
 
 	tree := buildUrkelTree(leaves)
@@ -556,13 +581,12 @@ func dbBuildNameProof(dbTx database.Tx, root, key chainhash.Hash) (
 	if treeRoot != root {
 		return nil, database.Error{
 			ErrorCode: database.ErrCorruption,
-			Description: fmt.Sprintf("name snapshot root mismatch: "+
+			Description: fmt.Sprintf("committed name root mismatch: "+
 				"got %v, want %v", treeRoot, root),
 		}
 	}
 
-	proof := proveUrkel(tree, key)
-	return proof.Encode()
+	return tree, nil
 }
 
 // FetchNameState returns a read-only snapshot of the current state for the
@@ -688,16 +712,51 @@ func sortNameStateViews(states []*NameState) {
 // FetchNameProof returns an hsd-compatible Urkel proof for the provided name
 // tree root and key.
 func (b *BlockChain) FetchNameProof(root, key chainhash.Hash) ([]byte, error) {
-	var proof []byte
-	err := b.db.View(func(dbTx database.Tx) error {
-		var err error
-		proof, err = dbBuildNameProof(dbTx, root, key)
-		return err
-	})
-	if err != nil {
-		return nil, err
+	// Keep the active-chain tip and its name undo journal stable while the
+	// committed tree is reconstructed.
+	b.chainLock.RLock()
+	defer b.chainLock.RUnlock()
+
+	b.nameProofCacheMtx.Lock()
+	defer b.nameProofCacheMtx.Unlock()
+
+	if !b.nameProofCacheValid || b.nameProofCacheRoot != root {
+		rollbackHashes := b.nameProofRollbackHashes()
+		var tree urkelNode
+		err := b.db.View(func(dbTx database.Tx) error {
+			var err error
+			tree, err = dbBuildNameProofTree(dbTx, root, rollbackHashes)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		b.nameProofCacheRoot = root
+		b.nameProofCacheTree = tree
+		b.nameProofCacheValid = true
 	}
-	return proof, nil
+
+	proof := proveUrkel(b.nameProofCacheTree, key)
+	return proof.Encode()
+}
+
+// nameProofRollbackHashes returns active-chain block hashes after the latest
+// name-tree commitment, ordered newest to oldest for undo application. The
+// caller must hold at least a read lock on chainLock.
+func (b *BlockChain) nameProofRollbackHashes() []chainhash.Hash {
+	interval := int32(b.chainParams.NameTreeInterval)
+	if interval <= 0 {
+		return nil
+	}
+
+	tip := b.bestChain.Tip()
+	commitHeight := tip.height - tip.height%interval
+	hashes := make([]chainhash.Hash, 0, tip.height-commitHeight)
+	for node := tip; node != nil && node.height > commitHeight; node = node.parent {
+		hashes = append(hashes, node.hash)
+	}
+	return hashes
 }
 
 // VerifyName verifies an hsd-compatible Urkel proof for the provided raw name

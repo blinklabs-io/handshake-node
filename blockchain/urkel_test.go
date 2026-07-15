@@ -319,6 +319,136 @@ func TestFetchNameProofUsesStoredSnapshot(t *testing.T) {
 	}
 }
 
+func TestFetchNameProofRewindsToCommittedRoot(t *testing.T) {
+	chain, teardown, err := chainSetup("nameproofrewind",
+		&chaincfg.RegressionNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	key := hashName([]byte("alpha"))
+	committed := newNameState(key)
+	committed.set([]byte("alpha"), 1)
+	committed.data = []byte("committed-resource")
+	committedValue, err := committed.encode()
+	if err != nil {
+		t.Fatalf("committed encode: %v", err)
+	}
+	committedRoot := calcUrkelRoot([]urkelLeaf{{
+		key:   key,
+		value: committedValue,
+	}})
+
+	intermediate := committed.clone()
+	intermediate.data = []byte("intermediate-resource")
+	live := committed.clone()
+	live.data = []byte("live-resource")
+	createdKey := hashName([]byte("created-after-commit"))
+	created := newNameState(createdKey)
+	created.set([]byte("created-after-commit"), 2)
+
+	firstHash := chainhash.Hash{0x41}
+	secondHash := chainhash.Hash{0x42}
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		if err := dbPutNameState(dbTx, live); err != nil {
+			return err
+		}
+		if err := dbPutNameState(dbTx, created); err != nil {
+			return err
+		}
+		if err := dbPutNameRoot(dbTx, committedRoot); err != nil {
+			return err
+		}
+		if err := dbPutNameUndo(dbTx, &firstHash, []nameUndoEntry{
+			{
+				nameHash: key,
+				existed:  true,
+				state:    committed,
+			},
+			{
+				nameHash: createdKey,
+				existed:  false,
+			},
+		}); err != nil {
+			return err
+		}
+		return dbPutNameUndo(dbTx, &secondHash, []nameUndoEntry{{
+			nameHash: key,
+			existed:  true,
+			state:    intermediate,
+		}})
+	})
+	if err != nil {
+		t.Fatalf("db setup: %v", err)
+	}
+
+	// Model two active-chain blocks after the latest tree commitment. The
+	// database contains the live state and each block's normal undo journal.
+	chain.chainLock.Lock()
+	genesis := chain.bestChain.Tip()
+	first := &blockNode{
+		hash:   firstHash,
+		height: genesis.height + 1,
+		parent: genesis,
+	}
+	second := &blockNode{
+		hash:   secondHash,
+		height: first.height + 1,
+		parent: first,
+	}
+	chain.bestChain.SetTip(second)
+	chain.chainLock.Unlock()
+
+	encoded, err := chain.FetchNameProof(committedRoot, key)
+	if err != nil {
+		t.Fatalf("FetchNameProof: %v", err)
+	}
+	got, exists, err := VerifyUrkelProof(committedRoot, key, encoded)
+	if err != nil {
+		t.Fatalf("VerifyUrkelProof: %v", err)
+	}
+	if !exists {
+		t.Fatal("FetchNameProof returned exclusion proof")
+	}
+	if !bytes.Equal(got, committedValue) {
+		t.Fatalf("rewound proof value = %x, want %x", got, committedValue)
+	}
+
+	encoded, err = chain.FetchNameProof(committedRoot, createdKey)
+	if err != nil {
+		t.Fatalf("created-after-commit FetchNameProof: %v", err)
+	}
+	if _, exists, err := VerifyUrkelProof(committedRoot, createdKey, encoded); err != nil {
+		t.Fatalf("created-after-commit VerifyUrkelProof: %v", err)
+	} else if exists {
+		t.Fatal("rewound proof retained a name created after the commitment")
+	}
+
+	// The immutable committed tree is cached after reconstruction. A second
+	// key lookup must not depend on rescanning the live state or undo journal.
+	err = chain.db.Update(func(dbTx database.Tx) error {
+		if err := dbRemoveNameUndo(dbTx, &firstHash); err != nil {
+			return err
+		}
+		return dbRemoveNameUndo(dbTx, &secondHash)
+	})
+	if err != nil {
+		t.Fatalf("remove undo: %v", err)
+	}
+
+	missingKey := hashName([]byte("missing"))
+	encoded, err = chain.FetchNameProof(committedRoot, missingKey)
+	if err != nil {
+		t.Fatalf("cached FetchNameProof: %v", err)
+	}
+	if _, exists, err := VerifyUrkelProof(committedRoot, missingKey, encoded); err != nil {
+		t.Fatalf("cached VerifyUrkelProof: %v", err)
+	} else if exists {
+		t.Fatal("cached FetchNameProof returned inclusion proof for missing key")
+	}
+}
+
 func TestVerifyNameUsesStoredSnapshot(t *testing.T) {
 	chain, teardown, err := chainSetup("verifyname",
 		&chaincfg.RegressionNetParams)
