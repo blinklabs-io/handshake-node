@@ -72,12 +72,12 @@ var (
 	// block91842Hash is one of the two nodes which violate the rules
 	// set forth in BIP0030.  It is defined as a package level variable to
 	// avoid the need to create a new instance every time a check is needed.
-	block91842Hash = newHashFromStr("ecca0e00e3c8e4e039396036431f3b7603c563c1ff6181390a4d0a0000000000")
+	block91842Hash = newHashFromStr("eccae000e3c8e4e093936360431f3b7603c563c1ff6181390a4d0a0000000000")
 
 	// block91880Hash is one of the two nodes which violate the rules
 	// set forth in BIP0030.  It is defined as a package level variable to
 	// avoid the need to create a new instance every time a check is needed.
-	block91880Hash = newHashFromStr("21d77ccb4c0838a304ac0196ae10f6a1d2c2a377558ca190f143070000000000")
+	block91880Hash = newHashFromStr("21d77ccb4c08386a04ac0196ae10f6a1d2c2a377558ca190f143070000000000")
 )
 
 // isNullOutpoint determines whether or not a previous transaction output point
