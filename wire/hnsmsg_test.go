@@ -692,6 +692,10 @@ func TestHnsMsgBlockDecodeErrors(t *testing.T) {
 	if err := msg.Decode([]byte{0x01, 0x02}); err == nil {
 		t.Fatal("expected error for short block payload")
 	}
+	valid := (&HnsMsgBlock{Block: *NewMsgBlock(testHnsHeader())}).Encode()
+	if err := msg.Decode(append(valid, 0x00)); err == nil {
+		t.Fatal("expected error for trailing block payload")
+	}
 }
 
 func TestHnsMsgTxRoundTrip(t *testing.T) {
@@ -723,6 +727,10 @@ func TestHnsMsgTxDecodeErrors(t *testing.T) {
 	}
 	if err := msg.Decode([]byte{0x01, 0x02}); err == nil {
 		t.Fatal("expected error for short tx payload")
+	}
+	valid := (&HnsMsgTx{Tx: *buildHnsTestTx()}).Encode()
+	if err := msg.Decode(append(valid, 0x00)); err == nil {
+		t.Fatal("expected error for trailing tx payload")
 	}
 }
 
@@ -962,6 +970,10 @@ func TestHnsMsgMerkleBlockDecodeErrors(t *testing.T) {
 	var msg HnsMsgMerkleBlock
 	if err := msg.Decode(nil); err == nil {
 		t.Fatal("expected error for empty merkleblock payload")
+	}
+	valid := (&HnsMsgMerkleBlock{MerkleBlock: *testHnsMerkleBlock()}).Encode()
+	if err := msg.Decode(append(valid, 0x00)); err == nil {
+		t.Fatal("expected error for trailing merkleblock payload")
 	}
 }
 

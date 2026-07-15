@@ -933,8 +933,12 @@ func (m *HnsMsgBlock) Decode(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("block: empty payload")
 	}
-	if err := m.Block.Deserialize(bytes.NewReader(data)); err != nil {
+	r := bytes.NewReader(data)
+	if err := m.Block.Deserialize(r); err != nil {
 		return fmt.Errorf("block: %w", err)
+	}
+	if r.Len() != 0 {
+		return fmt.Errorf("block: unexpected trailing payload bytes: %d", r.Len())
 	}
 	return nil
 }
@@ -956,8 +960,12 @@ func (m *HnsMsgTx) Decode(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("tx: empty payload")
 	}
-	if err := m.Tx.Deserialize(bytes.NewReader(data)); err != nil {
+	r := bytes.NewReader(data)
+	if err := m.Tx.Deserialize(r); err != nil {
 		return fmt.Errorf("tx: %w", err)
+	}
+	if r.Len() != 0 {
+		return fmt.Errorf("tx: unexpected trailing payload bytes: %d", r.Len())
 	}
 	return nil
 }
@@ -1177,9 +1185,16 @@ func (m *HnsMsgMerkleBlock) Decode(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("merkleblock: empty payload")
 	}
-	if err := m.MerkleBlock.BtcDecode(bytes.NewReader(data),
+	r := bytes.NewReader(data)
+	if err := m.MerkleBlock.BtcDecode(r,
 		ProtocolVersion, BaseEncoding); err != nil {
 		return fmt.Errorf("merkleblock: %w", err)
+	}
+	if r.Len() != 0 {
+		return fmt.Errorf(
+			"merkleblock: unexpected trailing payload bytes: %d",
+			r.Len(),
+		)
 	}
 	return nil
 }
