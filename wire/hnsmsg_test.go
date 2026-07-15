@@ -180,6 +180,55 @@ func TestHnsMsgEncodeRejectsOversizedPayload(t *testing.T) {
 	}
 }
 
+func TestHnsCoinbaseProofPayloadLimits(t *testing.T) {
+	tests := []struct {
+		name     string
+		msgType  HnsMsgType
+		maxSize  int
+		validMsg HandshakeMessage
+		largeMsg HandshakeMessage
+	}{
+		{
+			name:     "claim",
+			msgType:  HnsMsgTypeClaim,
+			maxSize:  HnsMaxClaimPayload,
+			validMsg: &HnsMsgClaim{Claim: make([]byte, HnsMaxClaimProofSize)},
+			largeMsg: &HnsMsgClaim{Claim: make([]byte, HnsMaxClaimProofSize+1)},
+		},
+		{
+			name:     "airdrop",
+			msgType:  HnsMsgTypeAirDrop,
+			maxSize:  HnsMaxAirdropProofSize,
+			validMsg: &HnsMsgAirDrop{Payload: make([]byte, HnsMaxAirdropProofSize)},
+			largeMsg: &HnsMsgAirDrop{Payload: make([]byte, HnsMaxAirdropProofSize+1)},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := int(maxHnsPayloadLength(test.msgType)); got != test.maxSize {
+				t.Fatalf("max payload = %d, want %d", got, test.maxSize)
+			}
+			if _, err := EncodeHnsMessage(test.validMsg, testHnsMagic); err != nil {
+				t.Fatalf("boundary payload rejected: %v", err)
+			}
+			if _, err := EncodeHnsMessage(test.largeMsg, testHnsMagic); err == nil {
+				t.Fatal("oversized payload accepted by encoder")
+			}
+
+			payload := test.largeMsg.Encode()
+			header := (&hnsMsgHeader{
+				NetworkMagic:  testHnsMagic,
+				MessageType:   test.msgType,
+				PayloadLength: uint32(len(payload)),
+			}).Encode()
+			if _, _, err := DecodeHnsMessage(append(header, payload...)); err == nil {
+				t.Fatal("oversized payload accepted by decoder")
+			}
+		})
+	}
+}
+
 type oversizedHnsMsg struct{ size int }
 
 func (*oversizedHnsMsg) Type() HnsMsgType      { return HnsMsgTypeUnknown }

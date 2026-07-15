@@ -28,6 +28,18 @@ const HnsMessageHeaderSize = 9
 // migration to the Handshake envelope is in progress.
 const HnsMaxMessagePayload = 8 * 1000 * 1000
 
+const (
+	// HnsMaxClaimProofSize is hsd's maximum serialized ownership proof size.
+	HnsMaxClaimProofSize = 10000
+
+	// HnsMaxClaimPayload includes the uint16 length prefix around an ownership
+	// proof in a claim packet.
+	HnsMaxClaimPayload = 2 + HnsMaxClaimProofSize
+
+	// HnsMaxAirdropProofSize is hsd's maximum serialized airdrop proof size.
+	HnsMaxAirdropProofSize = 3400
+)
+
 // HnsMsgType identifies a Handshake P2P message in the wire envelope.
 // Values match hsd's `lib/net/packets.js` `types` enum.
 type HnsMsgType uint8
@@ -170,6 +182,13 @@ func EncodeHnsMessage(msg HandshakeMessage, networkMagic uint32) ([]byte, error)
 			len(payload), HnsMaxMessagePayload,
 		)
 	}
+	maxPayload := int(maxHnsPayloadLength(msg.Type()))
+	if len(payload) > maxPayload {
+		return nil, fmt.Errorf(
+			"handshake %s payload too large: %d > %d",
+			msg.Type(), len(payload), maxPayload,
+		)
+	}
 	header := &hnsMsgHeader{
 		NetworkMagic:  networkMagic,
 		MessageType:   msg.Type(),
@@ -199,6 +218,13 @@ func DecodeHnsMessage(data []byte) (HandshakeMessage, uint32, error) {
 		return nil, 0, fmt.Errorf(
 			"handshake message payload too large: %d > %d",
 			header.PayloadLength, HnsMaxMessagePayload,
+		)
+	}
+	maxPayload := maxHnsPayloadLength(header.MessageType)
+	if header.PayloadLength > maxPayload {
+		return nil, header.NetworkMagic, fmt.Errorf(
+			"handshake %s payload too large: %d > %d",
+			header.MessageType, header.PayloadLength, maxPayload,
 		)
 	}
 	expected := HnsMessageHeaderSize + int(header.PayloadLength)

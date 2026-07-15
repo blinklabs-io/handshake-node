@@ -170,7 +170,9 @@ func maxHnsPayloadLength(msgType HnsMsgType) uint32 {
 	case HnsMsgTypeGetProof:
 		return chainhash.HashSize * 2
 	case HnsMsgTypeClaim:
-		return 2 + 0xffff
+		return HnsMaxClaimPayload
+	case HnsMsgTypeAirDrop:
+		return HnsMaxAirdropProofSize
 	default:
 		return HnsMaxMessagePayload
 	}
