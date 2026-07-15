@@ -33,6 +33,12 @@ func TestCalcMinRequiredTxRelayFee(t *testing.T) {
 			3,
 		},
 		{
+			"zero-size transaction has zero fee",
+			0,
+			DefaultMinRelayTxFee,
+			0,
+		},
+		{
 			"100 bytes with default minimum relay fee",
 			100,
 			DefaultMinRelayTxFee,
@@ -79,6 +85,12 @@ func TestCalcMinRequiredTxRelayFee(t *testing.T) {
 			782,
 			2550,
 			1994,
+		},
+		{
+			"small size with maximum int64 relay fee",
+			99,
+			hnsutil.Amount(1<<63 - 1),
+			hnsutil.MaxDoo,
 		},
 	}
 
@@ -250,10 +262,70 @@ func TestDust(t *testing.T) {
 			false,
 		},
 		{
-			// Maximum int64 value causes overflow.
-			"maximum int64 value",
+			"maximum int64 value and relay fee do not overflow",
 			wire.TxOut{Value: 1<<63 - 1, Address: stdAddr},
 			1<<63 - 1,
+			false,
+		},
+		{
+			"custom relay fee rounds before dust multiplier",
+			wire.TxOut{Value: 147, Address: stdAddr},
+			500,
+			false,
+		},
+		{
+			"custom relay fee boundary below threshold",
+			wire.TxOut{Value: 146, Address: stdAddr},
+			500,
+			true,
+		},
+		{
+			"native nulldata output is exempt",
+			wire.TxOut{
+				Value:   0,
+				Address: wire.Address{Version: 31, Hash: []byte{0x00, 0x00}},
+			},
+			DefaultMinRelayTxFee,
+			false,
+		},
+		{
+			"OPEN covenant is exempt",
+			wire.TxOut{
+				Value:    0,
+				Address:  stdAddr,
+				Covenant: wire.Covenant{Type: wire.CovenantOpen},
+			},
+			DefaultMinRelayTxFee,
+			false,
+		},
+		{
+			"BID covenant remains dustworthy",
+			wire.TxOut{
+				Value:    0,
+				Address:  stdAddr,
+				Covenant: wire.Covenant{Type: wire.CovenantBid},
+			},
+			DefaultMinRelayTxFee,
+			true,
+		},
+		{
+			"REVOKE covenant is exempt",
+			wire.TxOut{
+				Value:    0,
+				Address:  stdAddr,
+				Covenant: wire.Covenant{Type: wire.CovenantRevoke},
+			},
+			DefaultMinRelayTxFee,
+			false,
+		},
+		{
+			"unknown covenant remains dustworthy",
+			wire.TxOut{
+				Value:    0,
+				Address:  stdAddr,
+				Covenant: wire.Covenant{Type: wire.CovenantRevoke + 1},
+			},
+			DefaultMinRelayTxFee,
 			true,
 		},
 	}
@@ -268,21 +340,13 @@ func TestDust(t *testing.T) {
 
 // TestCheckTransactionStandard tests the CheckTransactionStandard API.
 func TestCheckTransactionStandard(t *testing.T) {
-	t.Skip("Skipping: Bitcoin PkScript standardness vectors need Handshake-native script fixtures")
-
 	// maxTxVersion is the max transaction version the test Policy
 	// accepts.
 	const maxTxVersion = 1
 
-	// opReturnAddressVersion is the wire.Address version that yields an
-	// OP_RETURN opcode via Address.WitnessProgram(): 0x50 + 26 = 0x6a =
-	// OP_RETURN.  This is how the tests fabricate nulldata outputs.
-	const opReturnAddressVersion uint8 = 26
-
-	// nulldataAddr constructs the wire.Address used for OP_RETURN /
-	// nulldata outputs in the tests below.
+	// nulldataAddr constructs a native Handshake nulldata address.
 	nulldataAddr := func(data []byte) wire.Address {
-		return wire.Address{Version: opReturnAddressVersion, Hash: data}
+		return wire.Address{Version: 31, Hash: data}
 	}
 
 	// Create some dummy, but otherwise standard, data for transactions.
@@ -313,7 +377,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		code       wire.RejectCode
 	}{
 		{
-			name: "Typical pay-to-pubkey-hash transaction",
+			name: "Typical witness pubkey hash transaction",
 			tx: wire.MsgTx{
 				Version:  1,
 				TxIn:     []*wire.TxIn{&dummyTxIn},
@@ -388,6 +452,24 @@ func TestCheckTransactionStandard(t *testing.T) {
 			code:       wire.RejectNonstandard,
 		},
 		{
+			name: "Unknown covenant type",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{{
+					Value:   100000000,
+					Address: dummyAddr,
+					Covenant: wire.Covenant{
+						Type: wire.CovenantRevoke + 1,
+					},
+				}},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: false,
+			code:       wire.RejectNonstandard,
+		},
+		{
 			name: "More than one nulldata output",
 			tx: wire.MsgTx{
 				Version: 1,
@@ -428,6 +510,38 @@ func TestCheckTransactionStandard(t *testing.T) {
 				TxOut: []*wire.TxOut{{
 					Value:   0,
 					Address: nulldataAddr([]byte{0x00, 0x00}),
+				}},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: true,
+		},
+		{
+			name: "Nulldata ignores unknown covenant",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{{
+					Value:   0,
+					Address: nulldataAddr([]byte{0x00, 0x00}),
+					Covenant: wire.Covenant{
+						Type: wire.CovenantRevoke + 1,
+					},
+				}},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: true,
+		},
+		{
+			name: "Zero-value OPEN covenant is standard",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{{
+					Value:    0,
+					Address:  dummyAddr,
+					Covenant: wire.Covenant{Type: wire.CovenantOpen},
 				}},
 				LockTime: 0,
 			},

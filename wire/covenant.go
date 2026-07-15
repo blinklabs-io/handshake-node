@@ -210,6 +210,19 @@ func (c *Covenant) IsUnknown() bool {
 	return !c.IsKnown()
 }
 
+// IsDustworthy returns whether outputs with this covenant are subject to the
+// dust policy rule.  Plain payments, bids, and future covenant types are
+// dustworthy.  Other known name covenants carry protocol state and are exempt.
+func (c *Covenant) IsDustworthy() bool {
+	return c.Type == CovenantNone || c.Type == CovenantBid || c.IsUnknown()
+}
+
+// IsUnspendable returns whether outputs with this covenant are provably
+// unspendable.
+func (c *Covenant) IsUnspendable() bool {
+	return c.Type == CovenantRevoke
+}
+
 // NewCovenant returns a new Covenant with the given type and items.
 func NewCovenant(covenantType uint8, items [][]byte) *Covenant {
 	return &Covenant{

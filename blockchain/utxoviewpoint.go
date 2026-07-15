@@ -246,7 +246,7 @@ func addressFromPkScript(pkScript []byte) (wire.Address, error) {
 }
 
 func txOutPkScript(txOut *wire.TxOut) []byte {
-	if txOut.Address.Version == 31 {
+	if txOut.Address.IsNulldata() {
 		script := make([]byte, 0, 2+len(txOut.Address.Hash))
 		script = append(script, txscript.OP_RETURN)
 		if len(txOut.Address.Hash) > 0 {
@@ -278,8 +278,8 @@ func cloneCovenant(covenant wire.Covenant) wire.Covenant {
 }
 
 func txOutIsUnspendable(txOut *wire.TxOut) bool {
-	return txOut.Address.Version == 31 ||
-		txOut.Covenant.Type == wire.CovenantRevoke ||
+	return txOut.Address.IsUnspendable() ||
+		txOut.Covenant.IsUnspendable() ||
 		txscript.IsUnspendable(txOutPkScript(txOut))
 }
 

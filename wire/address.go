@@ -126,6 +126,33 @@ func (a *Address) SerializeSize() int {
 	return 2 + len(a.Hash)
 }
 
+// IsNulldata returns whether the address is Handshake's native nulldata
+// address type.  Version 31 outputs are provably unspendable and carry data
+// rather than a witness program.
+func (a *Address) IsNulldata() bool {
+	return a.Version == maxAddressVersion
+}
+
+// IsUnknown returns whether the address uses a witness program version that
+// is not currently defined by Handshake.  Version 0 is defined only for
+// 20-byte pubkey hashes and 32-byte script hashes, while version 31 is the
+// native nulldata type.  Versions 1 through 30 are reserved for future use.
+func (a *Address) IsUnknown() bool {
+	switch a.Version {
+	case 0:
+		return len(a.Hash) != 20 && len(a.Hash) != 32
+	case maxAddressVersion:
+		return false
+	default:
+		return true
+	}
+}
+
+// IsUnspendable returns whether the address is provably unspendable.
+func (a *Address) IsUnspendable() bool {
+	return a.IsNulldata()
+}
+
 // WitnessProgram returns the legacy Bitcoin-style script view for this
 // address.  For version 0, the result is [OP_0, len(hash), hash...].  For
 // versions 1 through 16, the result is [OP_N, len(hash), hash...].  Versions
