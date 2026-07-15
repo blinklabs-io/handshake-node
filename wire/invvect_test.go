@@ -59,7 +59,7 @@ func TestInvVect(t *testing.T) {
 // protocol versions and supported inventory vector types.
 func TestInvVectWire(t *testing.T) {
 	// Block 203707 hash.
-	hashStr := "3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"
+	hashStr := "dce9691094da23c7e76713d075d4a10b794008a636acc24b2603000000000000"
 	baseHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)

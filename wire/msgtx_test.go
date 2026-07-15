@@ -52,14 +52,11 @@ const hnsTestTxHex = "00000000" + // version
 	"08" + "7c524fd539e1eab8" + // item 2 (8 bytes)
 	"08" + "0000000000000000" // item 3 (8 bytes)
 
-// hnsTestTxHash is the TxHash in display order (byte-reversed hex, as used by
-// chainhash.Hash.String() and chainhash.NewHashFromStr).
-// Raw blake2b-256 bytes: 1881afbe757f9d433144edf49e29c7f6bbfdbc1941d06792dc5ee13020d63570
-const hnsTestTxHash = "7035d62030e15edc9267d04119bcfdbbf6c7299ef4ed4431439d7f75beaf8118"
+// hnsTestTxHash is the TxHash in hsd's native byte order.
+const hnsTestTxHash = "1881afbe757f9d433144edf49e29c7f6bbfdbc1941d06792dc5ee13020d63570"
 
-// hnsTestWitnessHash is the WitnessHash in display order.
-// Raw bytes: d36b1e9861dd504629b053d14d9801b295667a4c7002c9d2836be502bfdb3b3a
-const hnsTestWitnessHash = "3a3bdbbf02e56b83d2c902704c7a6695b201984dd153b0294650dd61981e6bd3"
+// hnsTestWitnessHash is the WitnessHash in hsd's native byte order.
+const hnsTestWitnessHash = "d36b1e9861dd504629b053d14d9801b295667a4c7002c9d2836be502bfdb3b3a"
 
 // mustDecodeHex decodes a hex string and panics on error.
 func mustDecodeHex(s string) []byte {
@@ -101,7 +98,7 @@ func TestTx(t *testing.T) {
 	pver := ProtocolVersion
 
 	// Block 100000 hash.
-	hashStr := "3ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506"
+	hashStr := "06e533fd1ada86391f3f6c343204b0d278d4aaec1c0b20aa27ba030000000000"
 	hash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)

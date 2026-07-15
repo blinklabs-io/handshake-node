@@ -41,7 +41,7 @@ var (
 	testKey = [16]byte{0x4c, 0xb1, 0xab, 0x12, 0x57, 0x62, 0x1e, 0x41,
 		0x3b, 0x8b, 0x0e, 0x26, 0x64, 0x8d, 0x4a, 0x15}
 
-	testHash = "000000000000000000496d7ff9bd2c96154a8d64260e8b3b411e625712abb14c"
+	testHash = "4cb1ab1257621e413b8b0e26648d4a15962cbdf97f6d49000000000000000000"
 
 	// 20-byte version-0 Handshake address hash (arbitrary test data).
 	testAddrHash = []byte{

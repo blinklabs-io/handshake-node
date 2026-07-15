@@ -71,7 +71,7 @@ func TestBlock(t *testing.T) {
 // hashes from a block accurately.
 func TestBlockTxHashes(t *testing.T) {
 	// Block 1, transaction 1 hash (Blake2b-256 of the Handshake tx).
-	hashStr := "7c9c54219471d8490e812cc290fd812320e1ce007b53e94228ab5789a7715ca7"
+	hashStr := "a75c71a78957ab2842e9537b00cee1202381fd90c22c810e49d8719421549c7c"
 	wantHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -92,7 +92,7 @@ func TestBlockTxHashes(t *testing.T) {
 // TestBlockHash tests the ability to generate the hash of a block accurately.
 func TestBlockHash(t *testing.T) {
 	// Block 1 hash — computed via the Handshake PoW hash chain.
-	hashStr := "3cdb5f44eb7fac0e92cff6f0a3c4c1ed17f68aea7ce6b99d9826164a03f8bbec"
+	hashStr := "ecbbf8034a1626989db9e67cea8af617edc1c4a3f0f6cf920eac7feb445fdb3c"
 	wantHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)

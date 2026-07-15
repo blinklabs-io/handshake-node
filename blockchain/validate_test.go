@@ -5,6 +5,7 @@
 package blockchain
 
 import (
+	"encoding/hex"
 	"math"
 	"reflect"
 	"testing"
@@ -16,6 +17,42 @@ import (
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
+
+func TestBIP0030ExceptionHashByteOrder(t *testing.T) {
+	tests := []struct {
+		name          string
+		legacyDisplay string
+		got           *chainhash.Hash
+	}{
+		{
+			name:          "height 91842",
+			legacyDisplay: "00000000000a4d0a398161ffc163c503763b1f4360639393e0e4c8e300e0caec",
+			got:           block91842Hash,
+		},
+		{
+			name:          "height 91880",
+			legacyDisplay: "00000000000743f190a18c5577a3c2d2a1f610ae9601ac046a38084ccb7cd721",
+			got:           block91880Hash,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			displayBytes, err := hex.DecodeString(test.legacyDisplay)
+			if err != nil {
+				t.Fatalf("invalid test hash: %v", err)
+			}
+
+			var want chainhash.Hash
+			for i, b := range displayBytes {
+				want[len(want)-1-i] = b
+			}
+			if *test.got != want {
+				t.Fatalf("exception hash: got %x, want %x", test.got[:], want[:])
+			}
+		})
+	}
+}
 
 // TestSequenceLocksActive tests the SequenceLockActive function to ensure it
 // works as expected in all possible combinations/scenarios.

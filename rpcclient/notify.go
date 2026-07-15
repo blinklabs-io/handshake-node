@@ -1022,7 +1022,7 @@ func (c *Client) NotifyNamesAsync(names []string,
 
 	hashes := make([]string, 0, len(nameHashes))
 	for _, nameHash := range nameHashes {
-		hashes = append(hashes, rawHashString(nameHash))
+		hashes = append(hashes, nameHash.String())
 	}
 	return c.notifyNamesInternal(names, hashes)
 }

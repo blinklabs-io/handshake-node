@@ -1627,7 +1627,7 @@ func TestChainSvrCmds(t *testing.T) {
 			},
 			staticCmd: func() interface{} {
 				outputs := []wire.OutPoint{
-					{Hash: chainhash.Hash{1}, Index: 0},
+					{Hash: chainhash.Hash{chainhash.HashSize - 1: 1}, Index: 0},
 				}
 				return hnsjson.NewGetTxSpendingPrevOutCmd(outputs)
 			},

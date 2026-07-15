@@ -3135,28 +3135,16 @@ func parseRPCHash(value, field string) (chainhash.Hash, *hnsjson.RPCError) {
 }
 
 func rawHashString(hash chainhash.Hash) string {
-	return hex.EncodeToString(hash[:])
+	return hash.String()
 }
 
 func parseRPCRawHash(value, field string) (chainhash.Hash, *hnsjson.RPCError) {
-	if len(value) != chainhash.HashSize*2 {
-		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
-			"Invalid %s %q", field, value))
-	}
-
-	hashBytes, err := hex.DecodeString(value)
+	hash, err := chainhash.NewHashFromStrStrict(value)
 	if err != nil {
 		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
 			"Invalid %s %q", field, value))
 	}
-
-	var hash chainhash.Hash
-	if err := hash.SetBytes(hashBytes); err != nil {
-		return chainhash.Hash{}, rpcInvalidParameterError(fmt.Sprintf(
-			"Invalid %s %q", field, value))
-	}
-
-	return hash, nil
+	return *hash, nil
 }
 
 func nameStateToJSON(ns *blockchain.NameState) *hnsjson.NameStateResult {

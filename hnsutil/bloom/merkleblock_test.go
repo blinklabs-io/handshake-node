@@ -9,9 +9,9 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/hnsutil/bloom"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -38,7 +38,7 @@ func TestMerkleBlock3(t *testing.T) {
 
 	f := bloom.NewFilter(10, 0, 0.000001, wire.BloomUpdateAll)
 
-	inputStr := "63194f18be0af63f2c6bc9dc0f777cbefed3d9415c4af83f3ee3a3d669c00cb5"
+	inputStr := "b50cc069d6a3e33e3ff84a5c41d9d3febe7c770fdcc96b2c3ff60abe184f1963"
 	hash, err := chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestMerkleBlock3 NewHashFromStr failed: %v", err)

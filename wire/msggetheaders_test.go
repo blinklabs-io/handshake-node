@@ -19,7 +19,7 @@ func TestGetHeaders(t *testing.T) {
 	pver := ProtocolVersion
 
 	// Block 99500 hash.
-	hashStr := "000000000002e7ad7b9eef9479e4aabc65cb831269cc20d2632c13684406dee0"
+	hashStr := "e0de064468132c63d220cc691283cb65bcaae47994ef9e7bade7020000000000"
 	locatorHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -76,21 +76,21 @@ func TestGetHeadersWire(t *testing.T) {
 	pver := uint32(60002)
 
 	// Block 99499 hash.
-	hashStr := "2710f40c87ec93d010a6fd95f42c59a2cbacc60b18cf6b7957535"
+	hashStr := "357595b7f68cb160ccba2c9ac5425fd96f0a013dc97ec8400f71020000000000"
 	hashLocator, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
 	}
 
 	// Block 99500 hash.
-	hashStr = "2e7ad7b9eef9479e4aabc65cb831269cc20d2632c13684406dee0"
+	hashStr = "e0de064468132c63d220cc691283cb65bcaae47994ef9e7bade7020000000000"
 	hashLocator2, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
 	}
 
 	// Block 100000 hash.
-	hashStr = "3ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506"
+	hashStr = "06e533fd1ada86391f3f6c343204b0d278d4aaec1c0b20aa27ba030000000000"
 	hashStop, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -270,21 +270,21 @@ func TestGetHeadersWireErrors(t *testing.T) {
 	wireErr := &MessageError{}
 
 	// Block 99499 hash.
-	hashStr := "2710f40c87ec93d010a6fd95f42c59a2cbacc60b18cf6b7957535"
+	hashStr := "357595b7f68cb160ccba2c9ac5425fd96f0a013dc97ec8400f71020000000000"
 	hashLocator, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
 	}
 
 	// Block 99500 hash.
-	hashStr = "2e7ad7b9eef9479e4aabc65cb831269cc20d2632c13684406dee0"
+	hashStr = "e0de064468132c63d220cc691283cb65bcaae47994ef9e7bade7020000000000"
 	hashLocator2, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
 	}
 
 	// Block 100000 hash.
-	hashStr = "3ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506"
+	hashStr = "06e533fd1ada86391f3f6c343204b0d278d4aaec1c0b20aa27ba030000000000"
 	hashStop, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)

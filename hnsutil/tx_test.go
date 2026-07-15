@@ -36,7 +36,7 @@ func TestTx(t *testing.T) {
 	}
 
 	// Hash for block 100,000 transaction 0 using the Handshake tx hash.
-	wantHashStr := "81001784062977be7635ae5333ab0d6fc014a1dc0ff1928968f7365ef4f8810c"
+	wantHashStr := "0c81f8f45e36f7688992f10fdca114c06f0dab3353ae3576be77290684170081"
 	wantHash, err := chainhash.NewHashFromStr(wantHashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)

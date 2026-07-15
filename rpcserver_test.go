@@ -245,8 +245,8 @@ func TestHandshakeRawHashRPCEncoding(t *testing.T) {
 	if got := rawHashString(hash); got != wantRaw {
 		t.Fatalf("rawHashString = %q, want %q", got, wantRaw)
 	}
-	if hash.String() == wantRaw {
-		t.Fatal("test hash does not distinguish raw and chainhash string encodings")
+	if got := hash.String(); got != wantRaw {
+		t.Fatalf("Hash.String = %q, want native-order %q", got, wantRaw)
 	}
 
 	parsed, rpcErr := parseRPCRawHash(wantRaw, "name hash")
@@ -297,8 +297,8 @@ func TestNameAuctionInfoUsesRawNameHash(t *testing.T) {
 	if got.NameHash != want {
 		t.Fatalf("NameHash = %q, want %q", got.NameHash, want)
 	}
-	if got.NameHash == nameHash.String() {
-		t.Fatal("NameHash used byte-reversed chainhash string encoding")
+	if got.NameHash != nameHash.String() {
+		t.Fatal("NameHash did not use native chainhash string encoding")
 	}
 }
 

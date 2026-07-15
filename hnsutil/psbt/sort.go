@@ -71,8 +71,8 @@ func (s *sortableOutputs) Swap(i, j int) {
 	s.p.Outputs[i], s.p.Outputs[j] = s.p.Outputs[j], s.p.Outputs[i]
 }
 
-// Less is the input comparison function. First sort based on input hash
-// (reversed / rpc-style), then index.
+// Less is the input comparison function. First sort based on the byte-reversed
+// input hash required by BIP 69, then index.
 func (s *sortableInputs) Less(i, j int) bool {
 	ins := s.p.UnsignedTx.TxIn
 
@@ -84,8 +84,8 @@ func (s *sortableInputs) Less(i, j int) bool {
 			ins[j].PreviousOutPoint.Index
 	}
 
-	// At this point, the hashes are not equal, so reverse them to
-	// big-endian and return the result of the comparison.
+	// At this point, the hashes are not equal, so reverse them for the
+	// BIP 69 comparison and return the result.
 	const hashSize = chainhash.HashSize
 	for b := 0; b < hashSize/2; b++ {
 		ihash[b], ihash[hashSize-1-b] = ihash[hashSize-1-b], ihash[b]

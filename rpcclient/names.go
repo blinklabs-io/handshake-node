@@ -12,10 +12,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 )
 
-func rawHashString(hash chainhash.Hash) string {
-	return hex.EncodeToString(hash[:])
-}
-
 // FutureDecodeResourceResult is a future promise to deliver the result of a
 // DecodeResourceAsync RPC invocation.
 type FutureDecodeResourceResult chan *Response
@@ -82,7 +78,7 @@ func (c *Client) GetNameInfo(name string) (*hnsjson.GetNameInfoResult, error) {
 // result of the RPC at some future time by invoking the Receive function on the
 // returned instance.
 func (c *Client) GetNameByHashAsync(nameHash chainhash.Hash) FutureGetNameInfoResult {
-	return c.SendCmd(hnsjson.NewGetNameByHashCmd(rawHashString(nameHash)))
+	return c.SendCmd(hnsjson.NewGetNameByHashCmd(nameHash.String()))
 }
 
 // GetNameByHash returns the current chain state for a Handshake name hash.
@@ -146,7 +142,7 @@ func (r FutureGetNameProofResult) Receive() (*hnsjson.GetNameProofResult, error)
 func (c *Client) GetNameProofAsync(name string, root *chainhash.Hash) FutureGetNameProofResult {
 	var rootStr *string
 	if root != nil {
-		hash := rawHashString(*root)
+		hash := root.String()
 		rootStr = &hash
 	}
 	return c.SendCmd(hnsjson.NewGetNameProofCmd(name, rootStr))
@@ -225,7 +221,7 @@ func (r FutureGetNamesByHashResult) Receive() ([]*hnsjson.GetNameInfoResult, err
 func (c *Client) GetNamesByHashAsync(nameHashes []chainhash.Hash) FutureGetNamesByHashResult {
 	hashes := make([]string, 0, len(nameHashes))
 	for _, hash := range nameHashes {
-		hashes = append(hashes, rawHashString(hash))
+		hashes = append(hashes, hash.String())
 	}
 	return c.SendCmd(hnsjson.NewGetNamesByHashCmd(hashes))
 }
@@ -514,8 +510,8 @@ func (r FutureVerifyNameProofResult) Receive() (*hnsjson.VerifyNameProofResult, 
 // the result of the RPC at some future time by invoking the Receive function on
 // the returned instance.
 func (c *Client) VerifyNameProofAsync(root, nameHash chainhash.Hash, proof []byte) FutureVerifyNameProofResult {
-	return c.SendCmd(hnsjson.NewVerifyNameProofCmd(rawHashString(root),
-		rawHashString(nameHash), hex.EncodeToString(proof)))
+	return c.SendCmd(hnsjson.NewVerifyNameProofCmd(root.String(),
+		nameHash.String(), hex.EncodeToString(proof)))
 }
 
 // VerifyNameProof verifies a serialized Urkel name proof against a root and

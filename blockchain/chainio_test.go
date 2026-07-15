@@ -911,7 +911,7 @@ func TestBestChainStateSerialization(t *testing.T) {
 		{
 			name: "genesis",
 			state: bestChainState{
-				hash:      *newHashFromStr("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
+				hash:      *newHashFromStr("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"),
 				height:    0,
 				totalTxns: 1,
 				workSum: func() *big.Int {
@@ -924,7 +924,7 @@ func TestBestChainStateSerialization(t *testing.T) {
 		{
 			name: "block 1",
 			state: bestChainState{
-				hash:      *newHashFromStr("00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048"),
+				hash:      *newHashFromStr("4860eb18bf1b1620e37e9490fc8a427514416fd75159ab86688e9a8300000000"),
 				height:    1,
 				totalTxns: 2,
 				workSum: func() *big.Int {

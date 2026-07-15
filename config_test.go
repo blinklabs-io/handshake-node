@@ -174,7 +174,7 @@ func TestParseIPNets(t *testing.T) {
 }
 
 func TestParseAssumeValid(t *testing.T) {
-	assumeValid := "0000000000000000000000000000000000000000000000000000000000000000"
+	assumeValid := "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992e0"
 	hash, err := parseAssumeValid(assumeValid)
 	if err != nil {
 		t.Fatalf("parseAssumeValid: %v", err)
@@ -197,5 +197,23 @@ func TestParseAssumeValid(t *testing.T) {
 
 	if _, err := parseAssumeValid("not-a-hash"); err == nil {
 		t.Fatalf("parseAssumeValid malformed hash unexpectedly succeeded")
+	}
+}
+
+func TestParseCheckpointHashOrder(t *testing.T) {
+	const (
+		checkpoint = "1008:0000000000001013c28fa079b545fb805f04c496687799b98e35e83cbbb8953e"
+		wantHash   = "0000000000001013c28fa079b545fb805f04c496687799b98e35e83cbbb8953e"
+	)
+
+	got, err := newCheckpointFromStr(checkpoint)
+	if err != nil {
+		t.Fatalf("newCheckpointFromStr: %v", err)
+	}
+	if got.Height != 1008 {
+		t.Fatalf("checkpoint height: got %d, want %d", got.Height, 1008)
+	}
+	if got.Hash.String() != wantHash {
+		t.Fatalf("checkpoint hash: got %q, want %q", got.Hash.String(), wantHash)
 	}
 }
