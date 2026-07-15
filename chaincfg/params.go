@@ -290,6 +290,26 @@ type Params struct {
 	AirdropGooSigStop   uint32
 }
 
+// mainNetCheckpoints matches the checkpointMap in hsd v8.0.0, commit
+// 9f013c1cb7f92edf94db69fbd69daf34adf655fb.
+var mainNetCheckpoints = []Checkpoint{
+	{Height: 1008, Hash: newHashFromStr("0000000000001013c28fa079b545fb805f04c496687799b98e35e83cbbb8953e")},
+	{Height: 2016, Hash: newHashFromStr("0000000000000424ee6c2a5d6e0da5edfc47a4a10328c1792056ee48303c3e40")},
+	{Height: 10000, Hash: newHashFromStr("00000000000001a86811a6f520bf67cefa03207dc84fd315f58153b28694ec51")},
+	{Height: 20000, Hash: newHashFromStr("0000000000000162c7ac70a582256f59c189b5c90d8e9861b3f374ed714c58de")},
+	{Height: 30000, Hash: newHashFromStr("0000000000000004f790862846b23c3a81585aea0fa79a7d851b409e027bcaa7")},
+	{Height: 40000, Hash: newHashFromStr("0000000000000002966206a40b10a575cb46531253b08dae8e1b356cfa277248")},
+	{Height: 50000, Hash: newHashFromStr("00000000000000020c7447e7139feeb90549bfc77a7f18d4ff28f327c04f8d6e")},
+	{Height: 56880, Hash: newHashFromStr("0000000000000001d4ef9ea6908bb4eb970d556bd07cbd7d06a634e1cd5bbf4e")},
+	{Height: 61043, Hash: newHashFromStr("00000000000000015b84385e0307370f8323420eaa27ef6e407f2d3162f1fd05")},
+	{Height: 100000, Hash: newHashFromStr("000000000000000136d7d3efa688072f40d9fdd71bd47bb961694c0f38950246")},
+	{Height: 130000, Hash: newHashFromStr("0000000000000005ee5106df9e48bcd232a1917684ac344b35ddd9b9e4101096")},
+	{Height: 160000, Hash: newHashFromStr("00000000000000021e723ce5aedc021ab4f85d46a6914e40148f01986baa46c9")},
+	{Height: 200000, Hash: newHashFromStr("000000000000000181ebc18d6c34442ffef3eedca90c57ca8ecc29016a1cfe16")},
+	{Height: 225000, Hash: newHashFromStr("00000000000000021f0be013ebad018a9ef97c8501766632f017a778781320d5")},
+	{Height: 258026, Hash: newHashFromStr("0000000000000004963d20732c58e5a91cb7e1b61ec6709d031f1a5ca8c55b95")},
+}
+
 // MainNetParams defines the network parameters for the Handshake mainnet.
 var MainNetParams = Params{
 	Name:        "mainnet",
@@ -318,7 +338,7 @@ var MainNetParams = Params{
 	GenerateSupported:        false,
 
 	// Checkpoints ordered from oldest to newest.
-	Checkpoints: nil,
+	Checkpoints: mainNetCheckpoints,
 
 	// Consensus rule change deployments. Handshake uses versionbits for
 	// several historical consensus changes while retaining the surrounding
@@ -685,7 +705,7 @@ func HDPrivateKeyToPublicKeyID(id []byte) ([]byte, error) {
 // it panics on an error since it will only (and must only) be called with
 // hard-coded, and therefore known good, hashes.
 func newHashFromStr(hexStr string) *chainhash.Hash {
-	hash, err := chainhash.NewHashFromStr(hexStr)
+	hash, err := chainhash.NewHashFromStrStrict(hexStr)
 	if err != nil {
 		panic(err)
 	}
