@@ -186,6 +186,25 @@ func TestPublicKeyHashRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPublicKeyFromHashHsdVector verifies the forward map against a uniform
+// encoding produced by bcrypto v5.4.0, the implementation used by hsd v8.0.0.
+func TestPublicKeyFromHashHsdVector(t *testing.T) {
+	uniform := mustHex(t,
+		"7f38251ed4dca5008598052cd440631613b42cb221e15fef5d0bf88d53ac4d1a"+
+			"0433e8d52696a42efec333ed79d351d29739a912e7c3019386d2f16e7abc63b3")
+	want := mustHex(t,
+		"036360e856310ce5d294e8be33fc807077dc56ac80d95d9cd4ddbd21325eff73f7")
+
+	got, err := PublicKeyFromHash(uniform)
+	if err != nil {
+		t.Fatalf("PublicKeyFromHash: %v", err)
+	}
+	if !bytes.Equal(got.SerializeCompressed(), want) {
+		t.Fatalf("decoded public key: got %x, want %x",
+			got.SerializeCompressed(), want)
+	}
+}
+
 // TestPublicKeyToHashDeterministicRNG verifies the inverse map is randomized
 // only through the injected reader.
 func TestPublicKeyToHashDeterministicRNG(t *testing.T) {
