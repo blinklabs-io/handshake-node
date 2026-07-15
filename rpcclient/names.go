@@ -13,7 +13,7 @@ import (
 )
 
 func rawHashString(hash chainhash.Hash) string {
-	return hex.EncodeToString(hash[:])
+	return hash.String()
 }
 
 // FutureDecodeResourceResult is a future promise to deliver the result of a

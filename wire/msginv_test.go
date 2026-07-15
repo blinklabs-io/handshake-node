@@ -72,14 +72,14 @@ func TestInv(t *testing.T) {
 // of inventory vectors and protocol versions.
 func TestInvWire(t *testing.T) {
 	// Block 203707 hash.
-	hashStr := "3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"
+	hashStr := "dce9691094da23c7e76713d075d4a10b794008a636acc24b2603000000000000"
 	blockHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
 	}
 
 	// Transaction 1 of Block 203707 hash.
-	hashStr = "d28a3dc7392bf00a9855ee93dd9a81eff82a2c4fe57fbd42cfe71b487accfaf0"
+	hashStr = "f0facc7a481be7cf42bd7fe54f2c2af8ef819add93ee55980af02b39c73d8ad2"
 	txHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
@@ -248,7 +248,7 @@ func TestInvWireErrors(t *testing.T) {
 	wireErr := &MessageError{}
 
 	// Block 203707 hash.
-	hashStr := "3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"
+	hashStr := "dce9691094da23c7e76713d075d4a10b794008a636acc24b2603000000000000"
 	blockHash, err := chainhash.NewHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)

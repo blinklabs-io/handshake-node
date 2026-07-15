@@ -68,16 +68,12 @@ var ErrHashStrSize = fmt.Errorf("max hash string length is %v bytes", MaxHashStr
 var ErrHashStrSizeMismatch = fmt.Errorf("hash string must be exactly %d "+
 	"characters", MaxHashStringSize)
 
-// Hash is used in several of the bitcoin messages and common structures.  It
-// typically represents the double sha256 of data.
+// Hash is used in Handshake messages and common structures. It stores hash
+// bytes in the same order used by hsd on the wire and in its RPC interface.
 type Hash [HashSize]byte
 
-// String returns the Hash as the hexadecimal string of the byte-reversed
-// hash.
+// String returns the Hash as hexadecimal in Handshake's native byte order.
 func (hash Hash) String() string {
-	for i := 0; i < HashSize/2; i++ {
-		hash[i], hash[HashSize-1-i] = hash[HashSize-1-i], hash[i]
-	}
 	return hex.EncodeToString(hash[:])
 }
 
@@ -183,9 +179,8 @@ func TaggedHash(tag []byte, msgs ...[]byte) *Hash {
 	return hash
 }
 
-// NewHashFromStr creates a Hash from a hash string.  The string should be
-// the hexadecimal string of a byte-reversed hash, but any missing characters
-// result in zero padding at the end of the Hash.
+// NewHashFromStr creates a Hash from a Handshake hash string. Missing leading
+// characters are zero padded.
 //
 // NOTE: This function accepts short and odd-length hex strings and pads them.
 // Typical parsing of full txids or block hashes should use
@@ -199,8 +194,8 @@ func NewHashFromStr(hash string) (*Hash, error) {
 	return ret, nil
 }
 
-// NewHashFromStrStrict creates a Hash from a hash string.  The string must be
-// the full hexadecimal string of a byte-reversed hash.
+// NewHashFromStrStrict creates a Hash from a Handshake hash string. The string
+// must contain the full hash in native byte order.
 func NewHashFromStrStrict(hash string) (*Hash, error) {
 	ret := new(Hash)
 	err := DecodeStrict(ret, hash)
@@ -210,8 +205,7 @@ func NewHashFromStrStrict(hash string) (*Hash, error) {
 	return ret, nil
 }
 
-// Decode decodes the byte-reversed hexadecimal string encoding of a Hash to a
-// destination.
+// Decode decodes the hexadecimal Handshake encoding of a Hash to a destination.
 //
 // NOTE: This function accepts short and odd-length hex strings and pads them.
 // Typical parsing of full txids or block hashes should use DecodeStrict
@@ -236,8 +230,8 @@ func Decode(dst *Hash, src string) error {
 	return decodeHash(dst, srcBytes)
 }
 
-// DecodeStrict decodes the byte-reversed hexadecimal string encoding of a Hash
-// to a destination.  The source string must be exactly MaxHashStringSize
+// DecodeStrict decodes the hexadecimal Handshake encoding of a Hash to a
+// destination. The source string must be exactly MaxHashStringSize
 // bytes, or ErrHashStrSizeMismatch is returned.
 func DecodeStrict(dst *Hash, src string) error {
 	if len(src) != MaxHashStringSize {
@@ -247,23 +241,17 @@ func DecodeStrict(dst *Hash, src string) error {
 	return decodeHash(dst, []byte(src))
 }
 
-// decodeHash decodes the provided byte-reversed hexadecimal bytes into dst.
+// decodeHash decodes the provided hexadecimal bytes into dst.
 // The caller is responsible for applying any caller-specific length validation
 // before invoking this helper.
 func decodeHash(dst *Hash, src []byte) error {
-	// Hex decode the source bytes to a temporary destination.
-	var reversedHash Hash
-	_, err := hex.Decode(reversedHash[HashSize-hex.DecodedLen(len(src)):], src)
+	var decoded Hash
+	_, err := hex.Decode(decoded[HashSize-hex.DecodedLen(len(src)):], src)
 	if err != nil {
 		return err
 	}
 
-	// Reverse copy from the temporary hash to destination.  Because the
-	// temporary was zeroed, the written result will be correctly padded.
-	for i, b := range reversedHash[:HashSize/2] {
-		dst[i], dst[HashSize-1-i] = reversedHash[HashSize-1-i], b
-	}
-
+	*dst = decoded
 	return nil
 }
 

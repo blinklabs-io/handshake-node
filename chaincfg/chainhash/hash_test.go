@@ -12,31 +12,34 @@ import (
 	"testing"
 )
 
-// mainNetGenesisHash is the hash of the first block in the block chain for the
-// main network (genesis block).
-var mainNetGenesisHash = Hash([HashSize]byte{ // Make go vet happy.
-	0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-	0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-	0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-	0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
-})
+const mainNetGenesisHashString = "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992e0"
+
+func mustHashFromHex(hash string) Hash {
+	decoded, err := hex.DecodeString(hash)
+	if err != nil {
+		panic(err)
+	}
+	if len(decoded) != HashSize {
+		panic("invalid test hash length")
+	}
+	return Hash(decoded)
+}
+
+// mainNetGenesisHash is hsd's canonical Handshake mainnet genesis hash in
+// native byte order.
+var mainNetGenesisHash = mustHashFromHex(mainNetGenesisHashString)
 
 // TestHash tests the Hash API.
 func TestHash(t *testing.T) {
-	// Hash of block 234439.
-	blockHashStr := "14a0810ac680a3eb3f82edc878cea25ec41d6b790744e5daeef"
+	// hsd mainnet checkpoint at height 1008.
+	blockHashStr := "0000000000001013c28fa079b545fb805f04c496687799b98e35e83cbbb8953e"
 	blockHash, err := NewHashFromStr(blockHashStr)
 	if err != nil {
 		t.Errorf("NewHashFromStr: %v", err)
 	}
 
-	// Hash of block 234440 as byte slice.
-	buf := []byte{
-		0x79, 0xa6, 0x1a, 0xdb, 0xc6, 0xe5, 0xa2, 0xe1,
-		0x39, 0xd2, 0x71, 0x3a, 0x54, 0x6e, 0xc7, 0xc8,
-		0x75, 0x63, 0x2e, 0x75, 0xf1, 0xdf, 0x9c, 0x3f,
-		0xa6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
+	// Mainnet genesis hash as raw bytes.
+	buf := mainNetGenesisHash[:]
 
 	hash, err := NewHash(buf)
 	if err != nil {
@@ -95,14 +98,8 @@ func TestHash(t *testing.T) {
 
 // TestHashString  tests the stringized output for hashes.
 func TestHashString(t *testing.T) {
-	// Block 100000 hash.
-	wantStr := "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506"
-	hash := Hash([HashSize]byte{ // Make go vet happy.
-		0x06, 0xe5, 0x33, 0xfd, 0x1a, 0xda, 0x86, 0x39,
-		0x1f, 0x3f, 0x6c, 0x34, 0x32, 0x04, 0xb0, 0xd2,
-		0x78, 0xd4, 0xaa, 0xec, 0x1c, 0x0b, 0x20, 0xaa,
-		0x27, 0xba, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
-	})
+	wantStr := mainNetGenesisHashString
+	hash := mainNetGenesisHash
 
 	hashStr := hash.String()
 	if hashStr != wantStr {
@@ -119,17 +116,17 @@ func TestNewHashFromStr(t *testing.T) {
 		want Hash
 		err  error
 	}{
-		// Genesis hash.
+		// Handshake mainnet genesis hash.
 		{
-			"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+			mainNetGenesisHashString,
 			mainNetGenesisHash,
 			nil,
 		},
 
-		// Genesis hash with stripped leading zeros.
+		// hsd checkpoint hash with stripped leading zeros.
 		{
-			"19d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
-			mainNetGenesisHash,
+			"1013c28fa079b545fb805f04c496687799b98e35e83cbbb8953e",
+			mustHashFromHex("0000000000001013c28fa079b545fb805f04c496687799b98e35e83cbbb8953e"),
 			nil,
 		},
 
@@ -143,24 +140,14 @@ func TestNewHashFromStr(t *testing.T) {
 		// Single digit hash.
 		{
 			"1",
-			Hash([HashSize]byte{ // Make go vet happy.
-				0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			}),
+			Hash{HashSize - 1: 0x01},
 			nil,
 		},
 
-		// Block 203707 with stripped leading zeros.
+		// Another value with stripped leading zeros.
 		{
 			"3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc",
-			Hash([HashSize]byte{ // Make go vet happy.
-				0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7,
-				0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4, 0xa1, 0x0b,
-				0x79, 0x40, 0x08, 0xa6, 0x36, 0xac, 0xc2, 0x4b,
-				0x26, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			}),
+			mustHashFromHex("00000000000003264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"),
 			nil,
 		},
 
@@ -209,13 +196,13 @@ func TestNewHashFromStrStrict(t *testing.T) {
 	}{
 		{
 			name: "genesis hash",
-			in:   "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+			in:   mainNetGenesisHashString,
 			want: mainNetGenesisHash,
 			err:  nil,
 		},
 		{
 			name: "stripped leading zeros",
-			in:   "19d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+			in:   "6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992e0",
 			want: Hash{},
 			err:  ErrHashStrSizeMismatch,
 		},
@@ -239,7 +226,7 @@ func TestNewHashFromStrStrict(t *testing.T) {
 		},
 		{
 			name: "hash string that contains non-hex chars",
-			in:   "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26g",
+			in:   "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992eg",
 			want: Hash{},
 			err:  hex.InvalidByteError('g'),
 		},
@@ -277,7 +264,7 @@ func TestDecodeStrict(t *testing.T) {
 	}{
 		{
 			name: "genesis hash",
-			in:   "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+			in:   mainNetGenesisHashString,
 			want: mainNetGenesisHash,
 			err:  nil,
 		},
@@ -295,7 +282,7 @@ func TestDecodeStrict(t *testing.T) {
 		},
 		{
 			name: "hash string that contains non-hex chars",
-			in:   "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26g",
+			in:   "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992eg",
 			want: Hash{},
 			err:  hex.InvalidByteError('g'),
 		},
@@ -330,10 +317,45 @@ func TestDecodeStrict(t *testing.T) {
 	}
 }
 
+// TestDecodeErrorPreservesDestination ensures malformed input does not
+// partially overwrite an existing hash.
+func TestDecodeErrorPreservesDestination(t *testing.T) {
+	tests := []struct {
+		name   string
+		decode func(*Hash, string) error
+		in     string
+	}{
+		{
+			name:   "lenient",
+			decode: Decode,
+			in:     "abcdefg",
+		},
+		{
+			name:   "strict",
+			decode: DecodeStrict,
+			in:     "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992eg",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			got := mainNetGenesisHash
+			if err := test.decode(&got, test.in); err == nil {
+				t.Fatal("Decode unexpectedly succeeded")
+			}
+			if got != mainNetGenesisHash {
+				t.Fatalf("Decode modified destination on error: got %v, want %v",
+					got, mainNetGenesisHash)
+			}
+		})
+	}
+}
+
 // TestHashJsonMarshal tests json marshal and unmarshal.
 func TestHashJsonMarshal(t *testing.T) {
-	hashStr := "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506"
-	legacyHashStr := []byte("[6,229,51,253,26,218,134,57,31,63,108,52,50,4,176,210,120,212,170,236,28,11,32,170,39,186,3,0,0,0,0,0]")
+	hashStr := mainNetGenesisHashString
 
 	hash, err := NewHashFromStr(hashStr)
 	if err != nil {
@@ -355,6 +377,10 @@ func TestHashJsonMarshal(t *testing.T) {
 		t.Errorf("String: wrong hash string - got %v, want %v", newHash.String(), hashStr)
 	}
 
+	legacyHashStr, err := json.Marshal([HashSize]byte(*hash))
+	if err != nil {
+		t.Errorf("Marshal legacy json error: %v", err)
+	}
 	err = newHash.UnmarshalJSON(legacyHashStr)
 	if err != nil {
 		t.Errorf("Unmarshal legacy json error:%v, hash:%v", err, legacyHashStr)

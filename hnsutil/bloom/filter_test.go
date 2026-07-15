@@ -140,19 +140,19 @@ func TestFilterFPRange(t *testing.T) {
 	}{
 		{
 			name:   "fprates > 1 should be clipped at 1",
-			hash:   "02981fa052f0481dbc5868f4fc2166035a10f27a03cfd2de67326471df5bc041",
+			hash:   "41c05bdf71643267ded2cf037af2105a036621fcf46858bc1d48f052a01f9802",
 			want:   "00000000000000000001",
 			filter: bloom.NewFilter(1, 0, 20.9999999769, wire.BloomUpdateAll),
 		},
 		{
 			name:   "fprates less than 1e-9 should be clipped at min",
-			hash:   "02981fa052f0481dbc5868f4fc2166035a10f27a03cfd2de67326471df5bc041",
+			hash:   "41c05bdf71643267ded2cf037af2105a036621fcf46858bc1d48f052a01f9802",
 			want:   "0566d97a91a91b0000000000000001",
 			filter: bloom.NewFilter(1, 0, 0, wire.BloomUpdateAll),
 		},
 		{
 			name:   "negative fprates should be clipped at min",
-			hash:   "02981fa052f0481dbc5868f4fc2166035a10f27a03cfd2de67326471df5bc041",
+			hash:   "41c05bdf71643267ded2cf037af2105a036621fcf46858bc1d48f052a01f9802",
 			want:   "0566d97a91a91b0000000000000001",
 			filter: bloom.NewFilter(1, 0, -1, wire.BloomUpdateAll),
 		},
@@ -335,7 +335,7 @@ func TestFilterBloomMatch(t *testing.T) {
 	}
 
 	f := bloom.NewFilter(10, 0, 0.000001, wire.BloomUpdateAll)
-	inputStr := "b4749f017444b051c44dfd2720e88f314ff94f3dd6d56d40ef65854fcd7fff6b"
+	inputStr := "6bff7fcd4f8565ef406dd5d63d4ff94f318fe82027fd4dc451b04474019f74b4"
 	hash, err := chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterBloomMatch NewHashFromStr failed: %v\n", err)
@@ -414,7 +414,7 @@ func TestFilterBloomMatch(t *testing.T) {
 	}
 
 	f = bloom.NewFilter(10, 0, 0.000001, wire.BloomUpdateAll)
-	inputStr = "90c122d70786e899529d71dbeba91ba216982fb6ba58f3bdaab65e73b7e9260b"
+	inputStr = "0b26e9b7735eb6aabdf358bab62f9816a21ba9ebdb719d5299e88607d722c190"
 	hash, err = chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterBloomMatch NewHashFromStr failed: %v\n", err)
@@ -427,7 +427,7 @@ func TestFilterBloomMatch(t *testing.T) {
 	}
 
 	f = bloom.NewFilter(10, 0, 0.000001, wire.BloomUpdateAll)
-	inputStr = "00000009e784f32f62ef849763d4f45b98e07ba658647343b915ff832b110436"
+	inputStr = "3604112b83ff15b943736458a67be0985bf4d4639784ef622ff384e709000000"
 	hash, err = chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterBloomMatch NewHashFromStr failed: %v\n", err)
@@ -451,7 +451,7 @@ func TestFilterBloomMatch(t *testing.T) {
 	}
 
 	f = bloom.NewFilter(10, 0, 0.000001, wire.BloomUpdateAll)
-	inputStr = "90c122d70786e899529d71dbeba91ba216982fb6ba58f3bdaab65e73b7e9260b"
+	inputStr = "0b26e9b7735eb6aabdf358bab62f9816a21ba9ebdb719d5299e88607d722c190"
 	hash, err = chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterBloomMatch NewHashFromStr failed: %v\n", err)
@@ -464,7 +464,7 @@ func TestFilterBloomMatch(t *testing.T) {
 	}
 
 	f = bloom.NewFilter(10, 0, 0.000001, wire.BloomUpdateAll)
-	inputStr = "000000d70786e899529d71dbeba91ba216982fb6ba58f3bdaab65e73b7e9260b"
+	inputStr = "0b26e9b7735eb6aabdf358bab62f9816a21ba9ebdb719d5299e88607d7000000"
 	hash, err = chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterBloomMatch NewHashFromStr failed: %v\n", err)
@@ -500,7 +500,7 @@ func TestFilterInsertUpdateNone(t *testing.T) {
 	}
 	f.Add(inputBytes)
 
-	inputStr = "147caa76786596590baa4e98f5d9f48b86c7765e489f7a6ff3360fe5c674360b"
+	inputStr = "0b3674c6e50f36f36f7a9f485e76c7868bf4d9f5984eaa0b5996657876aa7c14"
 	hash, err := chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterInsertUpdateNone NewHashFromStr failed: %v", err)
@@ -513,7 +513,7 @@ func TestFilterInsertUpdateNone(t *testing.T) {
 		return
 	}
 
-	inputStr = "02981fa052f0481dbc5868f4fc2166035a10f27a03cfd2de67326471df5bc041"
+	inputStr = "41c05bdf71643267ded2cf037af2105a036621fcf46858bc1d48f052a01f9802"
 	hash, err = chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestFilterInsertUpdateNone NewHashFromStr failed: %v", err)
@@ -653,7 +653,7 @@ func TestFilterInsertP2PubKeyOnly(t *testing.T) {
 	_, _ = bloom.NewMerkleBlock(block, f)
 
 	// We should match the generation pubkey
-	inputStr = "147caa76786596590baa4e98f5d9f48b86c7765e489f7a6ff3360fe5c674360b"
+	inputStr = "0b3674c6e50f36f36f7a9f485e76c7868bf4d9f5984eaa0b5996657876aa7c14"
 	hash, err := chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestMerkleBlockP2PubKeyOnly NewHashFromStr failed: %v", err)
@@ -667,7 +667,7 @@ func TestFilterInsertP2PubKeyOnly(t *testing.T) {
 	}
 
 	// We should not match the 4th transaction, which is not p2pk
-	inputStr = "02981fa052f0481dbc5868f4fc2166035a10f27a03cfd2de67326471df5bc041"
+	inputStr = "41c05bdf71643267ded2cf037af2105a036621fcf46858bc1d48f052a01f9802"
 	hash, err = chainhash.NewHashFromStr(inputStr)
 	if err != nil {
 		t.Errorf("TestMerkleBlockP2PubKeyOnly NewHashFromStr failed: %v", err)

@@ -15,6 +15,8 @@ import (
 // TestGenesisBlock tests the genesis block of the main network for validity by
 // checking the encoded bytes and hashes.
 func TestGenesisBlock(t *testing.T) {
+	const wantHash = "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992e0"
+
 	// Encode the genesis block to raw bytes.
 	var buf bytes.Buffer
 	err := MainNetParams.GenesisBlock.Serialize(&buf)
@@ -35,6 +37,10 @@ func TestGenesisBlock(t *testing.T) {
 		t.Fatalf("TestGenesisBlock: Genesis block hash does not "+
 			"appear valid - got %v, want %v", spew.Sdump(hash),
 			spew.Sdump(MainNetParams.GenesisHash))
+	}
+	if got := hash.String(); got != wantHash {
+		t.Fatalf("TestGenesisBlock: hsd hash text mismatch - got %s, want %s",
+			got, wantHash)
 	}
 }
 

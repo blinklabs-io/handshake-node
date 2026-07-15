@@ -18,8 +18,8 @@ import (
 // best block chain that a good checkpoint candidate must be.
 const CheckpointConfirmations = 2016
 
-// newHashFromStr converts the passed big-endian hex string into a
-// chainhash.Hash.  It only differs from the one available in chainhash in that
+// newHashFromStr converts the passed native-order hex string into a
+// chainhash.Hash. It only differs from the one available in chainhash in that
 // it ignores the error since it will only (and must only) be called with
 // hard-coded, and therefore known good, hashes.
 func newHashFromStr(hexStr string) *chainhash.Hash {

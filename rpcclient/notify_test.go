@@ -76,8 +76,8 @@ func TestRawHashStringUsesHandshakeByteOrder(t *testing.T) {
 	if got := rawHashString(hash); got != want {
 		t.Fatalf("rawHashString = %q, want %q", got, want)
 	}
-	if hash.String() == want {
-		t.Fatal("test hash does not distinguish raw and chainhash string encodings")
+	if got := hash.String(); got != want {
+		t.Fatalf("Hash.String = %q, want native-order %q", got, want)
 	}
 }
 
