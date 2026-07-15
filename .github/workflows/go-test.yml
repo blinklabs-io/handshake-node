@@ -98,5 +98,34 @@ jobs:
             hnsutil/psbt/go.sum
       - name: tagged integration tests
         run: make integration
-      - name: bounded interoperability protocol tests
+
+  hsd-interop:
+    name: hsd-interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0 https://github.com/actions/setup-go/releases/tag/v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
+        with:
+          repository: handshake-org/hsd
+          ref: 9f013c1cb7f92edf94db69fbd69daf34adf655fb
+          path: .hsd
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 https://github.com/actions/setup-node/releases/tag/v6.4.0
+        with:
+          node-version: 22.22.2
+          cache: npm
+          cache-dependency-path: .hsd/package-lock.json
+      - name: install pinned hsd dependencies
+        working-directory: .hsd
+        run: npm ci
+      - name: live pinned-hsd interoperability tests
+        env:
+          HSD_DIR: ${{ github.workspace }}/.hsd
         run: make hsd-interop

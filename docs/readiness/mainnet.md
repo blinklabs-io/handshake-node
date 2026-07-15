@@ -15,12 +15,23 @@ go vet ./...
 make unit-race
 make lint workers=2
 make integration
-make hsd-interop
+HSD_DIR=/tmp/hsd-v8 make hsd-interop
 ```
 
 `make integration` includes the pruning scenario and is also run in normal CI.
-The interoperability command currently verifies plaintext and Brontide
-version/verack behavior with strict timeouts; full pinned-hsd relay, reorg, and
+The CI interoperability job checks out hsd v8.0.0 at the pinned commit and
+installs its locked dependencies. To run the same live plaintext and Brontide
+version/verack gate locally:
+
+```sh
+git clone https://github.com/handshake-org/hsd.git /tmp/hsd-v8
+git -C /tmp/hsd-v8 switch --detach 9f013c1cb7f92edf94db69fbd69daf34adf655fb
+npm ci --prefix /tmp/hsd-v8
+HSD_DIR=/tmp/hsd-v8 make hsd-interop
+```
+
+The gate verifies the hsd source commit and refuses modified tracked source
+before launching an isolated regtest node. Full pinned-hsd relay, reorg, and
 recovery orchestration remains a release blocker until its harness lands.
 
 ## Manual parity run

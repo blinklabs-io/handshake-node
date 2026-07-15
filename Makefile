@@ -123,10 +123,10 @@ integration:
 	@$(call print, "Running tagged RPC integration tests.")
 	$(GOTEST_DEV) ./integration -count=1 -test.timeout=20m
 
-#? hsd-interop: Run bounded interoperability protocol tests
+#? hsd-interop: Run live protocol tests against pinned hsd (requires HSD_DIR)
 hsd-interop:
-	@$(call print, "Running hsd interoperability protocol tests.")
-	$(GOTEST) ./cmd/hsdinterop -count=1 -test.timeout=2m
+	@$(call print, "Running live hsd interoperability protocol tests.")
+	env HSD_DIR="$(HSD_DIR)" $(GOTEST) -tags=hsdinterop ./cmd/hsdinterop -count=1 -test.timeout=2m
 
 #? hnsparity: Build the manual mainnet parity runner
 hnsparity:
