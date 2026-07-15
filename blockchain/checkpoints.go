@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
-	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 )
 
 // CheckpointConfirmations is the number of blocks before the end of the current
@@ -167,13 +166,14 @@ func (b *BlockChain) findPreviousCheckpoint() (*blockNode, error) {
 	return b.checkpointNode, nil
 }
 
-// isNonstandardTransaction determines whether a transaction contains any
-// scripts which are not one of the standard types.
+// isNonstandardTransaction determines whether a transaction contains an
+// output address or covenant type that is not currently defined by Handshake.
 func isNonstandardTransaction(tx *hnsutil.Tx) bool {
-	// Check all of the output public key scripts for non-standard scripts.
 	for _, txOut := range tx.MsgTx().TxOut {
-		scriptClass := txscript.GetScriptClass(txOut.Address.WitnessProgram())
-		if scriptClass == txscript.NonStandardTy {
+		if txOut.Address.IsUnknown() {
+			return true
+		}
+		if !txOut.Address.IsNulldata() && txOut.Covenant.IsUnknown() {
 			return true
 		}
 	}

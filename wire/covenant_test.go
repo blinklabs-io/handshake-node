@@ -258,6 +258,122 @@ func TestCovenantKnownUnknown(t *testing.T) {
 	}
 }
 
+func TestCovenantPolicyClasses(t *testing.T) {
+	tests := []struct {
+		name        string
+		typ         uint8
+		dustworthy  bool
+		unspendable bool
+	}{
+		{name: "NONE", typ: CovenantNone, dustworthy: true},
+		{name: "CLAIM", typ: CovenantClaim},
+		{name: "OPEN", typ: CovenantOpen},
+		{name: "BID", typ: CovenantBid, dustworthy: true},
+		{name: "REVEAL", typ: CovenantReveal},
+		{name: "REDEEM", typ: CovenantRedeem},
+		{name: "REGISTER", typ: CovenantRegister},
+		{name: "UPDATE", typ: CovenantUpdate},
+		{name: "RENEW", typ: CovenantRenew},
+		{name: "TRANSFER", typ: CovenantTransfer},
+		{name: "FINALIZE", typ: CovenantFinalize},
+		{name: "REVOKE", typ: CovenantRevoke, unspendable: true},
+		{
+			name:       "unknown",
+			typ:        CovenantRevoke + 1,
+			dustworthy: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			covenant := NewCovenant(test.typ, nil)
+			if got := covenant.IsDustworthy(); got != test.dustworthy {
+				t.Fatalf("IsDustworthy() = %v, want %v", got,
+					test.dustworthy)
+			}
+			if got := covenant.IsUnspendable(); got != test.unspendable {
+				t.Fatalf("IsUnspendable() = %v, want %v", got,
+					test.unspendable)
+			}
+		})
+	}
+}
+
+func TestAddressNativeClasses(t *testing.T) {
+	tests := []struct {
+		name        string
+		address     Address
+		unknown     bool
+		nulldata    bool
+		unspendable bool
+	}{
+		{
+			name:    "version 0 pubkey hash",
+			address: Address{Version: 0, Hash: make([]byte, 20)},
+		},
+		{
+			name:    "version 0 script hash",
+			address: Address{Version: 0, Hash: make([]byte, 32)},
+		},
+		{
+			name:    "version 0 invalid length",
+			address: Address{Version: 0, Hash: make([]byte, 2)},
+			unknown: true,
+		},
+		{
+			name:    "reserved version 1",
+			address: Address{Version: 1, Hash: make([]byte, 20)},
+			unknown: true,
+		},
+		{
+			name:    "reserved version 16",
+			address: Address{Version: 16, Hash: make([]byte, 20)},
+			unknown: true,
+		},
+		{
+			name:    "reserved version 17",
+			address: Address{Version: 17, Hash: make([]byte, 20)},
+			unknown: true,
+		},
+		{
+			name:    "reserved version 30",
+			address: Address{Version: 30, Hash: make([]byte, 20)},
+			unknown: true,
+		},
+		{
+			name:        "version 31 nulldata",
+			address:     Address{Version: 31, Hash: make([]byte, 2)},
+			nulldata:    true,
+			unspendable: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.address.IsUnknown(); got != test.unknown {
+				t.Fatalf("IsUnknown() = %v, want %v", got, test.unknown)
+			}
+			if got := test.address.IsNulldata(); got != test.nulldata {
+				t.Fatalf("IsNulldata() = %v, want %v", got, test.nulldata)
+			}
+			if got := test.address.IsUnspendable(); got != test.unspendable {
+				t.Fatalf("IsUnspendable() = %v, want %v", got,
+					test.unspendable)
+			}
+		})
+	}
+
+	for version := uint8(1); version < maxAddressVersion; version++ {
+		address := Address{Version: version, Hash: make([]byte, 20)}
+		if !address.IsUnknown() {
+			t.Fatalf("reserved version %d should be unknown", version)
+		}
+		if address.IsNulldata() || address.IsUnspendable() {
+			t.Fatalf("reserved version %d should remain spendable", version)
+		}
+	}
+}
+
 // TestAddressEncodeDecode tests round-trip encoding and decoding of addresses
 // with both 20-byte and 32-byte hashes at version 0.
 func TestAddressEncodeDecode(t *testing.T) {

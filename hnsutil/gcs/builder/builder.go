@@ -339,8 +339,7 @@ func BuildBasicFilter(block *wire.MsgBlock, prevOutKeys [][]byte) (*gcs.Filter, 
 }
 
 func isCommitmentOutput(txOut *wire.TxOut) bool {
-	if txOut.Address.Version == 31 ||
-		txOut.Covenant.Type == wire.CovenantRevoke {
+	if txOut.Address.IsUnspendable() || txOut.Covenant.IsUnspendable() {
 		return true
 	}
 
