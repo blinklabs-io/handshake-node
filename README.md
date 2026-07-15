@@ -30,7 +30,8 @@ The current release is 0.1.1-rc1, a mainnet release candidate. It includes:
 
 ## Requirements
 
-[Go](https://go.dev/doc/install) 1.25 or newer.
+[Go](https://go.dev/doc/install) 1.26.5 or newer. The module toolchain
+directive automatically selects a patched Go toolchain when supported.
 
 ## Build
 

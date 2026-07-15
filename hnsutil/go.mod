@@ -2,6 +2,8 @@ module github.com/blinklabs-io/handshake-node/hnsutil
 
 go 1.25.0
 
+toolchain go1.26.5
+
 require (
 	github.com/aead/siphash v1.0.1
 	github.com/blinklabs-io/handshake-node v0.0.0-00010101000000-000000000000

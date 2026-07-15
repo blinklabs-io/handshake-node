@@ -2,6 +2,7 @@ PKG := github.com/blinklabs-io/handshake-node
 
 LINT_PKG := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 GOIMPORTS_PKG := golang.org/x/tools/cmd/goimports
+VULNCHECK_PKG := golang.org/x/vuln/cmd/govulncheck
 
 GO_BIN := ${shell go env GOBIN}
 
@@ -12,9 +13,11 @@ endif
 
 LINT_BIN := $(GO_BIN)/golangci-lint
 GOIMPORTS_BIN := $(GO_BIN)/goimports
+VULNCHECK_BIN := $(GO_BIN)/govulncheck
 
 LINT_COMMIT := v2.1.6
 GOIMPORTS_COMMIT := a24facf9e5586c95743d2f4ad15d148c7a8cf00b
+VULNCHECK_COMMIT := v1.6.0
 
 GOBUILD := go build -v
 GOINSTALL := go install -v 
@@ -51,6 +54,10 @@ all: build check
 $(LINT_BIN):
 	@$(call print, "Fetching linter")
 	$(GOINSTALL) $(LINT_PKG)@$(LINT_COMMIT)
+
+$(VULNCHECK_BIN):
+	@$(call print, "Fetching vulnerability scanner")
+	$(GOINSTALL) $(VULNCHECK_PKG)@$(VULNCHECK_COMMIT)
 
 #? goimports: Install goimports
 goimports:
@@ -123,6 +130,13 @@ integration:
 	@$(call print, "Running tagged RPC integration tests.")
 	$(GOTEST_DEV) ./integration -count=1 -test.timeout=20m
 
+#? vuln: Check all modules for reachable known vulnerabilities
+vuln: $(VULNCHECK_BIN)
+	@$(call print, "Checking for reachable known vulnerabilities.")
+	$(VULNCHECK_BIN) ./...
+	cd hnsutil && $(VULNCHECK_BIN) ./...
+	cd hnsutil/psbt && $(VULNCHECK_BIN) ./...
+
 #? hsd-interop: Run live protocol tests against pinned hsd (requires HSD_DIR)
 hsd-interop:
 	@$(call print, "Running live hsd interoperability protocol tests.")
@@ -167,6 +181,7 @@ tidy-module:
 	unit-cover \
 	unit-race \
 	integration \
+	vuln \
 	hsd-interop \
 	hnsparity \
 	fmt \
