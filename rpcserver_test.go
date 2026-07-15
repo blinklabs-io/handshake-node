@@ -399,6 +399,46 @@ func (m *testRPCConnManager) LocalAddresses() []rpcserverLocalAddress {
 	return m.localAddresses
 }
 
+func TestHandleGetTxOutUsesAtomicMempoolFetch(t *testing.T) {
+	server, _ := newGBTTestRPCServer(t, &gbtTestTxSource{})
+
+	msgTx := wire.NewMsgTx(1)
+	msgTx.AddTxOut(wire.NewTxOut(
+		hnsutil.DooPerHNS,
+		wire.Address{Version: 0, Hash: make([]byte, 20)},
+		wire.Covenant{},
+	))
+	tx := hnsutil.NewTx(msgTx)
+	txHash := tx.Hash()
+	cmd := hnsjson.NewGetTxOutCmd(txHash.String(), 0, hnsjson.Bool(true))
+
+	t.Run("mempool hit", func(t *testing.T) {
+		mockPool := &mempool.MockTxMempool{}
+		mockPool.On("FetchTransaction", txHash).Return(tx, nil).Once()
+		server.cfg.TxMemPool = mockPool
+
+		result, err := handleGetTxOut(server, cmd, nil)
+		require.NoError(t, err)
+		reply, ok := result.(*hnsjson.GetTxOutResult)
+		require.True(t, ok)
+		require.Equal(t, int64(0), reply.Confirmations)
+		require.Equal(t, float64(1), reply.Value)
+		mockPool.AssertExpectations(t)
+	})
+
+	t.Run("concurrent removal falls back to chain", func(t *testing.T) {
+		mockPool := &mempool.MockTxMempool{}
+		mockPool.On("FetchTransaction", txHash).
+			Return(nil, errors.New("transaction is not in the pool")).Once()
+		server.cfg.TxMemPool = mockPool
+
+		result, err := handleGetTxOut(server, cmd, nil)
+		require.NoError(t, err)
+		require.Nil(t, result)
+		mockPool.AssertExpectations(t)
+	})
+}
+
 func TestGetNetworkInfo(t *testing.T) {
 	oldCfg := cfg
 	cfg = &config{

@@ -4321,15 +4321,19 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	if c.IncludeMempool != nil {
 		includeMempool = *c.IncludeMempool
 	}
-	// TODO: This is racy.  It should attempt to fetch it directly and check
-	// the error.
-	if includeMempool && s.cfg.TxMemPool.HaveTransaction(txHash) {
-		tx, err := s.cfg.TxMemPool.FetchTransaction(txHash)
-		if err != nil {
-			return nil, rpcNoTxInfoError(txHash)
+	var mempoolTx *hnsutil.Tx
+	if includeMempool {
+		// FetchTransaction performs the lookup while holding the mempool's
+		// read lock.  A failed lookup is not an RPC error because the
+		// transaction may have been mined or removed; fall back to the chain
+		// UTXO view below.
+		tx, fetchErr := s.cfg.TxMemPool.FetchTransaction(txHash)
+		if fetchErr == nil {
+			mempoolTx = tx
 		}
-
-		mtx := tx.MsgTx()
+	}
+	if mempoolTx != nil {
+		mtx := mempoolTx.MsgTx()
 		if c.Vout > uint32(len(mtx.TxOut)-1) {
 			return nil, &hnsjson.RPCError{
 				Code: hnsjson.ErrRPCInvalidTxVout,
