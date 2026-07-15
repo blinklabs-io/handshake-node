@@ -9,6 +9,7 @@ import (
 	"errors"
 	"math"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -604,6 +605,60 @@ func TestHnsMsgGetHeadersDecodeErrors(t *testing.T) {
 	locator := hashOfBytes(0x11)
 	if err := msg.Decode(append([]byte{0x01}, locator[:]...)); err == nil {
 		t.Fatal("expected error for locator count without stop hash")
+	}
+}
+
+func TestHnsMsgLocatorLimitMatchesHsd(t *testing.T) {
+	if MaxBlockLocatorsPerMsg != 50000 {
+		t.Fatalf("locator limit: got %d, want hsd MAX_INV 50000",
+			MaxBlockLocatorsPerMsg)
+	}
+
+	prefix := hnsWriteUvarint(uint64(MaxBlockLocatorsPerMsg))
+	payload := make([]byte,
+		len(prefix)+(MaxBlockLocatorsPerMsg*chainhash.HashSize)+chainhash.HashSize)
+	copy(payload, prefix)
+
+	tests := []struct {
+		name   string
+		decode func([]byte) (int, error)
+	}{
+		{
+			name: "getblocks",
+			decode: func(data []byte) (int, error) {
+				var msg HnsMsgGetBlocks
+				err := msg.Decode(data)
+				return len(msg.Locator), err
+			},
+		},
+		{
+			name: "getheaders",
+			decode: func(data []byte) (int, error) {
+				var msg HnsMsgGetHeaders
+				err := msg.Decode(data)
+				return len(msg.Locator), err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotLen, err := test.decode(payload)
+			if err != nil {
+				t.Fatalf("decode maximum locator payload: %v", err)
+			}
+			if gotLen != MaxBlockLocatorsPerMsg {
+				t.Fatalf("decoded locators: got %d, want %d",
+					gotLen, MaxBlockLocatorsPerMsg)
+			}
+
+			overLimit := hnsWriteUvarint(uint64(MaxBlockLocatorsPerMsg + 1))
+			if _, err := test.decode(overLimit); err == nil ||
+				!strings.Contains(err.Error(), "exceeds maximum") {
+
+				t.Fatalf("over-limit error: got %v", err)
+			}
+		})
 	}
 }
 

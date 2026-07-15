@@ -49,7 +49,7 @@ func TestGetBlocks(t *testing.T) {
 	// Ensure max payload is expected value for latest protocol version.
 	// Protocol version 4 bytes + num hashes (varInt) + max block locator
 	// hashes + hash stop.
-	wantPayload := uint32(16045)
+	wantPayload := uint32(1600045)
 	maxPayload := msg.MaxPayloadLength(pver)
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -332,7 +332,7 @@ func TestGetBlocksWireErrors(t *testing.T) {
 		&mainNetGenesisHash)
 	maxGetBlocksEncoded := []byte{
 		0x62, 0xea, 0x00, 0x00, // Protocol version 60002
-		0xfd, 0xf5, 0x01, // Varint for number of block loc hashes (501)
+		0xfd, 0x51, 0xc3, // Varint for number of block loc hashes (50001)
 	}
 
 	tests := []struct {

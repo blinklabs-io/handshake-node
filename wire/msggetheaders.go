@@ -139,7 +139,6 @@ func (msg *MsgGetHeaders) MaxPayloadLength(pver uint32) uint32 {
 // the Message interface.  See MsgGetHeaders for details.
 func NewMsgGetHeaders() *MsgGetHeaders {
 	return &MsgGetHeaders{
-		BlockLocatorHashes: make([]*chainhash.Hash, 0,
-			MaxBlockLocatorsPerMsg),
+		BlockLocatorHashes: make([]*chainhash.Hash, 0, 32),
 	}
 }

@@ -12,8 +12,9 @@ import (
 )
 
 // MaxBlockLocatorsPerMsg is the maximum number of block locator hashes allowed
-// per message.
-const MaxBlockLocatorsPerMsg = 500
+// per message by the Handshake protocol.  hsd applies the same limit used for
+// inventory messages.
+const MaxBlockLocatorsPerMsg = MaxInvPerMsg
 
 // MsgGetBlocks implements the Message interface and represents a bitcoin
 // getblocks message.  It is used to request a list of blocks starting after the
@@ -142,7 +143,7 @@ func (msg *MsgGetBlocks) MaxPayloadLength(pver uint32) uint32 {
 func NewMsgGetBlocks(hashStop *chainhash.Hash) *MsgGetBlocks {
 	return &MsgGetBlocks{
 		ProtocolVersion:    ProtocolVersion,
-		BlockLocatorHashes: make([]*chainhash.Hash, 0, MaxBlockLocatorsPerMsg),
+		BlockLocatorHashes: make([]*chainhash.Hash, 0, 32),
 		HashStop:           *hashStop,
 	}
 }

@@ -731,6 +731,12 @@ func (m *HnsMsgGetBlocks) Decode(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("getblocks: locator count: %w", err)
 	}
+	if count > MaxBlockLocatorsPerMsg {
+		return fmt.Errorf(
+			"getblocks: locator count %d exceeds maximum %d",
+			count, MaxBlockLocatorsPerMsg,
+		)
+	}
 	data = data[bytesRead:]
 	if len(data) < 32 {
 		return fmt.Errorf("getblocks: payload missing stop hash")
@@ -804,6 +810,12 @@ func (m *HnsMsgGetHeaders) Decode(data []byte) error {
 	count, bytesRead, err := hnsReadUvarint(data)
 	if err != nil {
 		return fmt.Errorf("getheaders: locator count: %w", err)
+	}
+	if count > MaxBlockLocatorsPerMsg {
+		return fmt.Errorf(
+			"getheaders: locator count %d exceeds maximum %d",
+			count, MaxBlockLocatorsPerMsg,
+		)
 	}
 	data = data[bytesRead:]
 	if len(data) < 32 {
