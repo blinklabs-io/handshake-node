@@ -148,6 +148,15 @@ type BlockChain struct {
 	// It is protected by the chain lock.
 	nameRootCache *nameRootCache
 
+	// nameProofCache stores the immutable Urkel tree for the most recently
+	// requested committed root.  The separate mutex serializes the initial
+	// reconstruction so concurrent proof requests cannot trigger duplicate
+	// full name-state scans.
+	nameProofCacheMtx   sync.Mutex
+	nameProofCacheRoot  chainhash.Hash
+	nameProofCacheTree  urkelNode
+	nameProofCacheValid bool
+
 	// These fields are related to handling of orphan blocks.  They are
 	// protected by a combination of the chain lock and the orphan lock.
 	orphanLock   sync.RWMutex
