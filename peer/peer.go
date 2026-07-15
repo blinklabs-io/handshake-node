@@ -1404,7 +1404,7 @@ out:
 			// matches bitcoind's behavior and is necessary since
 			// compact blocks negotiation occurs after the
 			// handshake.
-			if err == wire.ErrUnknownMessage {
+			if errors.Is(err, wire.ErrUnknownMessage) {
 				log.Debugf("Received unknown message from %s:"+
 					" %v", p, err)
 				idleTimer.Reset(idleTimeout)
@@ -2176,7 +2176,7 @@ func (p *Peer) waitToFinishNegotiation(_ uint32) error {
 
 	for {
 		remoteMsg, _, err := p.readMessage(wire.LatestEncoding, false)
-		if err == wire.ErrUnknownMessage {
+		if errors.Is(err, wire.ErrUnknownMessage) {
 			continue
 		} else if err != nil {
 			return err
@@ -2205,7 +2205,7 @@ func (p *Peer) readRemoteVersionAllowingEarlyVerAck() error {
 
 	for {
 		remoteMsg, _, err := p.readMessage(wire.LatestEncoding, false)
-		if err == wire.ErrUnknownMessage {
+		if errors.Is(err, wire.ErrUnknownMessage) {
 			continue
 		} else if err != nil {
 			return err
