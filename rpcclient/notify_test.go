@@ -64,7 +64,7 @@ func TestParseNameUpdatedNtfnParams(t *testing.T) {
 	}
 }
 
-func TestRawHashStringUsesHandshakeByteOrder(t *testing.T) {
+func TestHashStringUsesHandshakeByteOrder(t *testing.T) {
 	t.Parallel()
 
 	var hash chainhash.Hash
@@ -73,9 +73,6 @@ func TestRawHashStringUsesHandshakeByteOrder(t *testing.T) {
 	}
 	want := hex.EncodeToString(hash[:])
 
-	if got := rawHashString(hash); got != want {
-		t.Fatalf("rawHashString = %q, want %q", got, want)
-	}
 	if got := hash.String(); got != want {
 		t.Fatalf("Hash.String = %q, want native-order %q", got, want)
 	}
