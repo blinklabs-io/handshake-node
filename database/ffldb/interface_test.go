@@ -14,104 +14,26 @@ package ffldb_test
 
 import (
 	"bytes"
-	"compress/bzip2"
-	"encoding/binary"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 var (
-	// blockDataNet is the expected network in the test block data.
+	// blockDataNet is the network used by the external database tests.
 	blockDataNet = wire.MainNet
-
-	// blockDataFile is the path to a file containing the first 256 blocks
-	// of the block chain.
-	blockDataFile = filepath.Join("..", "testdata", "blocks1-256.bz2")
 
 	// errSubTestFail is used to signal that a sub test returned false.
 	errSubTestFail = fmt.Errorf("sub test failure")
 )
-
-// loadBlocks loads the blocks contained in the testdata directory and returns
-// a slice of them.
-func loadBlocks(t *testing.T, dataFile string, network wire.BitcoinNet) ([]*hnsutil.Block, error) {
-	// Open the file that contains the blocks for reading.
-	fi, err := os.Open(dataFile)
-	if err != nil {
-		t.Errorf("failed to open file %v, err %v", dataFile, err)
-		return nil, err
-	}
-	defer func() {
-		if err := fi.Close(); err != nil {
-			t.Errorf("failed to close file %v %v", dataFile,
-				err)
-		}
-	}()
-	dr := bzip2.NewReader(fi)
-
-	// Set the first block as the genesis block.
-	blocks := make([]*hnsutil.Block, 0, 256)
-	genesis := hnsutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
-	blocks = append(blocks, genesis)
-
-	// Load the remaining blocks.
-	for height := 1; ; height++ {
-		var net uint32
-		err := binary.Read(dr, binary.LittleEndian, &net)
-		if err == io.EOF {
-			// Hit end of file at the expected offset.  No error.
-			break
-		}
-		if err != nil {
-			t.Errorf("Failed to load network type for block %d: %v",
-				height, err)
-			return nil, err
-		}
-		if net != uint32(network) {
-			t.Errorf("Block doesn't match network: %v expects %v",
-				net, network)
-			return nil, err
-		}
-
-		var blockLen uint32
-		err = binary.Read(dr, binary.LittleEndian, &blockLen)
-		if err != nil {
-			t.Errorf("Failed to load block size for block %d: %v",
-				height, err)
-			return nil, err
-		}
-
-		// Read the block.
-		blockBytes := make([]byte, blockLen)
-		_, err = io.ReadFull(dr, blockBytes)
-		if err != nil {
-			t.Errorf("Failed to load block %d: %v", height, err)
-			return nil, err
-		}
-
-		// Deserialize and store the block.
-		block, err := hnsutil.NewBlockFromBytes(blockBytes)
-		if err != nil {
-			t.Errorf("Failed to parse block %v: %v", height, err)
-			return nil, err
-		}
-		blocks = append(blocks, block)
-	}
-
-	return blocks, nil
-}
 
 // checkDbError ensures the passed error is a database.Error with an error code
 // that matches the passed  error code.
@@ -2260,12 +2182,7 @@ func testInterface(t *testing.T, db database.DB) {
 
 	// Load the test blocks and store in the test context for use throughout
 	// the tests.
-	blocks, err := loadBlocks(t, blockDataFile, blockDataNet)
-	if err != nil {
-		t.Errorf("loadBlocks: Unexpected error: %v", err)
-		return
-	}
-	context.blocks = blocks
+	context.blocks = ffldb.TstHandshakeBlocks(t)
 
 	// Test the transaction metadata interface including managed and manual
 	// transactions as well as buckets.
