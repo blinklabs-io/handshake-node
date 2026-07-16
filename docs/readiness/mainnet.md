@@ -31,8 +31,11 @@ HSD_DIR=/tmp/hsd-v8 make hsd-interop
 ```
 
 The gate verifies the hsd source commit and refuses modified tracked source
-before launching an isolated regtest node. Full pinned-hsd relay, reorg, and
-recovery orchestration remains a release blocker until its harness lands.
+before launching isolated regtest nodes. It covers plaintext and Brontide
+handshakes, block relay from hsd, a 32-block competing-branch reorg, a clean
+restart, a forced termination, and continued synchronization from the same
+datadir. Malformed-packet orchestration, pruning, index rebuilds, and explicit
+database corruption recovery remain release blockers.
 
 ## Manual parity run
 
@@ -81,9 +84,8 @@ pruned node and after rebuilding enabled indexes. A release also requires a
 
 - Handshake-native fixtures must replace inherited Bitcoin fixtures and skips
   in consensus, storage, mempool, script, and P2P integration packages.
-- A deterministic hsd regtest harness must cover both transports, relay,
-  competing branches, deep reorgs, malformed packets, restarts, pruning, index
-  rebuilds, and database recovery in CI.
+- Extend the deterministic hsd regtest harness with malformed packets, pruning,
+  index rebuilds, and explicit database corruption recovery in CI.
 - A clean mainnet parity run, interrupted/resumed parity run, and 72-hour soak
   must complete with zero mismatch or corruption.
 
