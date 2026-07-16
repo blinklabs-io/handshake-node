@@ -186,9 +186,11 @@ func (p *malformedProcess) runningError() error {
 
 func TestPinnedHsdMalformedPeerRecovery(t *testing.T) {
 	hsdDir := requirePinnedHsd(t)
-	ports, releasePorts := reserveLoopbackPorts(t, 5)
-	hsdP2PPort, hsdBrontidePort, hsdHTTPPort := ports[0], ports[1], ports[2]
-	nodeP2PPort, nodeRPCPort := ports[3], ports[4]
+	hsdPorts, releaseHsdPorts := reserveLoopbackPorts(t, 3)
+	hsdP2PPort, hsdBrontidePort, hsdHTTPPort := hsdPorts[0], hsdPorts[1],
+		hsdPorts[2]
+	nodePorts, releaseNodePorts := reserveLoopbackPorts(t, 2)
+	nodeP2PPort, nodeRPCPort := nodePorts[0], nodePorts[1]
 
 	testDir := t.TempDir()
 	nodeBinary := buildMalformedTestNode(t, testDir)
@@ -231,7 +233,7 @@ func TestPinnedHsdMalformedPeerRecovery(t *testing.T) {
 		"--debuglevel=debug",
 	}
 
-	releasePorts()
+	releaseHsdPorts()
 	hsd.start(t, exec.Command("node", hsdArgs...))
 
 	hsdRPC := &malformedRPCClient{
@@ -248,6 +250,7 @@ func TestPinnedHsdMalformedPeerRecovery(t *testing.T) {
 	t.Cleanup(nodeRPC.closeIdleConnections)
 
 	waitForMalformedRPC(t, hsdRPC, hsd, 15*time.Second)
+	releaseNodePorts()
 	node.start(t, exec.Command(nodeBinary, nodeArgs...))
 	waitForMalformedRPC(t, nodeRPC, node, 30*time.Second)
 	waitForMalformedHealthyPeer(t, nodeRPC, node, 20*time.Second)
