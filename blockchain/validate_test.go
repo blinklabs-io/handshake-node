@@ -242,10 +242,9 @@ func TestHandshakeLockTimeTransactionFinality(t *testing.T) {
 	}
 }
 
-// TestCheckConnectBlockTemplate tests the CheckConnectBlockTemplate function to
-// ensure it fails.
+// TestCheckConnectBlockTemplate tests the CheckConnectBlockTemplate function
+// against valid and invalid Handshake block templates.
 func TestCheckConnectBlockTemplate(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
 	// Create a new database and chain instance to run tests against.
 	chain, teardownFunc, err := chainSetup("checkconnectblocktemplate",
 		&chaincfg.MainNetParams)
@@ -259,22 +258,8 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 	// maturity to 1.
 	chain.TstSetCoinbaseMaturity(1)
 
-	// Load up blocks such that there is a side chain.
-	// (genesis block) -> 1 -> 2 -> 3 -> 4
-	//                          \-> 3a
-	testFiles := []string{
-		"blk_0_to_4.dat.bz2",
-		"blk_3A.dat.bz2",
-	}
-
-	var blocks []*hnsutil.Block
-	for _, file := range testFiles {
-		blockTmp, err := loadBlocks(file)
-		if err != nil {
-			t.Fatalf("Error loading file: %v\n", err)
-		}
-		blocks = append(blocks, blockTmp...)
-	}
+	blocks := loadHandshakeRawBlocks(t, "block_0.raw", "block_1.raw",
+		"block_2.raw", "block_3.raw", "block_4.raw")
 
 	for i := 1; i <= 3; i++ {
 		isMainChain, _, err := chain.ProcessBlock(blocks[i], BFNone)
@@ -291,7 +276,7 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 	// Block 3 should fail to connect since it's already inserted.
 	err = chain.CheckConnectBlockTemplate(blocks[3])
 	if err == nil {
-		t.Fatal("CheckConnectBlockTemplate: Did not received expected error " +
+		t.Fatal("CheckConnectBlockTemplate: did not receive expected error " +
 			"on block 3")
 	}
 
@@ -302,10 +287,13 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 			"block 4: %v", err)
 	}
 
-	// Block 3a should fail to connect since does not build on chain tip.
-	err = chain.CheckConnectBlockTemplate(blocks[5])
+	// A competing block at height 3 should fail to connect since it does
+	// not build on the current chain tip.
+	sideMsgBlock := blocks[3].MsgBlock().Copy()
+	sideMsgBlock.Header.Nonce++
+	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(sideMsgBlock))
 	if err == nil {
-		t.Fatal("CheckConnectBlockTemplate: Did not received expected error " +
+		t.Fatal("CheckConnectBlockTemplate: did not receive expected error " +
 			"on block 3a")
 	}
 
@@ -323,7 +311,7 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 	invalidBlock.Header.Bits--
 	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(&invalidBlock))
 	if err == nil {
-		t.Fatal("CheckConnectBlockTemplate: Did not received expected error " +
+		t.Fatal("CheckConnectBlockTemplate: did not receive expected error " +
 			"on block 4 with invalid difficulty bits")
 	}
 }
@@ -331,22 +319,24 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 // TestCheckBlockSanity tests the CheckBlockSanity function to ensure it works
 // as expected.
 func TestCheckBlockSanity(t *testing.T) {
-	t.Skip("Skipping: Block100000 is a Bitcoin block whose PoW hash doesn't meet difficulty; needs Handshake test fixtures")
 	powLimit := chaincfg.MainNetParams.PowLimit
-	block := hnsutil.NewBlock(&Block100000)
+	block := loadHandshakeRawBlock(t, "block_4.raw")
 	timeSource := NewMedianTime()
 	err := CheckBlockSanity(block, powLimit, timeSource)
 	if err != nil {
-		t.Errorf("CheckBlockSanity: %v", err)
+		t.Fatalf("CheckBlockSanity: %v", err)
 	}
 
 	// Ensure a block that has a timestamp with a precision higher than one
 	// second fails.
-	timestamp := block.MsgBlock().Header.Timestamp
-	block.MsgBlock().Header.Timestamp = timestamp.Add(time.Nanosecond)
-	err = CheckBlockSanity(block, powLimit, timeSource)
+	invalidTimeMsgBlock := block.MsgBlock().Copy()
+	invalidTimeMsgBlock.Header.Timestamp =
+		invalidTimeMsgBlock.Header.Timestamp.Add(time.Nanosecond)
+	err = CheckBlockSanity(hnsutil.NewBlock(invalidTimeMsgBlock), powLimit,
+		timeSource)
 	if err == nil {
-		t.Errorf("CheckBlockSanity: error is nil when it shouldn't be")
+		t.Fatal("CheckBlockSanity: error is nil when it should reject " +
+			"sub-second timestamp precision")
 	}
 }
 

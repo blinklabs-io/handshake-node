@@ -20,26 +20,20 @@ import (
 
 // TestHaveBlock tests the HaveBlock API to ensure proper functionality.
 func TestHaveBlock(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
-
 	// Load up blocks such that there is a side chain.
 	// We'll only process the header for block 4.
 	// (genesis block) -> 1 -> 2 -> 3 -> 4
 	//                          \-> 3a
-	testFiles := []string{
-		"blk_0_to_4.dat.bz2",
-		"blk_3A.dat.bz2",
-	}
+	blocks := loadHandshakeRawBlocks(t, "block_0.raw", "block_1.raw",
+		"block_2.raw", "block_3.raw", "block_4.raw")
+	sideMsgBlock := blocks[3].MsgBlock().Copy()
+	sideMsgBlock.Header.Nonce++
+	sideBlock := hnsutil.NewBlock(sideMsgBlock)
 
-	var blocks []*hnsutil.Block
-	for _, file := range testFiles {
-		blockTmp, err := loadBlocks(file)
-		if err != nil {
-			t.Errorf("Error loading file: %v\n", err)
-			return
-		}
-		blocks = append(blocks, blockTmp...)
-	}
+	orphanMsgBlock := blocks[4].MsgBlock().Copy()
+	orphanMsgBlock.Header.PrevBlock = chainhash.Hash{0xff}
+	orphanMsgBlock.Header.Nonce++
+	orphanBlock := hnsutil.NewBlock(orphanMsgBlock)
 
 	// Create a new database and chain instance to run tests against.
 	chain, teardownFunc, err := chainSetup("haveblock",
@@ -54,12 +48,9 @@ func TestHaveBlock(t *testing.T) {
 	// maturity to 1.
 	chain.TstSetCoinbaseMaturity(1)
 
-	// We want to process just the header for block 4.
-	block4Hash := newHashFromStr("000000002f264d6504013e73b9c913de9098d4d771c1bb219af475d2a01b128e")
-
 	for i := 1; i < len(blocks); i++ {
 		// Add just the header for the block 4.
-		if blocks[i].Hash().IsEqual(block4Hash) {
+		if i == 4 {
 
 			isMainChain, err := chain.ProcessBlockHeader(
 				&blocks[i].MsgBlock().Header, BFNone, false)
@@ -77,68 +68,80 @@ func TestHaveBlock(t *testing.T) {
 			continue
 		}
 
-		_, isOrphan, err := chain.ProcessBlock(blocks[i], BFNone)
+		isMainChain, isOrphan, err := chain.ProcessBlock(blocks[i], BFNone)
 		if err != nil {
-			t.Errorf("ProcessBlock fail on block %v: %v\n", i, err)
-			return
+			t.Fatalf("ProcessBlock fail on block %v: %v", i, err)
+		}
+		if !isMainChain {
+			t.Fatalf("ProcessBlock incorrectly returned block %v is a "+
+				"side-chain", i)
 		}
 		if isOrphan {
-			t.Errorf("ProcessBlock incorrectly returned block %v "+
-				"is an orphan\n", i)
-			return
+			t.Fatalf("ProcessBlock incorrectly returned block %v "+
+				"is an orphan", i)
 		}
+	}
+
+	// Insert a side-chain block.
+	isMainChain, isOrphan, err := chain.ProcessBlock(sideBlock, BFNoPoWCheck)
+	if err != nil {
+		t.Fatalf("Unable to process side-chain block: %v", err)
+	}
+	if isMainChain {
+		t.Fatal("ProcessBlock indicated side-chain block is on main chain")
+	}
+	if isOrphan {
+		t.Fatal("ProcessBlock indicated side-chain block is an orphan")
 	}
 
 	// Insert an orphan block.
-	_, isOrphan, err := chain.ProcessBlock(hnsutil.NewBlock(&Block100000),
-		BFNone)
+	_, isOrphan, err = chain.ProcessBlock(orphanBlock, BFNoPoWCheck)
 	if err != nil {
-		t.Errorf("Unable to process block: %v", err)
-		return
+		t.Fatalf("Unable to process orphan block: %v", err)
 	}
 	if !isOrphan {
-		t.Errorf("ProcessBlock indicated block is an not orphan when " +
-			"it should be\n")
-		return
+		t.Fatal("ProcessBlock indicated orphan block is not an orphan")
 	}
 
 	tests := []struct {
-		hash string
+		name string
+		hash *chainhash.Hash
 		want bool
 	}{
 		// Genesis block should be present (in the main chain).
-		{hash: chaincfg.MainNetParams.GenesisHash.String(), want: true},
+		{
+			name: "genesis on main chain",
+			hash: chaincfg.MainNetParams.GenesisHash,
+			want: true,
+		},
 
 		// Block 3a should be present (on a side chain).
-		{hash: "00000000474284d20067a4d33f6a02284e6ef70764a3a26d6a5b9df52ef663dd", want: true},
+		{name: "side-chain block", hash: sideBlock.Hash(), want: true},
 
 		// Block 4 shouldn't be present as we only have its header.
-		{hash: "000000002f264d6504013e73b9c913de9098d4d771c1bb219af475d2a01b128e", want: false},
+		{name: "header-only block", hash: blocks[4].Hash(), want: false},
 
-		// Block 100000 should be present (as an orphan).
-		{hash: "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506", want: true},
+		// The orphan block should be present.
+		{name: "orphan block", hash: orphanBlock.Hash(), want: true},
 
 		// Random hashes should not be available.
-		{hash: "123", want: false},
+		{
+			name: "unknown block",
+			hash: &chainhash.Hash{0x12, 0x03},
+			want: false,
+		},
 	}
 
-	for i, test := range tests {
-		hash, err := chainhash.NewHashFromStr(test.hash)
-		if err != nil {
-			t.Errorf("NewHashFromStr: %v", err)
-			continue
-		}
-
-		result, err := chain.HaveBlock(hash)
-		if err != nil {
-			t.Errorf("HaveBlock #%d unexpected error: %v", i, err)
-			return
-		}
-		if result != test.want {
-			t.Errorf("HaveBlock #%d got %v want %v", i, result,
-				test.want)
-			continue
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := chain.HaveBlock(test.hash)
+			if err != nil {
+				t.Fatalf("HaveBlock unexpected error: %v", err)
+			}
+			if result != test.want {
+				t.Fatalf("HaveBlock got %v want %v", result, test.want)
+			}
+		})
 	}
 }
 

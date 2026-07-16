@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
@@ -23,6 +24,30 @@ import (
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
+
+func loadHandshakeRawBlock(t *testing.T, name string) *hnsutil.Block {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join("testdata", "handshake", name))
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", name, err)
+	}
+	block, err := hnsutil.NewBlockFromBytes(raw)
+	if err != nil {
+		t.Fatalf("NewBlockFromBytes(%s): %v", name, err)
+	}
+	return block
+}
+
+func loadHandshakeRawBlocks(t *testing.T, names ...string) []*hnsutil.Block {
+	t.Helper()
+
+	blocks := make([]*hnsutil.Block, len(names))
+	for i, name := range names {
+		blocks[i] = loadHandshakeRawBlock(t, name)
+	}
+	return blocks
+}
 
 func init() {
 	ffldb.TstSetNoSync(true)
