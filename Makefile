@@ -10,6 +10,8 @@ GO_BIN := ${shell go env GOBIN}
 ifeq ($(GO_BIN),)
 GO_BIN := $(shell go env GOPATH)/bin
 endif
+# Some targets change directories before invoking installed tools.
+GO_BIN := $(abspath $(GO_BIN))
 
 LINT_BIN := $(GO_BIN)/golangci-lint
 GOIMPORTS_BIN := $(GO_BIN)/goimports
@@ -20,7 +22,7 @@ GOIMPORTS_COMMIT := a24facf9e5586c95743d2f4ad15d148c7a8cf00b
 VULNCHECK_COMMIT := v1.6.0
 
 GOBUILD := go build -v
-GOINSTALL := go install -v 
+GOINSTALL := env GOBIN=$(GO_BIN) go install -v
 DEV_TAGS := rpctest
 GOTEST_DEV = go test -p 1 -v -tags=$(DEV_TAGS)
 GOTEST := go test -v
