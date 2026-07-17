@@ -15,7 +15,7 @@ must manage keys, signing, coin selection, and wallet state externally.
 
 ## Current Status
 
-The current release is 0.1.1-rc1, a mainnet release candidate. It includes:
+The current release is 0.2.0-rc1, a mainnet release candidate. It includes:
 
 - Handshake mainnet and regtest chain parameters.
 - Blake2b/SHA3 Handshake proof-of-work and 236-byte block headers.
@@ -26,6 +26,11 @@ The current release is 0.1.1-rc1, a mainnet release candidate. It includes:
   v1 MVP server.
 - Authenticated JSON-RPC, websocket notifications, unsigned covenant
   constructors, `hnsctl`, and `rpcclient` support.
+- hsd-compatible claim and airdrop proof relay, submission RPCs, and expanded
+  operational RPC coverage.
+- Handshake bloom filtering and partial Merkle proofs compatible with hsd.
+- A resumable hsd parity runner and pinned interoperability/recovery tests for
+  mainnet-readiness validation.
 - Full-block Handshake P2P service suitable for cdnsd indexing.
 
 ## Requirements
