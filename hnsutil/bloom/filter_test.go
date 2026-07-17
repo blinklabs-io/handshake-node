@@ -79,8 +79,8 @@ func TestFilterLarge(t *testing.T) {
 	}
 }
 
-// TestFilterLoad ensures loading and unloading filters works, including the
-// wire representation of an empty filter with a non-zero hash count.
+// TestFilterLoad ensures loading and unloading filters preserves the wire
+// representation and follows hsd's zero-hash-function behavior.
 func TestFilterLoad(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -102,24 +102,50 @@ func TestFilterLoad(t *testing.T) {
 			},
 		},
 		{
-			name:   "minimal filter",
-			filter: &wire.MsgFilterLoad{},
+			name: "empty filter without funcs",
+			filter: &wire.MsgFilterLoad{
+				Filter:    []byte{},
+				HashFuncs: 0,
+			},
+			wantMatch: true,
+		},
+		{
+			name: "non-empty filter without funcs",
+			filter: &wire.MsgFilterLoad{
+				Filter:    []byte{0x00},
+				HashFuncs: 0,
+			},
+			wantMatch: true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			wantHashFuncs := test.filter.HashFuncs
 			f := bloom.LoadFilter(test.filter)
 			if !f.IsLoaded() {
 				t.Fatal("filter is not loaded")
 			}
-			if got := f.Matches([]byte("test")); got != test.wantMatch {
-				t.Fatalf("match result = %v, want %v", got, test.wantMatch)
+			for _, data := range [][]byte{nil, []byte("test")} {
+				if got := f.Matches(data); got != test.wantMatch {
+					t.Fatalf(
+						"match result for %x = %v, want %v",
+						data,
+						got,
+						test.wantMatch,
+					)
+				}
+			}
+			if got := f.MsgFilterLoad().HashFuncs; got != wantHashFuncs {
+				t.Fatalf("hash funcs = %d, want preserved value %d", got, wantHashFuncs)
 			}
 
 			f.Unload()
 			if f.IsLoaded() {
 				t.Fatal("filter remains loaded after Unload")
+			}
+			if f.Matches([]byte("test")) {
+				t.Fatal("unloaded filter matched data")
 			}
 		})
 	}
@@ -272,6 +298,27 @@ func TestFilterMatchTxAndUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("multiple matching output outpoints", func(t *testing.T) {
+		multiOutputTx := newTestTx()
+		multiOutputTx.MsgTx().AddTxOut(wire.NewTxOut(
+			2_000_000,
+			wire.Address{Version: 0, Hash: testAddressHash},
+			wire.Covenant{Type: wire.CovenantNone},
+		))
+		f := newTestFilter(wire.BloomUpdateNone)
+		f.Add(testAddressHash)
+		if !f.MatchTxAndUpdate(multiOutputTx) {
+			t.Fatal("native address hash did not match")
+		}
+
+		for i := uint32(0); i < 2; i++ {
+			outpoint := wire.NewOutPoint(multiOutputTx.Hash(), i)
+			if !f.MatchesOutPoint(outpoint) {
+				t.Fatalf("matched output %d outpoint was not added", i)
+			}
+		}
+	})
+
 	t.Run("covenant item", func(t *testing.T) {
 		f := newTestFilter(wire.BloomUpdateNone)
 		f.Add(testRawName)
@@ -356,16 +403,33 @@ func TestFilterReload(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		filter *wire.MsgFilterLoad
+		name      string
+		filter    *wire.MsgFilterLoad
+		wantMatch bool
 	}{
 		{name: "nil filter"},
 		{
-			name: "empty filter",
+			name: "empty filter with funcs",
 			filter: &wire.MsgFilterLoad{
 				Filter:    []byte{},
 				HashFuncs: 3,
 			},
+		},
+		{
+			name: "empty filter without funcs",
+			filter: &wire.MsgFilterLoad{
+				Filter:    []byte{},
+				HashFuncs: 0,
+			},
+			wantMatch: true,
+		},
+		{
+			name: "non-empty filter without funcs",
+			filter: &wire.MsgFilterLoad{
+				Filter:    []byte{0x00},
+				HashFuncs: 0,
+			},
+			wantMatch: true,
 		},
 		{
 			name: "normal filter",
@@ -373,22 +437,33 @@ func TestFilterReload(t *testing.T) {
 				Filter:    []byte{0x00},
 				HashFuncs: 1,
 			},
+			wantMatch: true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			var wantHashFuncs uint32
+			if test.filter != nil {
+				wantHashFuncs = test.filter.HashFuncs
+			}
 			bFilter.Reload(test.filter)
 			if test.filter == nil {
 				if bFilter.MsgFilterLoad() != nil {
 					t.Fatal("expected nil filter")
 				}
+				if bFilter.Matches([]byte("test data")) {
+					t.Fatal("unloaded filter matched data")
+				}
 				return
 			}
 
 			bFilter.Add([]byte("test data"))
-			if len(test.filter.Filter) == 0 && bFilter.Matches([]byte("test data")) {
-				t.Fatal("empty filter matched inserted data")
+			if got := bFilter.Matches([]byte("test data")); got != test.wantMatch {
+				t.Fatalf("match result = %v, want %v", got, test.wantMatch)
+			}
+			if got := bFilter.MsgFilterLoad().HashFuncs; got != wantHashFuncs {
+				t.Fatalf("hash funcs = %d, want preserved value %d", got, wantHashFuncs)
 			}
 		})
 	}
