@@ -10,7 +10,7 @@ concurrency: ${{ github.ref }}
 
 env:
   APPLICATION_NAME: handshake-node
-  GO_VERSION: 1.26.x
+  GO_VERSION: 1.26.5
 
 jobs:
   create-draft-release:

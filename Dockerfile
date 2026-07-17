@@ -1,10 +1,10 @@
-FROM ghcr.io/blinklabs-io/go:1.26.3-1 AS build
+FROM golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS build
 
 WORKDIR /code
 COPY . .
 RUN GOBIN=/out make release-install
 
-FROM alpine:3.21
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 ARG VERSION
 ARG COMMIT_HASH
