@@ -1,4 +1,5 @@
 // Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2026 Blink Labs Software
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -6,8 +7,8 @@ package bloom
 
 import (
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -31,17 +32,16 @@ func (m *merkleBlock) calcTreeWidth(height uint32) uint32 {
 // node position.
 func (m *merkleBlock) calcHash(height, pos uint32) *chainhash.Hash {
 	if height == 0 {
-		return m.allHashes[pos]
+		result := blockchain.HashMerkleLeaf(m.allHashes[pos])
+		return &result
 	}
 
-	var right *chainhash.Hash
 	left := m.calcHash(height-1, pos*2)
+	right := blockchain.HashMerkleEmpty()
 	if pos*2+1 < m.calcTreeWidth(height-1) {
-		right = m.calcHash(height-1, pos*2+1)
-	} else {
-		right = left
+		right = *m.calcHash(height-1, pos*2+1)
 	}
-	res := blockchain.HashMerkleBranches(left, right)
+	res := blockchain.HashMerkleBranches(left, &right)
 	return &res
 }
 
@@ -57,9 +57,14 @@ func (m *merkleBlock) traverseAndBuild(height, pos uint32) {
 	}
 	m.bits = append(m.bits, isParent)
 
-	// When the node is a leaf node or not a parent of a matched node,
-	// append the hash to the list that will be part of the final merkle
-	// block.
+	// A matched leaf is represented by its raw transaction hash.  Every
+	// calculated leaf or internal node uses Handshake's domain-separated mrkl
+	// hashes instead.
+	if height == 0 && isParent != 0x00 {
+		m.finalHashes = append(m.finalHashes, m.allHashes[pos])
+		return
+	}
+
 	if height == 0 || isParent == 0x00 {
 		m.finalHashes = append(m.finalHashes, m.calcHash(height, pos))
 		return

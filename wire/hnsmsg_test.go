@@ -949,6 +949,14 @@ func TestHnsMsgFilterLoadDecodeErrors(t *testing.T) {
 	if err := msg.Decode(payload); err == nil {
 		t.Fatal("expected error for too many hash functions")
 	}
+
+	payload = (&HnsMsgFilterLoad{
+		Filter: []byte{0xaa},
+		Flags:  BloomUpdateP2PubkeyOnly + 1,
+	}).Encode()
+	if err := msg.Decode(payload); err == nil {
+		t.Fatal("expected error for invalid update flag")
+	}
 }
 
 func TestHnsMsgFilterAddRoundTrip(t *testing.T) {
@@ -978,6 +986,33 @@ func TestHnsMsgFilterAddRoundTripEmpty(t *testing.T) {
 	if len(out.Data) != 0 {
 		t.Fatalf("decoded data: got %d bytes, want 0", len(out.Data))
 	}
+}
+
+func TestHnsMsgFilterAddDataLimits(t *testing.T) {
+	t.Run("maximum", func(t *testing.T) {
+		payload := (&HnsMsgFilterAdd{
+			Data: make([]byte, MaxFilterAddDataSize),
+		}).Encode()
+
+		var msg HnsMsgFilterAdd
+		if err := msg.Decode(payload); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if got := len(msg.Data); got != MaxFilterAddDataSize {
+			t.Fatalf("decoded data length = %d, want %d", got, MaxFilterAddDataSize)
+		}
+	})
+
+	t.Run("oversized", func(t *testing.T) {
+		payload := (&HnsMsgFilterAdd{
+			Data: make([]byte, MaxFilterAddDataSize+1),
+		}).Encode()
+
+		var msg HnsMsgFilterAdd
+		if err := msg.Decode(payload); err == nil {
+			t.Fatal("expected error for oversized filter element")
+		}
+	})
 }
 
 func TestHnsMsgFilterAddOnTheWireLayout(t *testing.T) {
