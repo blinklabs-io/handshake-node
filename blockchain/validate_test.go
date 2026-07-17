@@ -273,11 +273,13 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 		}
 	}
 
-	// Block 3 should fail to connect since it's already inserted.
+	// Block 3 should fail to connect because its previous block is no longer
+	// the current chain tip.
 	err = chain.CheckConnectBlockTemplate(blocks[3])
-	if err == nil {
-		t.Fatal("CheckConnectBlockTemplate: did not receive expected error " +
-			"on block 3")
+	if ruleErr, ok := err.(RuleError); !ok ||
+		ruleErr.ErrorCode != ErrPrevBlockNotBest {
+		t.Fatalf("CheckConnectBlockTemplate: block 3 error = %v, "+
+			"want ErrPrevBlockNotBest", err)
 	}
 
 	// Block 4 should connect successfully to tip of chain.
@@ -287,29 +289,19 @@ func TestCheckConnectBlockTemplate(t *testing.T) {
 			"block 4: %v", err)
 	}
 
-	// A competing block at height 3 should fail to connect since it does
-	// not build on the current chain tip.
-	sideMsgBlock := blocks[3].MsgBlock().Copy()
-	sideMsgBlock.Header.Nonce++
-	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(sideMsgBlock))
-	if err == nil {
-		t.Fatal("CheckConnectBlockTemplate: did not receive expected error " +
-			"on block 3a")
-	}
-
 	// Block 4 should connect even if proof of work is invalid.
-	invalidPowBlock := *blocks[4].MsgBlock()
+	invalidPowBlock := blocks[4].MsgBlock().Copy()
 	invalidPowBlock.Header.Nonce++
-	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(&invalidPowBlock))
+	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(invalidPowBlock))
 	if err != nil {
 		t.Fatalf("CheckConnectBlockTemplate: Received unexpected error on "+
 			"block 4 with bad nonce: %v", err)
 	}
 
 	// Invalid block building on chain tip should fail to connect.
-	invalidBlock := *blocks[4].MsgBlock()
+	invalidBlock := blocks[4].MsgBlock().Copy()
 	invalidBlock.Header.Bits--
-	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(&invalidBlock))
+	err = chain.CheckConnectBlockTemplate(hnsutil.NewBlock(invalidBlock))
 	if err == nil {
 		t.Fatal("CheckConnectBlockTemplate: did not receive expected error " +
 			"on block 4 with invalid difficulty bits")
@@ -334,9 +326,10 @@ func TestCheckBlockSanity(t *testing.T) {
 		invalidTimeMsgBlock.Header.Timestamp.Add(time.Nanosecond)
 	err = CheckBlockSanity(hnsutil.NewBlock(invalidTimeMsgBlock), powLimit,
 		timeSource)
-	if err == nil {
-		t.Fatal("CheckBlockSanity: error is nil when it should reject " +
-			"sub-second timestamp precision")
+	if ruleErr, ok := err.(RuleError); !ok ||
+		ruleErr.ErrorCode != ErrInvalidTime {
+		t.Fatalf("CheckBlockSanity: sub-second timestamp error = %v, "+
+			"want ErrInvalidTime", err)
 	}
 }
 
