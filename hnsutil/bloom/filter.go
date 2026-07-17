@@ -1,4 +1,5 @@
 // Copyright (c) 2014-2016 The btcsuite developers
+// Copyright (c) 2026 Blink Labs Software
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -9,9 +10,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
-	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -27,8 +27,8 @@ func minUint32(a, b uint32) uint32 {
 	return b
 }
 
-// Filter defines a bitcoin bloom filter that provides easy manipulation of raw
-// filter data.
+// Filter defines a Handshake bloom filter that provides easy manipulation of
+// raw filter data.
 type Filter struct {
 	mtx           sync.Mutex
 	msgFilterLoad *wire.MsgFilterLoad
@@ -256,60 +256,50 @@ func (bf *Filter) AddOutPoint(outpoint *wire.OutPoint) {
 	bf.mtx.Unlock()
 }
 
-// maybeAddOutpoint potentially adds the passed outpoint to the bloom filter
-// depending on the bloom update flags and the type of the passed public key
-// script.
+// matchesOutput returns true when the filter matches a Handshake output's
+// native address hash or one of its non-empty covenant items.
 //
 // This function MUST be called with the filter lock held.
-func (bf *Filter) maybeAddOutpoint(pkScript []byte, outHash *chainhash.Hash, outIdx uint32) {
-	switch bf.msgFilterLoad.Flags {
-	case wire.BloomUpdateAll:
-		outpoint := wire.NewOutPoint(outHash, outIdx)
-		bf.addOutPoint(outpoint)
-	case wire.BloomUpdateP2PubkeyOnly:
-		class := txscript.GetScriptClass(pkScript)
-		if class == txscript.PubKeyTy || class == txscript.MultiSigTy {
-			outpoint := wire.NewOutPoint(outHash, outIdx)
-			bf.addOutPoint(outpoint)
+func (bf *Filter) matchesOutput(txOut *wire.TxOut) bool {
+	if bf.matches(txOut.Address.Hash) {
+		return true
+	}
+
+	for _, item := range txOut.Covenant.Items {
+		// hsd deliberately excludes empty covenant items from bloom matching.
+		if len(item) != 0 && bf.matches(item) {
+			return true
 		}
 	}
+
+	return false
 }
 
 // matchTxAndUpdate returns true if the bloom filter matches data within the
-// passed transaction, otherwise false is returned.  If the filter does match
-// the passed transaction, it will also update the filter depending on the bloom
-// update flags set via the loaded filter if needed.
+// passed transaction, otherwise false is returned.  When an output matches,
+// its outpoint is added to the filter to match hsd's testAndMaybeUpdate
+// behavior.  hsd retains the legacy update flag on the wire, but does not use
+// it to gate this update.
 //
 // This function MUST be called with the filter lock held.
 func (bf *Filter) matchTxAndUpdate(tx *hnsutil.Tx) bool {
+	txHash := tx.Hash()
+
 	// Check if the filter matches the hash of the transaction.
 	// This is useful for finding transactions when they appear in a block.
-	matched := bf.matches(tx.Hash()[:])
+	matched := bf.matches(txHash[:])
 
-	// Check if the filter matches any data elements in the public key
-	// scripts of any of the outputs.  When it does, add the outpoint that
-	// matched so transactions which spend from the matched transaction are
-	// also included in the filter.  This removes the burden of updating the
-	// filter for this scenario from the client.  It is also more efficient
-	// on the network since it avoids the need for another filteradd message
-	// from the client and avoids some potential races that could otherwise
-	// occur.
+	// Handshake outputs contain a native address hash and covenant items rather
+	// than a Bitcoin public key script.  When either matches, add the outpoint
+	// so a later transaction spending it also matches.  This intentionally
+	// follows hsd for every legacy update-flag value.
 	for i, txOut := range tx.MsgTx().TxOut {
-		script := txOut.Address.WitnessProgram()
-		pushedData, err := txscript.PushedData(script)
-		if err != nil {
+		if !bf.matchesOutput(txOut) {
 			continue
 		}
 
-		for _, data := range pushedData {
-			if !bf.matches(data) {
-				continue
-			}
-
-			matched = true
-			bf.maybeAddOutpoint(script, tx.Hash(), uint32(i))
-			break
-		}
+		matched = true
+		bf.addOutPoint(wire.NewOutPoint(txHash, uint32(i)))
 	}
 
 	// Nothing more to do if a match has already been made.
@@ -317,32 +307,11 @@ func (bf *Filter) matchTxAndUpdate(tx *hnsutil.Tx) bool {
 		return true
 	}
 
-	// At this point, the transaction and none of the data elements in the
-	// public key scripts of its outputs matched.
-
-	// Check if the filter matches any outpoints this transaction spends or
-	// any data elements in the witness of any of the inputs.
+	// hsd only checks serialized previous outpoints on inputs.  Witness stack
+	// items are intentionally not bloom-filter elements.
 	for _, txin := range tx.MsgTx().TxIn {
 		if bf.matchesOutPoint(&txin.PreviousOutPoint) {
 			return true
-		}
-
-		// Match witness data items directly.
-		for _, witItem := range txin.Witness {
-			if bf.matches(witItem) {
-				return true
-			}
-
-			// Also check pushed data within each witness item.
-			pushedData, err := txscript.PushedData(witItem)
-			if err != nil {
-				continue
-			}
-			for _, data := range pushedData {
-				if bf.matches(data) {
-					return true
-				}
-			}
 		}
 	}
 
@@ -350,9 +319,8 @@ func (bf *Filter) matchTxAndUpdate(tx *hnsutil.Tx) bool {
 }
 
 // MatchTxAndUpdate returns true if the bloom filter matches data within the
-// passed transaction, otherwise false is returned.  If the filter does match
-// the passed transaction, it will also update the filter depending on the bloom
-// update flags set via the loaded filter if needed.
+// passed transaction, otherwise false is returned.  If an output matches, its
+// outpoint is also inserted into the filter, matching hsd behavior.
 //
 // This function is safe for concurrent access.
 func (bf *Filter) MatchTxAndUpdate(tx *hnsutil.Tx) bool {

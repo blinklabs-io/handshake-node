@@ -9,23 +9,20 @@ import (
 	"io"
 )
 
-// BloomUpdateType specifies how the filter is updated when a match is found
+// BloomUpdateType is the legacy BIP-37 update selector carried by Handshake's
+// filterload payload.  hsd preserves the value for wire compatibility but does
+// not use it to gate updates: every matched Handshake output adds its outpoint
+// to the filter.
 type BloomUpdateType uint8
 
 const (
-	// BloomUpdateNone indicates the filter is not adjusted when a match is
-	// found.
+	// BloomUpdateNone is the legacy no-update selector value.
 	BloomUpdateNone BloomUpdateType = 0
 
-	// BloomUpdateAll indicates if the filter matches any data element in a
-	// public key script, the outpoint is serialized and inserted into the
-	// filter.
+	// BloomUpdateAll is the legacy update-all selector value.
 	BloomUpdateAll BloomUpdateType = 1
 
-	// BloomUpdateP2PubkeyOnly indicates if the filter matches a data
-	// element in a public key script and the script is of the standard
-	// pay-to-pubkey or multisig, the outpoint is serialized and inserted
-	// into the filter.
+	// BloomUpdateP2PubkeyOnly is the legacy pubkey-only selector value.
 	BloomUpdateP2PubkeyOnly BloomUpdateType = 2
 )
 

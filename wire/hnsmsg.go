@@ -1127,6 +1127,12 @@ func (m *HnsMsgFilterLoad) Decode(data []byte) error {
 	}
 	m.Tweak = binary.LittleEndian.Uint32(data[4:8])
 	m.Flags = BloomUpdateType(data[8])
+	if m.Flags > BloomUpdateP2PubkeyOnly {
+		return fmt.Errorf(
+			"filterload: invalid update flag: %d",
+			m.Flags,
+		)
+	}
 	return nil
 }
 
@@ -1155,6 +1161,12 @@ func (m *HnsMsgFilterAdd) Decode(data []byte) error {
 		return fmt.Errorf(
 			"filteradd: data length %d exceeds payload length %d",
 			count, len(data),
+		)
+	}
+	if count > MaxFilterAddDataSize {
+		return fmt.Errorf(
+			"filteradd: data length %d exceeds maximum %d",
+			count, MaxFilterAddDataSize,
 		)
 	}
 	if len(data) != int(count) {
