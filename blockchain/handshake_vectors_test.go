@@ -5,8 +5,6 @@
 package blockchain
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,20 +14,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
-
-func loadHandshakeRawBlock(t *testing.T, name string) *hnsutil.Block {
-	t.Helper()
-
-	raw, err := os.ReadFile(filepath.Join("testdata", "handshake", name))
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", name, err)
-	}
-	block, err := hnsutil.NewBlockFromBytes(raw)
-	if err != nil {
-		t.Fatalf("NewBlockFromBytes(%s): %v", name, err)
-	}
-	return block
-}
 
 func TestHandshakeRawBlockMerkleRootVectors(t *testing.T) {
 	tests := []struct {
