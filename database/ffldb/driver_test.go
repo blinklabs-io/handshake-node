@@ -12,11 +12,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/database/ffldb"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 )
 
 // dbType is the database type name for this driver.
@@ -255,7 +255,6 @@ func TestPersistence(t *testing.T) {
 
 // TestPrune tests that the older .fdb files are deleted with a call to prune.
 func TestPrune(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
 	t.Parallel()
 
 	// Create a new database to run tests against.
@@ -270,13 +269,7 @@ func TestPrune(t *testing.T) {
 	blockFileSize := uint64(2048)
 
 	testfn := func(t *testing.T, db database.DB) {
-		// Load the test blocks and save in the test context for use throughout
-		// the tests.
-		blocks, err := loadBlocks(t, blockDataFile, blockDataNet)
-		if err != nil {
-			t.Errorf("loadBlocks: Unexpected error: %v", err)
-			return
-		}
+		blocks := ffldb.TstHandshakeBlocks(t)
 		err = db.Update(func(tx database.Tx) error {
 			for i, block := range blocks {
 				err := tx.StoreBlock(block)
@@ -443,7 +436,6 @@ func TestPrune(t *testing.T) {
 
 // TestInterface performs all interfaces tests for this database driver.
 func TestInterface(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
 	t.Parallel()
 
 	// Create a new database to run tests against.

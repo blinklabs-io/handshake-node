@@ -8,103 +8,27 @@
 package ffldb
 
 import (
-	"compress/bzip2"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/syndtr/goleveldb/leveldb"
 	ldberrors "github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var (
-	// blockDataNet is the expected network in the test block data.
+	// blockDataNet is the network used by the white-box database tests.
 	blockDataNet = wire.MainNet
-
-	// blockDataFile is the path to a file containing the first 256 blocks
-	// of the block chain.
-	blockDataFile = filepath.Join("..", "testdata", "blocks1-256.bz2")
 
 	// errSubTestFail is used to signal that a sub test returned false.
 	errSubTestFail = fmt.Errorf("sub test failure")
 )
-
-// loadBlocks loads the blocks contained in the testdata directory and returns
-// a slice of them.
-func loadBlocks(t *testing.T, dataFile string, network wire.BitcoinNet) ([]*hnsutil.Block, error) {
-	// Open the file that contains the blocks for reading.
-	fi, err := os.Open(dataFile)
-	if err != nil {
-		t.Errorf("failed to open file %v, err %v", dataFile, err)
-		return nil, err
-	}
-	defer func() {
-		if err := fi.Close(); err != nil {
-			t.Errorf("failed to close file %v %v", dataFile,
-				err)
-		}
-	}()
-	dr := bzip2.NewReader(fi)
-
-	// Set the first block as the genesis block.
-	blocks := make([]*hnsutil.Block, 0, 256)
-	genesis := hnsutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
-	blocks = append(blocks, genesis)
-
-	// Load the remaining blocks.
-	for height := 1; ; height++ {
-		var net uint32
-		err := binary.Read(dr, binary.LittleEndian, &net)
-		if err == io.EOF {
-			// Hit end of file at the expected offset.  No error.
-			break
-		}
-		if err != nil {
-			t.Errorf("Failed to load network type for block %d: %v",
-				height, err)
-			return nil, err
-		}
-		if net != uint32(network) {
-			t.Errorf("Block doesn't match network: %v expects %v",
-				net, network)
-			return nil, err
-		}
-
-		var blockLen uint32
-		err = binary.Read(dr, binary.LittleEndian, &blockLen)
-		if err != nil {
-			t.Errorf("Failed to load block size for block %d: %v",
-				height, err)
-			return nil, err
-		}
-
-		// Read the block.
-		blockBytes := make([]byte, blockLen)
-		_, err = io.ReadFull(dr, blockBytes)
-		if err != nil {
-			t.Errorf("Failed to load block %d: %v", height, err)
-			return nil, err
-		}
-
-		// Deserialize and store the block.
-		block, err := hnsutil.NewBlockFromBytes(blockBytes)
-		if err != nil {
-			t.Errorf("Failed to parse block %v: %v", height, err)
-			return nil, err
-		}
-		blocks = append(blocks, block)
-	}
-
-	return blocks, nil
-}
 
 // checkDbError ensures the passed error is a database.Error with an error code
 // that matches the passed  error code.
@@ -531,6 +455,20 @@ func testCorruption(tc *testContext) bool {
 	// stored to the mock file and reading the block.
 	block0Bytes, _ := tc.blocks[0].Bytes()
 	block0Hash := tc.blocks[0].Hash()
+	txLocs, err := tc.blocks[0].TxLoc()
+	if err != nil {
+		tc.t.Errorf("TxLoc: unexpected error: %v", err)
+		return false
+	}
+	if len(txLocs) == 0 || txLocs[0].TxLen == 0 {
+		tc.t.Error("TxLoc: test block has no transaction bytes")
+		return false
+	}
+
+	const blockFilePrefixSize = 8
+	transactionOffset := uint32(
+		blockFilePrefixSize + txLocs[0].TxStart + txLocs[0].TxLen/2,
+	)
 	tests := []struct {
 		offset      uint32
 		fixChecksum bool
@@ -551,7 +489,7 @@ func testCorruption(tc *testContext) bool {
 		{17, false, database.ErrCorruption},
 
 		// Random transaction byte.
-		{90, false, database.ErrCorruption},
+		{transactionOffset, false, database.ErrCorruption},
 
 		// Random checksum byte.
 		{uint32(len(block0Bytes)) + 10, false, database.ErrCorruption},
@@ -602,7 +540,6 @@ func testCorruption(tc *testContext) bool {
 // corruption, block file write failures, and rollback failures are handled
 // correctly.
 func TestFailureScenarios(t *testing.T) {
-	t.Skip("Skipping: test data contains Bitcoin blocks with 80-byte headers; needs Handshake test fixtures")
 	// Create a new database to run tests against.
 	dbPath := filepath.Join(t.TempDir(), "ffldb-failurescenarios")
 	_ = os.RemoveAll(dbPath)
@@ -682,14 +619,7 @@ func TestFailureScenarios(t *testing.T) {
 		return makeDbErr(database.ErrDriverSpecific, str, nil)
 	}
 
-	// Load the test blocks and save in the test context for use throughout
-	// the tests.
-	blocks, err := loadBlocks(t, blockDataFile, blockDataNet)
-	if err != nil {
-		t.Errorf("loadBlocks: Unexpected error: %v", err)
-		return
-	}
-	tc.blocks = blocks
+	tc.blocks = TstHandshakeBlocks(t)
 
 	// Test various failures paths when writing to the block files.
 	if !testWriteFailures(tc) {
