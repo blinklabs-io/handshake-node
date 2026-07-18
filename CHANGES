@@ -3,11 +3,54 @@ User visible changes for handshake-node
   A Handshake full node implementation written in Go
 ============================================================================
 
+Changes in 0.2.0-rc1 (release candidate)
+  - Consensus and hsd compatibility:
+    - Enforce hsd claim and airdrop hardening, sequence locks, bounded future
+      covenants, proof admission, mining policy, and coinbase limits.
+      (#52, #53, #55, #61, #62)
+    - Use Handshake-native hash text order and canonical mainnet checkpoints.
+      (#65, #66)
+    - Align output policy, block locator limits, bloom filtering, and partial
+      Merkle proof construction with hsd. (#67, #76, #82, #83)
+  - Proof relay, mempool, and mining:
+    - Add raw hsd claim and airdrop proof conversion, peer relay, and
+      sendrawclaim/sendrawairdrop RPC submission. (#56)
+    - Serve name proofs for committed Urkel roots and rate-limit inbound proof
+      requests. (#63, #64)
+    - Remove a gettxout mempool race. (#68)
+  - RPC and operator features:
+    - Add hsd-compatible RPCs for resource decoding, block lookup, mempool graph
+      inspection, and network information. (#54)
+    - Add a resumable hsd v8 mainnet parity runner and documented readiness
+      gates. (#59)
+  - Network and security hardening:
+    - Bound RPC bodies, proof payloads, transaction and witness allocations,
+      and security-sensitive integer conversions. (#57, #60, #61, #72)
+    - Reject invalid headers and trailing structured payloads while retaining
+      compatibility with future Handshake message types. (#69, #73, #74)
+    - Require Go 1.26.5 and add govulncheck and multi-architecture container
+      vulnerability gates. (#77)
+  - Testing and maintenance:
+    - Exercise pinned hsd transports, relay, reorganization, restart,
+      persistence, malformed-peer, and recovery behavior. (#75, #78, #79)
+    - Restore Handshake-native tokenizer, mempool-accept, database, and chain
+      fixture coverage. (#70, #71, #80, #81)
+    - Remove remaining Bitcoin and wallet remnants. (#58)
+  - Migration notes:
+    - RPC, configuration, checkpoint, and outpoint hash strings now use hsd's
+      native Handshake byte order. (#65)
+    - The default regtest RPC port is now 14037, hnsctl no longer provides
+      wallet defaults, and source builds require Go 1.26.5 or newer. (#58, #77)
+  - Contributors (alphabetical order):
+    - Chris Gianelloni
+
 Changes in 0.1.1-rc1 (release candidate)
   - Consensus and validation hardening:
-    - Enforce Handshake claim cutoff and reserved-name rules.
-    - Align sequence locks and unknown covenant handling with hsd.
-    - Harden coinbase proof admission and mining policy.
+    - Enforce Handshake claim and airdrop cutoff heights. (#51)
+  - Release metadata note:
+    - The tag was cut before its version metadata was updated, so its binaries
+      identify themselves as 0.1.0-rc1. Later fixes are included above in the
+      actual v0.1.1-rc1-to-v0.2.0-rc1 release range.
 
 Changes in 0.1.0-rc1 (release candidate)
   - Handshake protocol and consensus changes:
