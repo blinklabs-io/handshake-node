@@ -95,8 +95,9 @@ install:
 #? release-install: Install handshake-node and hnsctl release binaries, place them in $GOBIN
 release-install:
 	@$(call print, "Installing handshake-node and hnsctl release binaries")
-	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG)
-	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG)/cmd/hnsctl
+	# Build both commands in one Go invocation so an in-tree GOBIN cannot make
+	# the second binary appear to come from a dirty worktree.
+	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG) $(PKG)/cmd/hnsctl
 
 # =======
 # TESTING
