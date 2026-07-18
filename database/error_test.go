@@ -6,6 +6,8 @@ package database_test
 
 import (
 	"errors"
+	"fmt"
+	"syscall"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/database"
@@ -93,5 +95,37 @@ func TestError(t *testing.T) {
 				test.want)
 			continue
 		}
+	}
+}
+
+// TestErrorUnwrap ensures database errors retain support for the standard
+// errors.Is and errors.As traversal APIs.
+func TestErrorUnwrap(t *testing.T) {
+	t.Parallel()
+
+	underlying := errors.New("underlying driver error")
+	dbErr := database.Error{
+		ErrorCode:   database.ErrDriverSpecific,
+		Description: "database operation failed",
+		Err:         underlying,
+	}
+	if !errors.Is(dbErr, underlying) {
+		t.Fatal("errors.Is did not find the underlying driver error")
+	}
+	if got := errors.Unwrap(dbErr); got != underlying {
+		t.Fatalf("errors.Unwrap = %v, want %v", got, underlying)
+	}
+	diskFullErr := database.Error{
+		ErrorCode:   database.ErrDriverSpecific,
+		Description: "metadata write failed",
+		Err:         fmt.Errorf("leveldb: %w", syscall.ENOSPC),
+	}
+	if !errors.Is(diskFullErr, syscall.ENOSPC) {
+		t.Fatal("errors.Is did not recognize wrapped ENOSPC")
+	}
+
+	noCause := database.Error{Description: "no underlying error"}
+	if got := errors.Unwrap(noCause); got != nil {
+		t.Fatalf("errors.Unwrap without a cause = %v, want nil", got)
 	}
 }
