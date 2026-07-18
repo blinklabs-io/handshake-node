@@ -392,6 +392,27 @@ type dbCache struct {
 	cacheLock    sync.RWMutex
 	cachedKeys   *treap.Immutable
 	cachedRemove *treap.Immutable
+
+	// writeBatchSyncFunc is the synchronous LevelDB batch writer.  It is a
+	// field so white-box tests can simulate the documented case where a
+	// durable write succeeds but its final sync reports an error.
+	writeBatchSyncFunc func(batch *leveldb.Batch) error
+}
+
+// ambiguousMetadataWriteError identifies a synchronous metadata batch write
+// that returned an error after the write was attempted.  LevelDB may have
+// persisted the atomic batch before reporting the error, so callers must not
+// assume the cached metadata is absent.
+type ambiguousMetadataWriteError struct {
+	err error
+}
+
+func (e *ambiguousMetadataWriteError) Error() string {
+	return e.err.Error()
+}
+
+func (e *ambiguousMetadataWriteError) Unwrap() error {
+	return e.err
 }
 
 // Snapshot returns a snapshot of the database cache and underlying database at
@@ -483,12 +504,34 @@ func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error 
 	})
 }
 
-// flush flushes the database cache to persistent storage.  This involes syncing
-// the block store and replaying all transactions that have been applied to the
-// cache to the underlying database.
+// commitTreapsSync atomically commits all of the passed updates to the
+// underlying database and requests that the write is synced to stable storage.
+// It is used by pruning so metadata removals and their durable deletion intent
+// reach disk before any block files are unlinked.
+func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) error {
+	batch := new(leveldb.Batch)
+	pendingKeys.ForEach(func(k, v []byte) bool {
+		batch.Put(k, v)
+		return true
+	})
+	pendingRemove.ForEach(func(k, v []byte) bool {
+		batch.Delete(k)
+		return true
+	})
+
+	if err := c.writeBatchSyncFunc(batch); err != nil {
+		return convertErr("failed to durably commit pruning transaction", err)
+	}
+	return nil
+}
+
+// flushWithSync flushes the database cache to persistent storage.  This
+// involves syncing the block store and replaying all transactions that have
+// been applied to the cache to the underlying database.  When syncMetadata is
+// true, the metadata write is also synced to stable storage.
 //
 // This function MUST be called with the database write lock held.
-func (c *dbCache) flush() error {
+func (c *dbCache) flushWithSync(syncMetadata bool) error {
 	c.lastFlush = time.Now()
 
 	// Sync the current write file associated with the block store.  This is
@@ -512,13 +555,24 @@ func (c *dbCache) flush() error {
 		return nil
 	}
 
-	// Perform all leveldb updates using an atomic transaction.
-	if err := c.commitTreaps(cachedKeys, cachedRemove); err != nil {
+	// Perform all leveldb updates atomically.  Pruning uses a synchronous
+	// metadata flush so every earlier cached transaction is durable before
+	// it commits deletion intent and starts unlinking files.
+	var err error
+	if syncMetadata {
+		err = c.commitTreapsSync(cachedKeys, cachedRemove)
+	} else {
+		err = c.commitTreaps(cachedKeys, cachedRemove)
+	}
+	if err != nil {
 		if errors.Is(err, syscall.ENOSPC) {
 			log.Errorf("%v. Cannot save any more blocks "+
 				"due to the disk being full "+
 				"-- exiting", err)
 			os.Exit(1)
+		}
+		if syncMetadata {
+			return &ambiguousMetadataWriteError{err: err}
 		}
 		return err
 	}
@@ -530,6 +584,16 @@ func (c *dbCache) flush() error {
 	c.cacheLock.Unlock()
 
 	return nil
+}
+
+// flush flushes cached metadata using the normal opportunistic write policy.
+func (c *dbCache) flush() error {
+	return c.flushWithSync(false)
+}
+
+// flushSync flushes cached metadata and syncs it to stable storage.
+func (c *dbCache) flushSync() error {
+	return c.flushWithSync(true)
 }
 
 // needsFlush returns whether or not the database cache needs to be flushed to
@@ -669,7 +733,7 @@ func (c *dbCache) Close() error {
 // exceeds the provided value or it has been longer than the provided interval
 // since the last flush.
 func newDbCache(ldb *leveldb.DB, store *blockStore, maxSize uint64, flushIntervalSecs uint32) *dbCache {
-	return &dbCache{
+	cache := &dbCache{
 		ldb:           ldb,
 		store:         store,
 		maxSize:       maxSize,
@@ -678,4 +742,8 @@ func newDbCache(ldb *leveldb.DB, store *blockStore, maxSize uint64, flushInterva
 		cachedKeys:    treap.NewImmutable(),
 		cachedRemove:  treap.NewImmutable(),
 	}
+	cache.writeBatchSyncFunc = func(batch *leveldb.Batch) error {
+		return ldb.Write(batch, syncWriteOptions)
+	}
+	return cache
 }
