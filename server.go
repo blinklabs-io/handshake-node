@@ -61,6 +61,12 @@ const (
 	// retries when connecting to persistent peers.  It is adjusted by the
 	// number of retries such that there is a retry backoff.
 	connectionRetryInterval = time.Second * 5
+
+	// blockResponseWorkspaceBytes bounds the raw, decoded, filtered, and
+	// serialization inputs retained while constructing one block response.
+	// The reservation is returned once TryQueueMessage has captured immutable
+	// bytes.  Brontide framing copies are charged separately by peer.QueueMessage.
+	blockResponseWorkspaceBytes = 64 * 1024 * 1024
 )
 
 var (
@@ -240,6 +246,11 @@ type server struct {
 	timeSource           blockchain.MedianTimeSource
 	services             wire.ServiceFlag
 	maxProofRPS          uint32
+	inboundSlots         chan struct{}
+	inboundPeersMtx      sync.Mutex
+	inboundPeersByIP     map[string]int
+	maxInboundPerIP      int
+	outboundQueueBudget  *peer.OutboundQueueBudget
 
 	// The following fields are used for optional indexes.  They will be nil
 	// if the associated index is not enabled.  These fields are set during
@@ -275,20 +286,22 @@ type serverPeer struct {
 
 	*peer.Peer
 
-	connReq        *connmgr.ConnReq
-	server         *server
-	persistent     bool
-	continueHash   *chainhash.Hash
-	relayMtx       sync.Mutex
-	disableRelayTx bool
-	sentAddrs      bool
-	isWhitelisted  bool
-	filter         *bloom.Filter
-	addressesMtx   sync.RWMutex
-	knownAddresses lru.Cache
-	banScore       connmgr.DynamicBanScore
-	proofRequests  *proofRequestWindow
-	quit           chan struct{}
+	connReq         *connmgr.ConnReq
+	server          *server
+	persistent      bool
+	continueHash    *chainhash.Hash
+	relayMtx        sync.Mutex
+	disableRelayTx  bool
+	sentAddrs       bool
+	isWhitelisted   bool
+	filter          *bloom.Filter
+	addressesMtx    sync.RWMutex
+	knownAddresses  lru.Cache
+	banScore        connmgr.DynamicBanScore
+	proofRequests   *proofRequestWindow
+	inboundSlotHeld bool
+	inboundIP       string
+	quit            chan struct{}
 	// The following chans are used to sync blockmanager and server.
 	txProcessed    chan struct{}
 	blockProcessed chan struct{}
@@ -814,7 +827,7 @@ func (sp *serverPeer) OnGetData(_ *peer.Peer, hnsMsg *wire.HnsMsgGetData) {
 		doneChans = append(doneChans, doneChan)
 
 		// Send the failed msgs.
-		sp.QueueMessage(failedMsg, doneChan)
+		_ = sp.TryQueueMessage(failedMsg, doneChan)
 	}
 
 	// Wait for messages to be sent. We can send quite a lot of data at
@@ -982,7 +995,10 @@ func (s *server) pushCoinbaseProofMsg(sp *serverPeer, iv *wire.InvVect,
 		return errors.New("unknown coinbase proof inventory type")
 	}
 
-	sp.QueueMessage(msg, doneChan)
+	if err := sp.TryQueueMessage(msg, doneChan); err != nil {
+		peerLog.Debugf("Unable to queue coinbase proof response to %s: %v",
+			sp, err)
+	}
 	return nil
 }
 
@@ -1051,7 +1067,11 @@ func (sp *serverPeer) OnGetHeaders(_ *peer.Peer, hnsMsg *wire.HnsMsgGetHeaders) 
 	for i := range headers {
 		blockHeaders[i] = &headers[i]
 	}
-	sp.QueueMessage(&wire.HnsMsgHeaders{Headers: blockHeaders}, nil)
+	if err := sp.TryQueueMessage(
+		&wire.HnsMsgHeaders{Headers: blockHeaders}, nil,
+	); err != nil {
+		peerLog.Debugf("Unable to queue headers response to %s: %v", sp, err)
+	}
 }
 
 // OnGetProof is invoked when a peer receives a getproof message. It serves
@@ -1080,11 +1100,13 @@ func (sp *serverPeer) OnGetProof(_ *peer.Peer, hnsMsg *wire.HnsMsgGetProof) {
 		return
 	}
 
-	sp.QueueMessage(&wire.HnsMsgProof{
+	if err := sp.TryQueueMessage(&wire.HnsMsgProof{
 		Root:  hnsMsg.Root,
 		Key:   hnsMsg.Key,
 		Proof: proof,
-	}, nil)
+	}, nil); err != nil {
+		peerLog.Debugf("Unable to queue proof response to %s: %v", sp, err)
+	}
 }
 
 func (sp *serverPeer) allowProofRequest() bool {
@@ -1324,6 +1346,15 @@ func (sp *serverPeer) OnWrite(_ *peer.Peer, bytesWritten int,
 	sp.server.metrics.observeP2PMessage("outbound", msg)
 }
 
+// OnWriteType records an outbound message without reconstructing a decoded
+// object solely for byte and message-type metrics.
+func (sp *serverPeer) OnWriteType(_ *peer.Peer, bytesWritten int,
+	msgType wire.HnsMsgType, _ error) {
+
+	sp.server.AddBytesSent(uint64(bytesWritten))
+	sp.server.metrics.observeP2PMessageType("outbound", msgType)
+}
+
 // OnNotFound is invoked when a peer sends a notfound message.
 func (sp *serverPeer) OnNotFound(p *peer.Peer, hnsMsg *wire.HnsMsgNotFound) {
 	if !sp.Connected() {
@@ -1469,8 +1500,11 @@ func (s *server) pushTxMsg(sp *serverPeer, hash *chainhash.Hash,
 		return err
 	}
 
-	sp.QueueMessage(&wire.HnsMsgTx{Tx: *tx.MsgTx()}, doneChan)
-
+	if err := sp.TryQueueMessage(
+		&wire.HnsMsgTx{Tx: *tx.MsgTx()}, doneChan,
+	); err != nil {
+		peerLog.Debugf("Unable to queue transaction response to %s: %v", sp, err)
+	}
 	return nil
 }
 
@@ -1478,6 +1512,15 @@ func (s *server) pushTxMsg(sp *serverPeer, hash *chainhash.Hash,
 // connected peer.  An error is returned if the block hash is not known.
 func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	doneChan chan<- struct{}, encoding wire.MessageEncoding) error {
+	workspace, ok := sp.server.outboundQueueBudget.AcquireWorkspace(
+		blockResponseWorkspaceBytes,
+	)
+	if !ok {
+		signalDone(doneChan)
+		peerLog.Debugf("Unable to reserve block response workspace for %s", sp)
+		return nil
+	}
+	defer workspace.Release()
 
 	// Fetch the raw block bytes from the database.
 	var blockBytes []byte
@@ -1517,7 +1560,13 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	if !sendInv {
 		dc = doneChan
 	}
-	sp.QueueMessage(&wire.HnsMsgBlock{Block: msgBlock}, dc)
+	if err := sp.TryQueueMessage(&wire.HnsMsgBlock{Block: msgBlock}, dc); err != nil {
+		if dc == nil {
+			signalDone(doneChan)
+		}
+		peerLog.Debugf("Unable to queue block response to %s: %v", sp, err)
+		return nil
+	}
 
 	// When the peer requests the final block that was advertised in
 	// response to a getblocks message which requested more blocks than
@@ -1529,7 +1578,10 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 		invMsg := wire.NewHnsMsgInvSizeHint(1)
 		iv := wire.NewInvVect(wire.InvTypeBlock, &best.Hash)
 		invMsg.AddInvVect(iv)
-		sp.QueueMessage(invMsg, doneChan)
+		if err := sp.TryQueueMessage(invMsg, doneChan); err != nil {
+			peerLog.Debugf("Unable to queue continuation inventory to %s: %v",
+				sp, err)
+		}
 		sp.continueHash = nil
 	}
 	return nil
@@ -1549,6 +1601,16 @@ func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 		}
 		return nil
 	}
+	workspace, ok := sp.server.outboundQueueBudget.AcquireWorkspace(
+		blockResponseWorkspaceBytes,
+	)
+	if !ok {
+		signalDone(doneChan)
+		peerLog.Debugf("Unable to reserve filtered block response workspace for %s",
+			sp)
+		return nil
+	}
+	defer workspace.Release()
 
 	// Fetch the raw block bytes from the database.
 	blk, err := sp.server.chain.BlockByHash(hash)
@@ -1572,7 +1634,15 @@ func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	if len(matchedTxIndices) == 0 {
 		dc = doneChan
 	}
-	sp.QueueMessage(&wire.HnsMsgMerkleBlock{MerkleBlock: *merkle}, dc)
+	if err := sp.TryQueueMessage(
+		&wire.HnsMsgMerkleBlock{MerkleBlock: *merkle}, dc,
+	); err != nil {
+		if dc == nil {
+			signalDone(doneChan)
+		}
+		peerLog.Debugf("Unable to queue merkle block response to %s: %v", sp, err)
+		return nil
+	}
 
 	// Finally, send any matched transactions.
 	blkTransactions := blk.MsgBlock().Transactions
@@ -1583,7 +1653,16 @@ func (s *server) pushMerkleBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 			dc = doneChan
 		}
 		if txIndex < uint32(len(blkTransactions)) {
-			sp.QueueMessage(&wire.HnsMsgTx{Tx: *blkTransactions[txIndex]}, dc)
+			if err := sp.TryQueueMessage(
+				&wire.HnsMsgTx{Tx: *blkTransactions[txIndex]}, dc,
+			); err != nil {
+				if dc == nil {
+					signalDone(doneChan)
+				}
+				peerLog.Debugf("Unable to queue filtered transaction response "+
+					"to %s: %v", sp, err)
+				return nil
+			}
 		}
 	}
 
@@ -1656,8 +1735,6 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 		srvrLog.Infof("Peer %s is no longer banned", host)
 		delete(state.banned, host)
 	}
-
-	// TODO: Check for max peers from a single IP.
 
 	// Limit max number of total peers.
 	if state.Count() >= cfg.MaxPeers {
@@ -2054,7 +2131,7 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 			OnGetAddr:     sp.OnGetAddr,
 			OnAddr:        sp.OnAddr,
 			OnRead:        sp.OnRead,
-			OnWrite:       sp.OnWrite,
+			OnWriteType:   sp.OnWriteType,
 			OnNotFound:    sp.OnNotFound,
 		},
 		NewestBlock:         sp.newestBlock,
@@ -2068,6 +2145,8 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 		DisableRelayTx:      cfg.BlocksOnly,
 		ProtocolVersion:     peer.MaxProtocolVersion,
 		TrickleInterval:     cfg.TrickleInterval,
+		WriteTimeout:        cfg.P2PWriteTimeout,
+		OutboundQueueBudget: sp.server.outboundQueueBudget,
 		DisableStallHandler: cfg.DisableStallHandler,
 		UsingV2Conn:         cfg.V2Transport,
 	}
@@ -2163,11 +2242,78 @@ func (s *server) wrapInboundConn(conn net.Conn) (net.Conn, bool, error) {
 	return econn, true, nil
 }
 
+func inboundIPKey(addr net.Addr) string {
+	if tcpAddr, ok := addr.(*net.TCPAddr); ok {
+		return tcpAddr.IP.String()
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err == nil {
+		return host
+	}
+	return addr.String()
+}
+
+func (s *server) releaseInboundIP(ip string) {
+	s.inboundPeersMtx.Lock()
+	if count := s.inboundPeersByIP[ip]; count <= 1 {
+		delete(s.inboundPeersByIP, ip)
+	} else {
+		s.inboundPeersByIP[ip] = count - 1
+	}
+	s.inboundPeersMtx.Unlock()
+}
+
+// admitInboundPeer performs the bounded, non-blocking work required before
+// the connection manager starts an inbound handler goroutine.  The connection
+// manager retains ownership and closes the connection when this returns false.
+func (s *server) admitInboundPeer(conn net.Conn) bool {
+	remoteAddr := conn.RemoteAddr()
+	select {
+	case s.inboundSlots <- struct{}{}:
+	default:
+		srvrLog.Debugf("Max inbound connections reached [%d] - rejecting %s",
+			cap(s.inboundSlots), remoteAddr)
+		return false
+	}
+
+	inboundIP := inboundIPKey(remoteAddr)
+	s.inboundPeersMtx.Lock()
+	if s.inboundPeersByIP == nil {
+		s.inboundPeersByIP = make(map[string]int)
+	}
+	if s.maxInboundPerIP > 0 &&
+		s.inboundPeersByIP[inboundIP] >= s.maxInboundPerIP {
+
+		s.inboundPeersMtx.Unlock()
+		<-s.inboundSlots
+		srvrLog.Debugf("Max inbound connections from %s reached [%d] - rejecting %s",
+			inboundIP, s.maxInboundPerIP, remoteAddr)
+		return false
+	}
+	s.inboundPeersByIP[inboundIP]++
+	s.inboundPeersMtx.Unlock()
+	return true
+}
+
 // inboundPeerConnected is invoked by the connection manager when a new inbound
 // connection is established.  It initializes a new inbound server peer
 // instance, associates it with the connection, and starts a goroutine to wait
 // for disconnection.
 func (s *server) inboundPeerConnected(conn net.Conn) {
+	remoteAddr := conn.RemoteAddr()
+	slotTransferred := false
+	connTransferred := false
+	inboundIP := inboundIPKey(remoteAddr)
+	defer func() {
+		if !slotTransferred {
+			<-s.inboundSlots
+			s.releaseInboundIP(inboundIP)
+		}
+		if !connTransferred {
+			_ = conn.Close()
+		}
+	}()
+
 	wrappedConn, encrypted, err := s.wrapInboundConn(conn)
 	if err != nil {
 		srvrLog.Debugf("Cannot negotiate inbound transport from %s: %v",
@@ -2176,10 +2322,14 @@ func (s *server) inboundPeerConnected(conn net.Conn) {
 	}
 
 	sp := newServerPeer(s, false)
-	sp.isWhitelisted = isWhitelisted(wrappedConn.RemoteAddr())
+	sp.inboundSlotHeld = true
+	sp.inboundIP = inboundIP
+	sp.isWhitelisted = isWhitelisted(remoteAddr)
 	sp.Peer = peer.NewInboundPeer(newPeerConfig(sp))
 	sp.Peer.SetBrontideConnection(encrypted)
 	sp.AssociateConnection(wrappedConn)
+	connTransferred = true
+	slotTransferred = true
 	go s.peerDoneHandler(sp)
 }
 
@@ -2231,6 +2381,11 @@ func (s *server) outboundPeerConnected(c *connmgr.ConnReq, conn net.Conn) {
 // done along with other performing other desirable cleanup.
 func (s *server) peerDoneHandler(sp *serverPeer) {
 	sp.WaitForDisconnect()
+	if sp.inboundSlotHeld {
+		s.releaseInboundIP(sp.inboundIP)
+		<-s.inboundSlots
+		sp.inboundSlotHeld = false
+	}
 
 	// If this is an outbound peer and the shouldDowngradeToV1 bool is set
 	// on the underlying Peer, trigger a reconnect using the OG v1
@@ -2793,6 +2948,21 @@ func setupPlainListeners(addrs []string, service string) ([]net.Listener, error)
 	return listeners, nil
 }
 
+func (s *server) connManagerConfig(listeners []net.Listener,
+	targetOutbound uint32, newAddress func() (net.Addr, error)) *connmgr.Config {
+
+	return &connmgr.Config{
+		Listeners:         listeners,
+		OnAcceptPreflight: s.admitInboundPeer,
+		OnAccept:          s.inboundPeerConnected,
+		RetryDuration:     connectionRetryInterval,
+		TargetOutbound:    targetOutbound,
+		Dial:              s.dialPeer,
+		OnConnection:      s.outboundPeerConnected,
+		GetNewAddress:     newAddress,
+	}
+}
+
 // newServer returns a new handshake-node server configured to listen on addr for the
 // bitcoin network type specified by chainParams.  Use start to begin accepting
 // connections from peers.
@@ -2875,12 +3045,18 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
 		maxProofRPS:          cfg.MaxProofRPS,
-		sigCache:             txscript.NewSigCache(cfg.SigCacheMaxSize),
-		hashCache:            txscript.NewHashCache(cfg.SigCacheMaxSize),
-		cfCheckptCaches:      make(map[wire.FilterType][]cfHeaderKV),
-		agentBlacklist:       agentBlacklist,
-		agentWhitelist:       agentWhitelist,
-		metrics:              newNodeMetrics(),
+		inboundSlots:         make(chan struct{}, cfg.MaxPeers),
+		inboundPeersByIP:     make(map[string]int),
+		maxInboundPerIP:      cfg.MaxInboundPerIP,
+		outboundQueueBudget: peer.NewOutboundQueueBudget(
+			uint64(cfg.MaxOutboundQueueMiB) * 1024 * 1024,
+		),
+		sigCache:        txscript.NewSigCache(cfg.SigCacheMaxSize),
+		hashCache:       txscript.NewHashCache(cfg.SigCacheMaxSize),
+		cfCheckptCaches: make(map[wire.FilterType][]cfHeaderKV),
+		agentBlacklist:  agentBlacklist,
+		agentWhitelist:  agentWhitelist,
+		metrics:         newNodeMetrics(),
 	}
 
 	// Create the transaction and address indexes if needed.
@@ -3112,15 +3288,9 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	if cfg.MaxPeers < targetOutbound {
 		targetOutbound = cfg.MaxPeers
 	}
-	cmgr, err := connmgr.New(&connmgr.Config{
-		Listeners:      listeners,
-		OnAccept:       s.inboundPeerConnected,
-		RetryDuration:  connectionRetryInterval,
-		TargetOutbound: uint32(targetOutbound),
-		Dial:           s.dialPeer,
-		OnConnection:   s.outboundPeerConnected,
-		GetNewAddress:  newAddressFunc,
-	})
+	cmgr, err := connmgr.New(s.connManagerConfig(
+		listeners, uint32(targetOutbound), newAddressFunc,
+	))
 	if err != nil {
 		return nil, err
 	}

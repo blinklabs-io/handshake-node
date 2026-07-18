@@ -5,6 +5,7 @@
 package netsync
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -166,11 +167,27 @@ type headerNode struct {
 // peerSyncState stores additional information that the SyncManager tracks
 // about a peer.
 type peerSyncState struct {
-	syncCandidate   bool
-	requestQueue    []*wire.InvVect
-	requestedTxns   map[chainhash.Hash]struct{}
-	requestedBlocks map[chainhash.Hash]struct{}
-	requestedProofs map[chainhash.Hash]struct{}
+	syncCandidate       bool
+	requestQueue        []*wire.InvVect
+	requestRetryPending bool
+	requestedTxns       map[chainhash.Hash]struct{}
+	requestedBlocks     map[chainhash.Hash]struct{}
+	requestedProofs     map[chainhash.Hash]struct{}
+}
+
+type fetchHeadersResult uint8
+
+const (
+	fetchHeadersNotStarted fetchHeadersResult = iota
+	fetchHeadersQueued
+	fetchHeadersBackpressured
+	fetchHeadersPeerFailed
+)
+
+type deferredSyncRequest struct {
+	peer    *peerpkg.Peer
+	request string
+	retry   func() error
 }
 
 // limitAdd is a helper function for maps that require a maximum limit by
@@ -218,6 +235,12 @@ type SyncManager struct {
 	syncPeer         *peerpkg.Peer
 	peerStates       map[*peerpkg.Peer]*peerSyncState
 	lastProgressTime time.Time
+	// deferredSyncRequest is the single exact sync operation rejected by
+	// transient aggregate outbound backpressure.  It is retried on the bounded
+	// stall cadence without treating the remote peer as faulty.
+	deferredSyncRequest *deferredSyncRequest
+
+	latestBlockLocatorByHeader func() (blockchain.BlockLocator, error)
 
 	// The following fields are used for the initial block download mode.
 	ibdMode bool
@@ -302,30 +325,111 @@ func (sm *SyncManager) isInIBDMode() bool {
 
 // fetchHeaders picks the peer with the highest advertised header height and
 // pushes a getheaders message to it.
-func (sm *SyncManager) fetchHeaders() {
+func (sm *SyncManager) fetchHeaders() fetchHeadersResult {
 	_, height := sm.chain.BestHeader()
 	higherPeers := sm.fetchHigherPeers(height)
 	if len(higherPeers) == 0 {
 		log.Warnf("No sync peer candidates available")
-		return
+		return fetchHeadersNotStarted
 	}
 	bestPeer := highestBlockPeer(higherPeers)
 
-	locator, err := sm.chain.LatestBlockLocatorByHeader()
+	latestBlockLocatorByHeader := sm.latestBlockLocatorByHeader
+	if latestBlockLocatorByHeader == nil {
+		latestBlockLocatorByHeader = sm.chain.LatestBlockLocatorByHeader
+	}
+	locator, err := latestBlockLocatorByHeader()
 	if err != nil {
 		log.Errorf("Failed to get block locator for the "+
 			"latest block header: %v", err)
-		return
+		return fetchHeadersNotStarted
 	}
 
 	log.Infof("Downloading headers for blocks %d to "+
 		"%d from peer %s", height+1,
 		bestPeer.LastBlock(), bestPeer.Addr())
 
-	bestPeer.PushGetHeadersMsg(locator, &zeroHash)
+	if err := bestPeer.PushGetHeadersMsg(locator, &zeroHash); err != nil {
+		if errors.Is(err, peerpkg.ErrOutboundQueueBudget) {
+			sm.failQueuedRequest(bestPeer, "initial getheaders", err)
+			return fetchHeadersBackpressured
+		}
+		sm.failQueuedRequest(bestPeer, "initial getheaders", err)
+		return fetchHeadersPeerFailed
+	}
 
 	sm.ibdMode = true
 	sm.syncPeer = bestPeer
+	return fetchHeadersQueued
+}
+
+func (sm *SyncManager) failQueuedRequest(peer *peerpkg.Peer,
+	request string, err error) bool {
+
+	if peer == nil {
+		log.Warnf("Unable to queue %s request: %v", request, err)
+		return false
+	}
+	if errors.Is(err, peerpkg.ErrOutboundQueueBudget) {
+		log.Debugf("Deferring %s request to %s because the aggregate "+
+			"outbound queue budget is exhausted", request, peer)
+		return false
+	}
+	log.Warnf("Unable to queue %s request to %s: %v", request, peer, err)
+	if state := sm.peerStates[peer]; state != nil {
+		state.syncCandidate = false
+	}
+	peer.Disconnect()
+	return true
+}
+
+func (sm *SyncManager) failActiveQueuedRequest(peer *peerpkg.Peer,
+	request string, err error, retry func() error) {
+
+	if peer == nil {
+		log.Warnf("Unable to queue active %s request: %v", request, err)
+		return
+	}
+	if !sm.failQueuedRequest(peer, request, err) {
+		if errors.Is(err, peerpkg.ErrOutboundQueueBudget) &&
+			peer == sm.syncPeer && retry != nil &&
+			sm.deferredSyncRequest == nil {
+
+			sm.deferredSyncRequest = &deferredSyncRequest{
+				peer: peer, request: request, retry: retry,
+			}
+		}
+		return
+	}
+	if peer != sm.syncPeer {
+		return
+	}
+	if state := sm.peerStates[peer]; state != nil {
+		sm.clearRequestedState(state)
+	}
+	sm.syncPeer = nil
+	sm.deferredSyncRequest = nil
+	sm.startSync()
+}
+
+func (sm *SyncManager) retryActiveSyncRequest() {
+	deferred := sm.deferredSyncRequest
+	if deferred == nil || deferred.peer != sm.syncPeer {
+		sm.deferredSyncRequest = nil
+		return
+	}
+	if err := deferred.retry(); err != nil {
+		if errors.Is(err, peerpkg.ErrOutboundQueueBudget) {
+			sm.failQueuedRequest(deferred.peer, deferred.request, err)
+			return
+		}
+		sm.deferredSyncRequest = nil
+		sm.failActiveQueuedRequest(deferred.peer, deferred.request, err, nil)
+		return
+	}
+
+	sm.deferredSyncRequest = nil
+	sm.lastProgressTime = time.Now()
 }
 
 // startSync will choose the best peer among the available candidate peers to
@@ -348,13 +452,21 @@ func (sm *SyncManager) startSync() {
 	_, bestHeaderHeight := sm.chain.BestHeader()
 	higherHeaderPeers := sm.fetchHigherPeers(bestHeaderHeight)
 	if len(higherHeaderPeers) != 0 {
-		sm.fetchHeaders()
-
-		// Reset the last progress time now that we have a
-		// non-nil syncPeer to avoid the stall handler firing
-		// before any headers have been received.
-		if sm.syncPeer != nil {
+		switch sm.fetchHeaders() {
+		case fetchHeadersQueued:
+			// Reset the last progress time now that we have a
+			// non-nil syncPeer to avoid the stall handler firing
+			// before any headers have been received.
 			sm.lastProgressTime = time.Now()
+		case fetchHeadersPeerFailed:
+			// The failed candidate was disabled and disconnected above. Try
+			// the next candidate immediately instead of waiting for the done
+			// notification to restart synchronization.
+			sm.startSync()
+		case fetchHeadersBackpressured:
+			// The stall ticker retries once shared aggregate capacity has
+			// had time to drain.  Keep every candidate eligible in the
+			// meantime.
 		}
 		return
 	}
@@ -378,17 +490,20 @@ func (sm *SyncManager) startSync() {
 		return
 	}
 
+	log.Infof("Syncing to block height %d from peer %v",
+		bestPeer.LastBlock(), bestPeer.Addr())
+	if err := sm.fetchHeaderBlocks(bestPeer); err != nil {
+		if sm.failQueuedRequest(bestPeer, "initial block", err) {
+			sm.startSync()
+		}
+		return
+	}
+
 	sm.syncPeer = bestPeer
 	sm.ibdMode = true
-
-	// Reset the last progress time now that we have a non-nil
-	// syncPeer to avoid instantly detecting it as stalled in the
-	// event the progress time hasn't been updated recently.
+	// Reset the last progress time only after the initial request was
+	// accepted, so a failed enqueue cannot create a phantom active sync.
 	sm.lastProgressTime = time.Now()
-
-	log.Infof("Syncing to block height %d from peer %v",
-		sm.syncPeer.LastBlock(), sm.syncPeer.Addr())
-	sm.fetchHeaderBlocks(sm.syncPeer)
 }
 
 // isSyncCandidate returns whether or not the peer is a candidate to consider
@@ -476,9 +591,21 @@ func (sm *SyncManager) handleStallSample() {
 	if atomic.LoadInt32(&sm.shutdown) != 0 {
 		return
 	}
+	for peer, state := range sm.peerStates {
+		if state.requestRetryPending && peer.Connected() {
+			sm.requestQueuedInventory(peer, state)
+		}
+	}
 
-	// If we don't have an active sync peer, exit early.
+	// A previous initial request might have been deferred by aggregate
+	// outbound backpressure.  Retry on the bounded stall cadence so sync does
+	// not depend on another peer event to make progress.
 	if sm.syncPeer == nil {
+		sm.startSync()
+		return
+	}
+	if sm.deferredSyncRequest != nil {
+		sm.retryActiveSyncRequest()
 		return
 	}
 
@@ -588,10 +715,14 @@ func (sm *SyncManager) updateSyncPeer(dcSyncPeer bool) {
 
 	// First, disconnect the current sync peer if requested.
 	if dcSyncPeer {
+		if state := sm.peerStates[sm.syncPeer]; state != nil {
+			state.syncCandidate = false
+		}
 		sm.syncPeer.Disconnect()
 	}
 
 	sm.syncPeer = nil
+	sm.deferredSyncRequest = nil
 	sm.startSync()
 }
 
@@ -869,7 +1000,14 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 			log.Warnf("Failed to get block locator for the "+
 				"latest block: %v", err)
 		} else {
-			peer.PushGetBlocksMsg(locator, orphanRoot)
+			if err := peer.PushGetBlocksMsg(locator, orphanRoot); err != nil {
+				retry := func() error {
+					return peer.PushGetBlocksMsg(locator, orphanRoot)
+				}
+				sm.failActiveQueuedRequest(
+					peer, "orphan-parent getblocks", err, retry,
+				)
+			}
 		}
 	} else {
 		if peer == sm.syncPeer {
@@ -929,7 +1067,11 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 	_, lastHeight := sm.chain.BestHeader()
 	if bmsg.block.Height() < lastHeight &&
 		len(state.requestedBlocks) < minInFlightBlocks {
-		sm.fetchHeaderBlocks(sm.syncPeer)
+		syncPeer := sm.syncPeer
+		if err := sm.fetchHeaderBlocks(syncPeer); err != nil {
+			retry := func() error { return sm.fetchHeaderBlocks(syncPeer) }
+			sm.failActiveQueuedRequest(syncPeer, "block refill", err, retry)
+		}
 		return
 	}
 
@@ -943,15 +1085,44 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 
 // fetchHeaderBlocks creates and sends a request to the given peer for the next
 // list of blocks to be downloaded based on the current list of headers.
-func (sm *SyncManager) fetchHeaderBlocks(peer *peerpkg.Peer) {
+func (sm *SyncManager) fetchHeaderBlocks(peer *peerpkg.Peer) error {
 	if peer == nil {
 		log.Warnf("fetchHeaderBlocks called with a nil peer")
-		return
+		return errors.New("cannot fetch header blocks from a nil peer")
 	}
 
 	gdmsg := sm.buildBlockRequest(peer)
 	if len(gdmsg.Inventory) > 0 {
-		peer.QueueMessage(gdmsg, nil)
+		if err := peer.TryQueueMessage(gdmsg, nil); err != nil {
+			sm.rollbackRequestedInventory(peer, gdmsg.InvVects())
+			return err
+		}
+	}
+	return nil
+}
+
+func (sm *SyncManager) rollbackRequestedInventory(peer *peerpkg.Peer,
+	inventory []*wire.InvVect) {
+
+	state := sm.peerStates[peer]
+	if state == nil {
+		return
+	}
+	for _, iv := range inventory {
+		if iv == nil {
+			continue
+		}
+		switch iv.Type {
+		case wire.InvTypeBlock, wire.InvTypeWitnessBlock:
+			delete(state.requestedBlocks, iv.Hash)
+			delete(sm.requestedBlocks, iv.Hash)
+		case wire.InvTypeTx, wire.InvTypeWitnessTx:
+			delete(state.requestedTxns, iv.Hash)
+			delete(sm.requestedTxns, iv.Hash)
+		case wire.InvTypeClaim, wire.InvTypeAirDrop:
+			delete(state.requestedProofs, iv.Hash)
+			delete(sm.requestedProofs, iv.Hash)
+		}
 	}
 }
 
@@ -1094,7 +1265,17 @@ func (sm *SyncManager) handleHeadersMsg(hmsg *headersMsg) {
 
 		if bestHeight < sm.syncPeer.LastBlock() {
 			locator := blockchain.BlockLocator([]*chainhash.Hash{&bestHash})
-			sm.syncPeer.PushGetHeadersMsg(locator, &zeroHash)
+			syncPeer := sm.syncPeer
+			if err := syncPeer.PushGetHeadersMsg(
+				locator, &zeroHash,
+			); err != nil {
+				retry := func() error {
+					return syncPeer.PushGetHeadersMsg(locator, &zeroHash)
+				}
+				sm.failActiveQueuedRequest(
+					syncPeer, "continuation getheaders", err, retry,
+				)
+			}
 			return
 		}
 	}
@@ -1103,7 +1284,10 @@ func (sm *SyncManager) handleHeadersMsg(hmsg *headersMsg) {
 	log.Infof("downloaded headers to %v(%v) from peer %v "+
 		"-- now fetching blocks",
 		bestHeaderHash, bestHeaderHeight, hmsg.peer.String())
-	sm.fetchHeaderBlocks(peer)
+	if err := sm.fetchHeaderBlocks(peer); err != nil {
+		retry := func() error { return sm.fetchHeaderBlocks(peer) }
+		sm.failActiveQueuedRequest(peer, "header block", err, retry)
+	}
 }
 
 // handleNotFoundMsg handles notfound messages from all peers.
@@ -1301,6 +1485,12 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 			continue
 		}
 		if !haveInv {
+			// Keep at most one wire-sized deferred batch per peer while
+			// aggregate outbound capacity is unavailable.  The deferred
+			// batch is retried explicitly below and by the stall ticker.
+			if state.requestRetryPending {
+				continue
+			}
 			if iv.Type == wire.InvTypeTx {
 				// Skip the transaction if it has already been
 				// rejected.
@@ -1337,7 +1527,15 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 						"%v", err)
 					continue
 				}
-				peer.PushGetBlocksMsg(locator, orphanRoot)
+				if err := peer.PushGetBlocksMsg(locator, orphanRoot); err != nil {
+					retry := func() error {
+						return peer.PushGetBlocksMsg(locator, orphanRoot)
+					}
+					sm.failActiveQueuedRequest(
+						peer, "known-orphan getblocks", err, retry,
+					)
+					return
+				}
 				continue
 			}
 
@@ -1350,13 +1548,33 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 				// final one the remote peer knows about (zero
 				// stop hash).
 				locator := sm.chain.BlockLocatorFromHash(&iv.Hash)
-				peer.PushGetBlocksMsg(locator, &zeroHash)
+				if err := peer.PushGetBlocksMsg(locator, &zeroHash); err != nil {
+					retry := func() error {
+						return peer.PushGetBlocksMsg(locator, &zeroHash)
+					}
+					sm.failActiveQueuedRequest(
+						peer, "side-chain continuation getblocks", err, retry,
+					)
+					return
+				}
 			}
 		}
 	}
 
-	// Request as much as possible at once.  Anything that won't fit into
-	// the request will be requested on the next inv message.
+	sm.requestQueuedInventory(peer, state)
+}
+
+// requestQueuedInventory requests one bounded batch from a peer's deferred
+// inventory queue.  Aggregate budget failures restore the exact rejected
+// batch at the front so order and retryability are preserved.
+func (sm *SyncManager) requestQueuedInventory(peer *peerpkg.Peer,
+	state *peerSyncState) {
+
+	if peer == nil || state == nil {
+		return
+	}
+	// Request as much as possible at once.  A remainder stays bounded and is
+	// retried by the stall ticker without requiring another announcement.
 	numRequested := 0
 	gdmsg := wire.NewHnsMsgGetData()
 	requestQueue := state.requestQueue
@@ -1415,8 +1633,24 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 		}
 	}
 	state.requestQueue = requestQueue
+	state.requestRetryPending = len(requestQueue) > 0
 	if len(gdmsg.Inventory) > 0 {
-		peer.QueueMessage(gdmsg, nil)
+		if err := peer.TryQueueMessage(gdmsg, nil); err != nil {
+			rejectedInventory := gdmsg.InvVects()
+			sm.rollbackRequestedInventory(peer, rejectedInventory)
+			log.Warnf("Unable to queue inventory request to %s: %v", peer, err)
+			if errors.Is(err, peerpkg.ErrOutboundQueueBudget) {
+				retryQueue := make([]*wire.InvVect, 0,
+					len(rejectedInventory)+len(state.requestQueue))
+				retryQueue = append(retryQueue, rejectedInventory...)
+				retryQueue = append(retryQueue, state.requestQueue...)
+				state.requestQueue = retryQueue
+				state.requestRetryPending = true
+				return
+			}
+			state.requestRetryPending = false
+			peer.Disconnect()
+		}
 	}
 }
 
@@ -1816,20 +2050,21 @@ func (sm *SyncManager) Pause() chan<- struct{} {
 // block, tx, and inv updates.
 func New(config *Config) (*SyncManager, error) {
 	sm := SyncManager{
-		peerNotifier:    config.PeerNotifier,
-		chain:           config.Chain,
-		txMemPool:       config.TxMemPool,
-		chainParams:     config.ChainParams,
-		rejectedBlocks:  make(map[chainhash.Hash]struct{}),
-		rejectedTxns:    make(map[chainhash.Hash]struct{}),
-		requestedTxns:   make(map[chainhash.Hash]struct{}),
-		requestedBlocks: make(map[chainhash.Hash]struct{}),
-		requestedProofs: make(map[chainhash.Hash]struct{}),
-		peerStates:      make(map[*peerpkg.Peer]*peerSyncState),
-		progressLogger:  newBlockProgressLogger("Processed", log),
-		msgChan:         make(chan interface{}, config.MaxPeers*3),
-		quit:            make(chan struct{}),
-		feeEstimator:    config.FeeEstimator,
+		peerNotifier:               config.PeerNotifier,
+		chain:                      config.Chain,
+		latestBlockLocatorByHeader: config.Chain.LatestBlockLocatorByHeader,
+		txMemPool:                  config.TxMemPool,
+		chainParams:                config.ChainParams,
+		rejectedBlocks:             make(map[chainhash.Hash]struct{}),
+		rejectedTxns:               make(map[chainhash.Hash]struct{}),
+		requestedTxns:              make(map[chainhash.Hash]struct{}),
+		requestedBlocks:            make(map[chainhash.Hash]struct{}),
+		requestedProofs:            make(map[chainhash.Hash]struct{}),
+		peerStates:                 make(map[*peerpkg.Peer]*peerSyncState),
+		progressLogger:             newBlockProgressLogger("Processed", log),
+		msgChan:                    make(chan interface{}, config.MaxPeers*3),
+		quit:                       make(chan struct{}),
+		feeEstimator:               config.FeeEstimator,
 	}
 
 	if config.DisableCheckpoints {

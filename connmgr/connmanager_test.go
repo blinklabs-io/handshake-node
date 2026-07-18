@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +39,31 @@ type mockConn struct {
 
 	// remote network, address for the connection.
 	rAddr net.Addr
+}
+
+type closeTrackingConn struct {
+	mockConn
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newCloseTrackingConn(remotePort int) *closeTrackingConn {
+	return &closeTrackingConn{
+		mockConn: mockConn{
+			lnet:  "tcp",
+			laddr: "127.0.0.1:12038",
+			rAddr: &net.TCPAddr{
+				IP:   net.ParseIP("192.0.2.1"),
+				Port: remotePort,
+			},
+		},
+		closed: make(chan struct{}),
+	}
+}
+
+func (c *closeTrackingConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
 }
 
 // LocalAddr returns the local address for the connection.
@@ -663,4 +689,77 @@ out:
 
 	cmgr.Stop()
 	cmgr.Wait()
+}
+
+func TestListenerPreflightBoundsAcceptedCallbacks(t *testing.T) {
+	listener := newMockListener("127.0.0.1:12038")
+	const (
+		maxAccepted = 2
+		totalConns  = 64
+	)
+	slots := make(chan struct{}, maxAccepted)
+	accepted := make(chan net.Conn, totalConns)
+	release := make(chan struct{})
+
+	cmgr, err := New(&Config{
+		Listeners: []net.Listener{listener},
+		OnAcceptPreflight: func(net.Conn) bool {
+			select {
+			case slots <- struct{}{}:
+				return true
+			default:
+				return false
+			}
+		},
+		OnAccept: func(conn net.Conn) {
+			accepted <- conn
+			<-release
+			<-slots
+			_ = conn.Close()
+		},
+		Dial: mockDialer,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cmgr.Start()
+	t.Cleanup(func() {
+		cmgr.Stop()
+		cmgr.Wait()
+	})
+
+	connections := make([]*closeTrackingConn, totalConns)
+	for i := range connections {
+		connections[i] = newCloseTrackingConn(13000 + i)
+		listener.provideConn <- connections[i]
+	}
+
+	for i := 0; i < maxAccepted; i++ {
+		select {
+		case <-accepted:
+		case <-time.After(time.Second):
+			t.Fatal("admitted callback did not start")
+		}
+	}
+	for _, conn := range connections[maxAccepted:] {
+		select {
+		case <-conn.closed:
+		case <-time.After(time.Second):
+			t.Fatal("preflight-rejected connection was not closed")
+		}
+	}
+	select {
+	case <-accepted:
+		t.Fatal("preflight limit allowed an excess callback")
+	default:
+	}
+
+	close(release)
+	for _, conn := range connections[:maxAccepted] {
+		select {
+		case <-conn.closed:
+		case <-time.After(time.Second):
+			t.Fatal("admitted callback did not release its connection")
+		}
+	}
 }

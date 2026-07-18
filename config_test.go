@@ -91,25 +91,31 @@ func TestDefaultRPCPorts(t *testing.T) {
 
 func TestApplyConfigEnvOverrides(t *testing.T) {
 	cfg := config{
-		RPCUser:      "fileuser",
-		Generate:     false,
-		BanDuration:  time.Second,
-		AddPeers:     []string{"from-file"},
-		BlockMaxSize: 1,
-		MaxProofRPS:  100,
-		Prune:        1,
-		ConfigFile:   "from-file.conf",
+		RPCUser:             "fileuser",
+		Generate:            false,
+		BanDuration:         time.Second,
+		AddPeers:            []string{"from-file"},
+		BlockMaxSize:        1,
+		MaxProofRPS:         100,
+		MaxInboundPerIP:     8,
+		MaxOutboundQueueMiB: 128,
+		P2PWriteTimeout:     2 * time.Minute,
+		Prune:               1,
+		ConfigFile:          "from-file.conf",
 	}
 	env := map[string]string{
-		"HANDSHAKE_NODE_RPCUSER":      "envuser",
-		"HANDSHAKE_NODE_GENERATE":     "true",
-		"HANDSHAKE_NODE_BANDURATION":  "2m",
-		"HANDSHAKE_NODE_ADDPEER":      "127.0.0.1,127.0.0.2",
-		"HANDSHAKE_NODE_BLOCKMAXSIZE": "010",
-		"HANDSHAKE_NODE_MAXPROOFRPS":  "25",
-		"HANDSHAKE_NODE_PRUNE":        "010",
-		"HANDSHAKE_NODE_CONFIGFILE":   "from-env.conf",
-		"HANDSHAKE_NODE_VERSION":      "true",
+		"HANDSHAKE_NODE_RPCUSER":             "envuser",
+		"HANDSHAKE_NODE_GENERATE":            "true",
+		"HANDSHAKE_NODE_BANDURATION":         "2m",
+		"HANDSHAKE_NODE_ADDPEER":             "127.0.0.1,127.0.0.2",
+		"HANDSHAKE_NODE_BLOCKMAXSIZE":        "010",
+		"HANDSHAKE_NODE_MAXPROOFRPS":         "25",
+		"HANDSHAKE_NODE_MAXINBOUNDPERIP":     "12",
+		"HANDSHAKE_NODE_MAXOUTBOUNDQUEUEMIB": "256",
+		"HANDSHAKE_NODE_P2PWRITETIMEOUT":     "7m",
+		"HANDSHAKE_NODE_PRUNE":               "010",
+		"HANDSHAKE_NODE_CONFIGFILE":          "from-env.conf",
+		"HANDSHAKE_NODE_VERSION":             "true",
 	}
 	lookup := func(key string) (string, bool) {
 		value, ok := env[key]
@@ -139,6 +145,17 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 	}
 	if cfg.MaxProofRPS != 25 {
 		t.Fatalf("MaxProofRPS: got %d, want %d", cfg.MaxProofRPS, 25)
+	}
+	if cfg.MaxInboundPerIP != 12 {
+		t.Fatalf("MaxInboundPerIP: got %d, want %d", cfg.MaxInboundPerIP, 12)
+	}
+	if cfg.MaxOutboundQueueMiB != 256 {
+		t.Fatalf("MaxOutboundQueueMiB: got %d, want %d",
+			cfg.MaxOutboundQueueMiB, 256)
+	}
+	if cfg.P2PWriteTimeout != 7*time.Minute {
+		t.Fatalf("P2PWriteTimeout: got %v, want %v",
+			cfg.P2PWriteTimeout, 7*time.Minute)
 	}
 	if cfg.Prune != 10 {
 		t.Fatalf("Prune: got %d, want %d", cfg.Prune, uint64(10))

@@ -66,6 +66,8 @@ const (
 	defaultMaxOrphanTxSize       = 100000
 	defaultSigCacheMaxSize       = 100000
 	defaultUtxoCacheMaxSizeMiB   = 250
+	defaultMaxInboundPerIP       = 8
+	defaultMaxOutboundQueueMiB   = 128
 	sampleConfigFilename         = "sample-handshake-node.conf"
 	defaultTxIndex               = false
 	defaultAddrIndex             = false
@@ -138,6 +140,8 @@ type config struct {
 	Listeners            []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces on the default port for the active network)"`
 	LogDir               string        `long:"logdir" description:"Directory to log output."`
 	MaxOrphanTxs         int           `long:"maxorphantx" description:"Max number of orphan transactions to keep in memory"`
+	MaxInboundPerIP      int           `long:"maxinboundperip" description:"Maximum inbound connections from one source IP, including handshakes (0 disables the per-IP limit)"`
+	MaxOutboundQueueMiB  uint          `long:"maxoutboundqueuemib" description:"Maximum aggregate P2P response, output queue, and transport workspace for all peers in MiB (not total process memory)"`
 	MaxPeers             int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
 	MaxProofRPS          uint32        `long:"maxproofrps" description:"Maximum name proof requests per second accepted from each peer before banning"`
 	MetricsListeners     []string      `long:"metricslisten" description:"Enable the Prometheus metrics endpoint on the specified interface/port (disabled by default; default port 12039 when no port is specified)"`
@@ -160,6 +164,7 @@ type config struct {
 	OnionProxyPass       string        `long:"onionpass" default-mask:"-" description:"Password for onion proxy server"`
 	OnionProxyUser       string        `long:"onionuser" description:"Username for onion proxy server"`
 	Profile              string        `long:"profile" description:"Enable HTTP profiling on given port -- NOTE port must be between 1024 and 65536"`
+	P2PWriteTimeout      time.Duration `long:"p2pwritetimeout" description:"Maximum time allowed for a single P2P message write"`
 	Proxy                string        `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
 	ProxyPass            string        `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
 	ProxyUser            string        `long:"proxyuser" description:"Username for proxy server"`
@@ -616,6 +621,8 @@ func loadConfig() (*config, []string, error) {
 		ConfigFile:           defaultConfigFile,
 		DebugLevel:           defaultLogLevel,
 		MaxPeers:             defaultMaxPeers,
+		MaxInboundPerIP:      defaultMaxInboundPerIP,
+		MaxOutboundQueueMiB:  defaultMaxOutboundQueueMiB,
 		BanDuration:          defaultBanDuration,
 		BanThreshold:         defaultBanThreshold,
 		MaxProofRPS:          defaultMaxProofRPS,
@@ -630,6 +637,7 @@ func loadConfig() (*config, []string, error) {
 		MinRelayTxFee:        mempool.DefaultMinRelayTxFee.ToHNS(),
 		FreeTxRelayLimit:     defaultFreeTxRelayLimit,
 		TrickleInterval:      defaultTrickleInterval,
+		P2PWriteTimeout:      peer.DefaultWriteTimeout,
 		BlockMinSize:         defaultBlockMinSize,
 		BlockMaxSize:         defaultBlockMaxSize,
 		BlockMinWeight:       defaultBlockMinWeight,
@@ -852,6 +860,50 @@ func loadConfig() (*config, []string, error) {
 	if cfg.MaxProofRPS == 0 {
 		str := "%s: the maxproofrps option may not be zero"
 		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if cfg.MaxInboundPerIP < 0 {
+		str := "%s: the maxinboundperip option may not be negative"
+		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if cfg.MaxOutboundQueueMiB == 0 {
+		str := "%s: the maxoutboundqueuemib option may not be zero"
+		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	const bytesPerMiB = uint64(1024 * 1024)
+	if uint64(cfg.MaxOutboundQueueMiB) > ^uint64(0)/bytesPerMiB {
+		str := "%s: the maxoutboundqueuemib option is too large"
+		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	minimumQueueBudget := uint64(peer.MinimumOutboundQueueBudget)
+	if cfg.BrontideTransport {
+		minimumQueueBudget = peer.MinimumBrontideOutboundQueueBudget
+	}
+	minimumBudget := uint64(blockResponseWorkspaceBytes) + minimumQueueBudget
+	if uint64(cfg.MaxOutboundQueueMiB)*bytesPerMiB < minimumBudget {
+
+		str := "%s: the maxoutboundqueuemib option must be at least %d MiB"
+		minimumMiB := (minimumBudget + bytesPerMiB - 1) /
+			bytesPerMiB
+		err := fmt.Errorf(str, funcName, minimumMiB)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if cfg.P2PWriteTimeout < time.Second {
+		str := "%s: the p2pwritetimeout option may not be less than 1s -- parsed [%v]"
+		err := fmt.Errorf(str, funcName, cfg.P2PWriteTimeout)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err

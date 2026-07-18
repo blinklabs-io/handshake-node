@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -203,19 +204,21 @@ func TestShouldMarkRejectedBlockInvalid(t *testing.T) {
 
 func connectSyncTestPeer(t *testing.T, params *chaincfg.Params,
 	height int32) (*peer.Peer, net.Conn, func()) {
+	return connectSyncTestPeerWithConfig(t, params, height, peer.Config{})
+}
+
+func connectSyncTestPeerWithConfig(t *testing.T, params *chaincfg.Params,
+	height int32, peerConfig peer.Config) (*peer.Peer, net.Conn, func()) {
 
 	t.Helper()
 
 	verack := make(chan struct{}, 1)
-	p := peer.NewInboundPeer(&peer.Config{
-		ChainParams:    params,
-		AllowSelfConns: true,
-		Listeners: peer.MessageListeners{
-			OnVerAck: func(*peer.Peer, *wire.HnsMsgVerack) {
-				verack <- struct{}{}
-			},
-		},
-	})
+	peerConfig.ChainParams = params
+	peerConfig.AllowSelfConns = true
+	peerConfig.Listeners.OnVerAck = func(*peer.Peer, *wire.HnsMsgVerack) {
+		verack <- struct{}{}
+	}
+	p := peer.NewInboundPeer(&peerConfig)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -280,6 +283,39 @@ func connectSyncTestPeer(t *testing.T, params *chaincfg.Params,
 	return p, remote, cleanup
 }
 
+func connectQueueRejectingSyncPeer(t *testing.T, sm *SyncManager,
+	height int32) (*peer.Peer, func()) {
+
+	t.Helper()
+	p, _, cleanup := connectSyncTestPeerWithConfig(
+		t, sm.chainParams, height, peer.Config{MaxOutboundQueueBytes: 1},
+	)
+	sm.peerStates[p] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
+	}
+	return p, cleanup
+}
+
+func connectBackpressuredSyncPeer(t *testing.T, sm *SyncManager,
+	height int32) (*peer.Peer, net.Conn, *peer.OutboundQueueWorkspace, func()) {
+
+	t.Helper()
+	budget := peer.NewOutboundQueueBudget(peer.MinimumOutboundQueueBudget)
+	p, remote, cleanup := connectSyncTestPeerWithConfig(t, sm.chainParams,
+		height, peer.Config{OutboundQueueBudget: budget})
+	// MinimumOutboundQueueBudget includes the fixed 2 MiB control reserve.
+	// Occupy all ordinary capacity so protocol controls remain available while
+	// sync requests receive transient aggregate backpressure.
+	workspace, ok := budget.AcquireWorkspace(
+		peer.MinimumOutboundQueueBudget - 2*1024*1024,
+	)
+	require.True(t, ok, "reserve ordinary outbound queue capacity")
+	return p, remote, workspace, cleanup
+}
+
 func readSyncTestPeerMessage(t *testing.T, remote net.Conn,
 	params *chaincfg.Params) wire.HandshakeMessage {
 
@@ -289,6 +325,84 @@ func readSyncTestPeerMessage(t *testing.T, remote net.Conn,
 	_, msg, _, err := wire.ReadHandshakeMessageN(remote, params.Net)
 	require.NoError(t, err)
 	return msg
+}
+
+type syncTestPipeAddr string
+
+func (a syncTestPipeAddr) Network() string { return "tcp" }
+func (a syncTestPipeAddr) String() string  { return string(a) }
+
+type syncTestPipeConn struct {
+	net.Conn
+}
+
+func (*syncTestPipeConn) LocalAddr() net.Addr {
+	return syncTestPipeAddr("127.0.0.1:12038")
+}
+
+func (*syncTestPipeConn) RemoteAddr() net.Addr {
+	return syncTestPipeAddr("127.0.0.1:12039")
+}
+
+func connectDrainingSyncTestPeer(t *testing.T, params *chaincfg.Params,
+	height int32) *peer.Peer {
+
+	t.Helper()
+	local, remote := net.Pipe()
+	wrapped := &syncTestPipeConn{Conn: local}
+	verack := make(chan struct{}, 1)
+	p := peer.NewInboundPeer(&peer.Config{
+		ChainParams:    params,
+		AllowSelfConns: true,
+		Listeners: peer.MessageListeners{
+			OnVerAck: func(*peer.Peer, *wire.HnsMsgVerack) {
+				verack <- struct{}{}
+			},
+		},
+	})
+	p.AssociateConnection(wrapped)
+
+	remoteNA := wire.NewNetAddressIPPort(net.ParseIP("127.0.0.1"), 0,
+		wire.SFNodeNetwork)
+	version := &wire.HnsMsgVersion{
+		Version:  peer.MaxProtocolVersion,
+		Services: uint64(wire.SFNodeNetwork),
+		Time:     uint64(time.Now().Unix()),
+		Remote:   wire.NewHnsNetAddress(remoteNA),
+		Agent:    wire.DefaultUserAgent,
+		Height:   uint32(height),
+	}
+	version.SetNonce(uint64(height) + 1)
+	_, err := wire.WriteHnsMessageN(remote, version, params.Net)
+	require.NoError(t, err)
+	require.IsType(t, &wire.HnsMsgVersion{},
+		readSyncTestPeerMessage(t, remote, params))
+	require.IsType(t, &wire.HnsMsgVerack{},
+		readSyncTestPeerMessage(t, remote, params))
+	_, err = wire.WriteHnsMessageN(remote, &wire.HnsMsgVerack{}, params.Net)
+	require.NoError(t, err)
+	select {
+	case <-verack:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pipe peer negotiation")
+	}
+	require.NoError(t, remote.SetReadDeadline(time.Time{}))
+	p.UpdateLastBlockHeight(height)
+
+	go func() {
+		for {
+			if _, _, _, err := wire.ReadHandshakeMessageN(
+				remote, params.Net,
+			); err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		p.Disconnect()
+		_ = remote.Close()
+	})
+	return p
 }
 
 func TestCheckHeadersList(t *testing.T) {
@@ -481,6 +595,156 @@ func TestStartSyncSendsGetHeadersLocator(t *testing.T) {
 	require.Equal(t, [32]byte{}, getHeaders.StopHash)
 }
 
+func TestStartSyncInitialGetHeadersFailureReselects(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	failingPeer, cleanupFailing := connectQueueRejectingSyncPeer(t, sm, 12)
+	defer cleanupFailing()
+	replacementPeer, replacementRemote, cleanupReplacement :=
+		connectSyncTestPeer(t, &params, 9)
+	defer cleanupReplacement()
+	sm.peerStates[replacementPeer] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
+	}
+
+	sm.startSync()
+
+	require.False(t, failingPeer.Connected())
+	require.False(t, sm.peerStates[failingPeer].syncCandidate)
+	require.Same(t, replacementPeer, sm.syncPeer)
+	require.True(t, sm.ibdMode)
+	require.IsType(t, &wire.HnsMsgGetHeaders{},
+		readSyncTestPeerMessage(t, replacementRemote, &params))
+}
+
+func TestStartSyncRetriesAggregateBackpressure(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	syncPeer, remote, workspace, cleanup := connectBackpressuredSyncPeer(
+		t, sm, 12,
+	)
+	defer cleanup()
+	sm.peerStates[syncPeer] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
+	}
+
+	sm.startSync()
+	require.Nil(t, sm.syncPeer)
+	require.False(t, sm.ibdMode)
+	require.True(t, syncPeer.Connected())
+	require.True(t, sm.peerStates[syncPeer].syncCandidate)
+
+	workspace.Release()
+	sm.handleStallSample()
+	require.Same(t, syncPeer, sm.syncPeer)
+	require.True(t, sm.ibdMode)
+	require.IsType(t, &wire.HnsMsgGetHeaders{},
+		readSyncTestPeerMessage(t, remote, &params))
+}
+
+func TestActiveBlockRequestRetriesAggregateBackpressure(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	blocks := generateTestBlocks(t, &params, 2)
+	for _, block := range blocks {
+		_, err := sm.chain.ProcessBlockHeader(
+			&block.MsgBlock().Header, blockchain.BFNone, false,
+		)
+		require.NoError(t, err)
+	}
+
+	syncPeer, remote, workspace, cleanup := connectBackpressuredSyncPeer(
+		t, sm, int32(len(blocks)),
+	)
+	defer cleanup()
+	state := &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
+	}
+	sm.peerStates[syncPeer] = state
+	sm.syncPeer = syncPeer
+	sm.ibdMode = true
+	sm.lastProgressTime = time.Now()
+
+	err := sm.fetchHeaderBlocks(syncPeer)
+	require.ErrorIs(t, err, peer.ErrOutboundQueueBudget)
+	retry := func() error { return sm.fetchHeaderBlocks(syncPeer) }
+	sm.failActiveQueuedRequest(syncPeer, "block refill", err, retry)
+	require.NotNil(t, sm.deferredSyncRequest)
+	require.Same(t, syncPeer, sm.syncPeer)
+	require.True(t, syncPeer.Connected())
+	require.True(t, state.syncCandidate)
+	require.Empty(t, state.requestedBlocks)
+
+	workspace.Release()
+	sm.handleStallSample()
+	require.Nil(t, sm.deferredSyncRequest)
+	require.Same(t, syncPeer, sm.syncPeer)
+	msg := readSyncTestPeerMessage(t, remote, &params)
+	getData, ok := msg.(*wire.HnsMsgGetData)
+	require.True(t, ok, "got %T, want *wire.HnsMsgGetData", msg)
+	require.Len(t, getData.Inventory, len(blocks))
+	for _, block := range blocks {
+		require.Contains(t, state.requestedBlocks, *block.Hash())
+		require.Contains(t, sm.requestedBlocks, *block.Hash())
+	}
+}
+
+func TestHeaderContinuationQueueFailureReselects(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 2)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	failingPeer, cleanupFailing := connectQueueRejectingSyncPeer(t, sm, 2)
+	defer cleanupFailing()
+	replacementPeer, replacementRemote, cleanupReplacement :=
+		connectSyncTestPeer(t, &params, 2)
+	defer cleanupReplacement()
+	sm.peerStates[replacementPeer] = &peerSyncState{
+		syncCandidate:   true,
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
+	}
+	sm.syncPeer = failingPeer
+	sm.ibdMode = true
+
+	sm.handleHeadersMsg(&headersMsg{
+		headers: &wire.HnsMsgHeaders{Headers: []*wire.BlockHeader{
+			&blocks[0].MsgBlock().Header,
+		}},
+		peer: failingPeer,
+	})
+
+	require.False(t, failingPeer.Connected())
+	require.False(t, sm.peerStates[failingPeer].syncCandidate)
+	require.Same(t, replacementPeer, sm.syncPeer)
+	require.IsType(t, &wire.HnsMsgGetHeaders{},
+		readSyncTestPeerMessage(t, replacementRemote, &params))
+}
+
 func TestStartSyncSendsGetDataForHeaderBlocks(t *testing.T) {
 	t.Parallel()
 
@@ -571,6 +835,101 @@ func TestHandleInvMsgTracksRequestedCoinbaseProofs(t *testing.T) {
 	require.NotContains(t, sm.peerStates[p].requestedProofs, proofHash)
 }
 
+func TestHandleInvQueueFailureRollsBackRequestedInventory(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	sm.txMemPool = mempool.New(&mempool.Config{})
+
+	p, _, cleanup := connectSyncTestPeerWithConfig(
+		t, &params, 0, peer.Config{MaxOutboundQueueBytes: 1},
+	)
+	defer cleanup()
+	sm.peerStates[p] = &peerSyncState{
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+	}
+
+	proofHash := chainhash.Hash{0x01, 0x02, 0x03}
+	inv := wire.NewHnsMsgInv()
+	require.NoError(t, inv.AddInvVect(wire.NewInvVect(
+		wire.InvTypeClaim, &proofHash,
+	)))
+	sm.handleInvMsg(&invMsg{inv: inv, peer: p})
+
+	require.NotContains(t, sm.requestedProofs, proofHash)
+	require.NotContains(t, sm.peerStates[p].requestedProofs, proofHash)
+	require.False(t, p.Connected(),
+		"peer should be disconnected when a required request cannot be queued")
+}
+
+func TestHandleInvAggregateBackpressurePreservesRetryOrder(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	sm.txMemPool = mempool.New(&mempool.Config{})
+
+	p, remote, workspace, cleanup := connectBackpressuredSyncPeer(t, sm, 0)
+	defer cleanup()
+	state := &peerSyncState{
+		requestedTxns:   make(map[chainhash.Hash]struct{}),
+		requestedBlocks: make(map[chainhash.Hash]struct{}),
+		requestedProofs: make(map[chainhash.Hash]struct{}),
+	}
+	sm.peerStates[p] = state
+
+	firstHash := chainhash.Hash{0x01}
+	secondHash := chainhash.Hash{0x02}
+	thirdHash := chainhash.Hash{0x03}
+	firstInv := wire.NewHnsMsgInv()
+	for _, hash := range []*chainhash.Hash{&firstHash, &secondHash, &thirdHash} {
+		require.NoError(t, firstInv.AddInvVect(wire.NewInvVect(
+			wire.InvTypeClaim, hash,
+		)))
+	}
+	sm.handleInvMsg(&invMsg{inv: firstInv, peer: p})
+
+	require.True(t, p.Connected())
+	require.True(t, state.requestRetryPending)
+	require.Len(t, state.requestQueue, 3)
+	require.Equal(t, firstHash, state.requestQueue[0].Hash)
+
+	// Repeated announcements under pressure retry the existing batch but do
+	// not grow the deferred queue.
+	extraHash := chainhash.Hash{0x04}
+	extraInv := wire.NewHnsMsgInv()
+	require.NoError(t, extraInv.AddInvVect(wire.NewInvVect(
+		wire.InvTypeClaim, &extraHash,
+	)))
+	sm.handleInvMsg(&invMsg{inv: extraInv, peer: p})
+	require.True(t, p.Connected())
+	require.Len(t, state.requestQueue, 3)
+	require.Equal(t, firstHash, state.requestQueue[0].Hash)
+	require.Equal(t, secondHash, state.requestQueue[1].Hash)
+	require.Equal(t, thirdHash, state.requestQueue[2].Hash)
+	require.NotContains(t, sm.requestedProofs, extraHash)
+
+	workspace.Release()
+	sm.handleStallSample()
+
+	msg := readSyncTestPeerMessage(t, remote, &params)
+	getData, ok := msg.(*wire.HnsMsgGetData)
+	require.True(t, ok, "got %T, want *wire.HnsMsgGetData", msg)
+	require.Len(t, getData.Inventory, 3)
+	require.Equal(t, firstHash, getData.Inventory[0].InvVect().Hash)
+	require.Equal(t, secondHash, getData.Inventory[1].InvVect().Hash)
+	require.Equal(t, thirdHash, getData.Inventory[2].InvVect().Hash)
+	require.Empty(t, state.requestQueue)
+	require.False(t, state.requestRetryPending)
+	require.Contains(t, sm.requestedProofs, firstHash)
+	require.Contains(t, sm.requestedProofs, secondHash)
+	require.Contains(t, sm.requestedProofs, thirdHash)
+}
+
 func TestHandleBlockMsgRequestsParentsForOrphanBlock(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil
@@ -612,6 +971,73 @@ func TestHandleBlockMsgRequestsParentsForOrphanBlock(t *testing.T) {
 		locatorHashes = append(locatorHashes, *hash)
 	}
 	require.Contains(t, locatorHashes, *params.GenesisHash)
+}
+
+func TestOrphanParentRequestQueueFailureDisconnectsPeer(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 2)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	p, cleanup := connectQueueRejectingSyncPeer(t, sm, 2)
+	defer cleanup()
+
+	orphan := blocks[1]
+	orphanHash := orphan.Hash()
+	sm.peerStates[p].requestedBlocks[*orphanHash] = struct{}{}
+	sm.requestedBlocks[*orphanHash] = struct{}{}
+	sm.handleBlockMsg(&blockMsg{block: orphan, peer: p})
+
+	require.True(t, sm.chain.IsKnownOrphan(orphanHash))
+	require.False(t, p.Connected())
+	require.False(t, sm.peerStates[p].syncCandidate)
+}
+
+func TestKnownOrphanRequestQueueFailureDisconnectsPeer(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 2)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	_, isOrphan, err := sm.chain.ProcessBlock(blocks[1], blockchain.BFNone)
+	require.NoError(t, err)
+	require.True(t, isOrphan)
+
+	p, cleanup := connectQueueRejectingSyncPeer(t, sm, 2)
+	defer cleanup()
+	inv := wire.NewHnsMsgInv()
+	require.NoError(t, inv.AddInvVect(wire.NewInvVect(
+		wire.InvTypeBlock, blocks[1].Hash(),
+	)))
+	sm.handleInvMsg(&invMsg{inv: inv, peer: p})
+
+	require.False(t, p.Connected())
+	require.False(t, sm.peerStates[p].syncCandidate)
+}
+
+func TestSideChainContinuationQueueFailureDisconnectsPeer(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 1)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	_, isOrphan, err := sm.chain.ProcessBlock(blocks[0], blockchain.BFNone)
+	require.NoError(t, err)
+	require.False(t, isOrphan)
+
+	p, cleanup := connectQueueRejectingSyncPeer(t, sm, 2)
+	defer cleanup()
+	inv := wire.NewHnsMsgInv()
+	require.NoError(t, inv.AddInvVect(wire.NewInvVect(
+		wire.InvTypeBlock, blocks[0].Hash(),
+	)))
+	sm.handleInvMsg(&invMsg{inv: inv, peer: p})
+
+	require.False(t, p.Connected())
+	require.False(t, sm.peerStates[p].syncCandidate)
 }
 
 func TestHandleBlockMsgClearsRequestedStateForKnownBlock(t *testing.T) {
@@ -1757,10 +2183,7 @@ func newSyncCandidate(t *testing.T, sm *SyncManager,
 
 	t.Helper()
 
-	p := peer.NewInboundPeer(&peer.Config{
-		ChainParams: sm.chainParams,
-	})
-	p.UpdateLastBlockHeight(height)
+	p := connectDrainingSyncTestPeer(t, sm.chainParams, height)
 	sm.peerStates[p] = &peerSyncState{
 		syncCandidate:   true,
 		requestedTxns:   make(map[chainhash.Hash]struct{}),
@@ -2068,24 +2491,54 @@ func TestStartSyncBlockFallback(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Add a peer whose height equals the header height.
+	// Add a connected peer whose height equals the header height.
 	// fetchHigherPeers(bestHeaderHeight) returns nothing because
 	// the peer is not strictly higher than our headers.
 	// fetchHigherPeers(bestBlockHeight=0) returns the peer.
-	syncPeer := peer.NewInboundPeer(&peer.Config{})
-	syncPeer.UpdateLastBlockHeight(int32(numBlocks))
-	sm.peerStates[syncPeer] = &peerSyncState{
-		syncCandidate:   true,
-		requestedTxns:   make(map[chainhash.Hash]struct{}),
-		requestedBlocks: make(map[chainhash.Hash]struct{}),
-	}
+	syncPeer := newSyncCandidate(t, sm, numBlocks)
 
 	sm.startSync()
 
-	require.NotNil(t, sm.syncPeer,
+	require.Same(t, syncPeer, sm.syncPeer,
 		"sync peer should be set for block download")
 	require.NotEmpty(t, sm.requestedBlocks,
 		"blocks should be requested via fetchHeaderBlocks")
+}
+
+// TestStartSyncLocatorFailureDoesNotRecurseOrPoisonPeer verifies a local
+// block-locator failure stops only the current sync attempt.  A later event can
+// retry the same healthy candidate without recursive reselection or disconnect.
+func TestStartSyncLocatorFailureDoesNotRecurseOrPoisonPeer(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	syncPeer := newSyncCandidate(t, sm, 1)
+	locatorCalls := 0
+	sm.latestBlockLocatorByHeader = func() (blockchain.BlockLocator, error) {
+		locatorCalls++
+		return nil, errors.New("injected persistent locator failure")
+	}
+
+	sm.startSync()
+	require.Equal(t, 1, locatorCalls,
+		"a local failure must not recursively restart sync")
+	require.Nil(t, sm.syncPeer)
+	require.False(t, sm.ibdMode)
+	require.True(t, syncPeer.Connected())
+	require.True(t, sm.peerStates[syncPeer].syncCandidate)
+
+	sm.startSync()
+	require.Equal(t, 2, locatorCalls,
+		"a later event should retry the healthy candidate once")
+	require.Nil(t, sm.syncPeer)
+	require.False(t, sm.ibdMode)
+	require.True(t, syncPeer.Connected())
+	require.True(t, sm.peerStates[syncPeer].syncCandidate)
 }
 
 func TestNotFoundFromSyncPeerSwitchesBlockDownloadPeer(t *testing.T) {

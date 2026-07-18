@@ -181,3 +181,9 @@ func maxHnsPayloadLength(msgType HnsMsgType) uint32 {
 		return HnsMaxMessagePayload
 	}
 }
+
+// MaxHnsPayloadLength returns the largest valid payload for the provided
+// Handshake message type.
+func MaxHnsPayloadLength(msgType HnsMsgType) uint32 {
+	return maxHnsPayloadLength(msgType)
+}
