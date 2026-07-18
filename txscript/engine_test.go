@@ -191,12 +191,112 @@ func TestInvalidFlagCombinations(t *testing.T) {
 	}
 }
 
-func TestTaprootWitnessProgramRejectedInHandshake(t *testing.T) {
+func TestReservedWitnessProgramsArePolicyOnly(t *testing.T) {
 	t.Parallel()
 
-	taprootProgram := hexToBytes("79be667ef9dcbbac55a06295ce870b07029" +
-		"bfcdb2dce28d959f2815b16f81798")
-	pkScript := append([]byte{OP_1, OP_DATA_32}, taprootProgram...)
+	tests := []struct {
+		name      string
+		versionOp byte
+		program   []byte
+	}{
+		{
+			name:      "version 1 32-byte taproot shape",
+			versionOp: OP_1,
+			program: hexToBytes("79be667ef9dcbbac55a06295ce870b07029" +
+				"bfcdb2dce28d959f2815b16f81798"),
+		},
+		{
+			name:      "version 16",
+			versionOp: OP_16,
+			program:   []byte{0xaa, 0xbb},
+		},
+	}
+	witnesses := []struct {
+		name      string
+		witness   wire.TxWitness
+		stackOver bool
+	}{
+		{name: "empty"},
+		{name: "nonempty", witness: wire.TxWitness{{0x01}}},
+		{
+			name:    "maximum stack items",
+			witness: make(wire.TxWitness, MaxStackSize),
+		},
+		{
+			name:      "over maximum stack items",
+			witness:   make(wire.TxWitness, MaxStackSize+1),
+			stackOver: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkScript := append([]byte{test.versionOp, byte(len(test.program))},
+				test.program...)
+
+			for _, witnessTest := range witnesses {
+				t.Run(witnessTest.name, func(t *testing.T) {
+					tx := &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{{
+							PreviousOutPoint: wire.OutPoint{
+								Hash:  chainhash.Hash{0x01},
+								Index: 0,
+							},
+							Sequence: wire.MaxTxInSequenceNum,
+							Witness:  witnessTest.witness,
+						}},
+						TxOut: []*wire.TxOut{{
+							Value: 1000000000,
+						}},
+					}
+
+					consensusFlags := ScriptBip16 | ScriptVerifyWitness
+					vm, err := NewEngine(pkScript, tx, 0, consensusFlags,
+						nil, nil, -1, nil)
+					if err != nil {
+						t.Fatalf("NewEngine consensus flags: %v", err)
+					}
+					err = vm.Execute()
+					if witnessTest.stackOver {
+						if !IsErrorCode(err, ErrStackOverflow) {
+							t.Fatalf("consensus error = %v, want %v", err,
+								ErrStackOverflow)
+						}
+					} else if err != nil {
+						t.Fatalf("reserved version failed consensus: %v", err)
+					}
+
+					policyFlags := consensusFlags |
+						ScriptVerifyDiscourageUpgradeableWitnessProgram
+					vm, err = NewEngine(pkScript, tx, 0, policyFlags,
+						nil, nil, -1, nil)
+					if err != nil {
+						t.Fatalf("NewEngine policy flags: %v", err)
+					}
+					err = vm.Execute()
+					if witnessTest.stackOver {
+						if !IsErrorCode(err, ErrStackOverflow) {
+							t.Fatalf("policy error = %v, want %v", err,
+								ErrStackOverflow)
+						}
+					} else if !IsErrorCode(err,
+						ErrDiscourageUpgradableWitnessProgram) {
+
+						t.Fatalf("policy error = %v, want %v", err,
+							ErrDiscourageUpgradableWitnessProgram)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestTaprootFlagDoesNotActivateHandshakeVersionOne(t *testing.T) {
+	t.Parallel()
+
+	program := make([]byte, payToTaprootDataSize)
+	pkScript := append([]byte{OP_1, OP_DATA_32}, program...)
 	tx := &wire.MsgTx{
 		Version: 1,
 		TxIn: []*wire.TxIn{{
@@ -204,10 +304,8 @@ func TestTaprootWitnessProgramRejectedInHandshake(t *testing.T) {
 				Hash:  chainhash.Hash{0x01},
 				Index: 0,
 			},
-			Sequence: 4294967295,
-			Witness: wire.TxWitness{
-				{0x01},
-			},
+			Sequence: wire.MaxTxInSequenceNum,
+			Witness:  wire.TxWitness{{0x01}},
 		}},
 		TxOut: []*wire.TxOut{{
 			Value: 1000000000,
@@ -219,21 +317,8 @@ func TestTaprootWitnessProgramRejectedInHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create script engine: %v", err)
 	}
-
-	err = vm.Execute()
-	if !IsErrorCode(err, ErrDiscourageUpgradableWitnessProgram) {
-		t.Fatalf("expected Handshake Taproot quarantine error, got %v",
-			err)
-	}
-
-	var scriptErr Error
-	if !errors.As(err, &scriptErr) {
-		t.Fatalf("expected script error, got %T", err)
-	}
-	const wantDesc = "taproot witness programs are not valid in Handshake"
-	if scriptErr.Description != wantDesc {
-		t.Fatalf("expected quarantine error %q, got %q", wantDesc,
-			scriptErr.Description)
+	if err := vm.Execute(); err != nil {
+		t.Fatalf("version 1 reserved program failed consensus: %v", err)
 	}
 }
 

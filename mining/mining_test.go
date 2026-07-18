@@ -979,7 +979,8 @@ func TestNewBlockTemplateSkipsTransactionOverSigOps(t *testing.T) {
 		Witness:  wire.TxWitness{witnessScript},
 	})
 	spend.AddTxOut(wire.NewTxOut(
-		firstCoinbase.TxOut[0].Value-fee, wire.Address{}, wire.Covenant{},
+		firstCoinbase.TxOut[0].Value-fee,
+		wire.Address{Version: 0, Hash: make([]byte, 20)}, wire.Covenant{},
 	))
 	tx := hnsutil.NewTx(spend)
 
@@ -1391,7 +1392,7 @@ func TestNewBlockTemplateIncludesCoinbaseClaimProof(t *testing.T) {
 	connectMiningTestTemplate(t, chain, template)
 }
 
-func TestCreateCoinbaseTxRejectsTaprootShapedPayout(t *testing.T) {
+func TestCreateCoinbaseTxAcceptsReservedPayout(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	addr, err := hnsutil.NewAddress(1, make([]byte, 32), &params)
 	if err != nil {
@@ -1402,9 +1403,16 @@ func TestCreateCoinbaseTxRejectsTaprootShapedPayout(t *testing.T) {
 		t.Fatalf("standardCoinbaseScript: %v", err)
 	}
 
-	_, err = createCoinbaseTx(&params, coinbaseScript, 1, addr)
-	if err == nil {
-		t.Fatal("createCoinbaseTx accepted taproot-shaped payout")
+	coinbaseTx, err := createCoinbaseTx(&params, coinbaseScript, 1, addr)
+	if err != nil {
+		t.Fatalf("createCoinbaseTx: %v", err)
+	}
+	outputAddr := coinbaseTx.MsgTx().TxOut[0].Address
+	if outputAddr.Version != addr.Version() ||
+		!bytes.Equal(outputAddr.Hash, addr.Hash()) {
+
+		t.Fatalf("coinbase address = version %d hash %x",
+			outputAddr.Version, outputAddr.Hash)
 	}
 }
 
@@ -1418,6 +1426,14 @@ func TestUpdateExtraNonceUsesHeaderField(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("createCoinbaseTx: %v", err)
+	}
+	placeholder := coinbaseTx.MsgTx().TxOut[0].Address
+	if !placeholder.IsUnknown() {
+		t.Fatalf("nil-address placeholder = version %d hash %x, "+
+			"want reserved address", placeholder.Version, placeholder.Hash)
+	}
+	if err := blockchain.CheckTransactionSanity(coinbaseTx); err != nil {
+		t.Fatalf("placeholder coinbase sanity: %v", err)
 	}
 
 	msgBlock := &wire.MsgBlock{

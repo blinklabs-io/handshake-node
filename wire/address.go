@@ -40,14 +40,9 @@ type Address struct {
 }
 
 // validateAddressFields validates the version/hash combination for an
-// address.  The zero-value Address{} (version 0, empty hash) is accepted as
-// an empty/placeholder address; every other combination must satisfy the
-// standard version, hash-length, and version-0 length constraints.
+// address.  The zero-value Address{} (version 0, empty hash) is not a valid
+// Handshake wire address.
 func validateAddressFields(version uint8, hashLen int, op string) error {
-	if version == 0 && hashLen == 0 {
-		return nil
-	}
-
 	if version > maxAddressVersion {
 		return messageError(op, fmt.Sprintf(
 			"address version %d exceeds max %d",
@@ -198,15 +193,9 @@ func (a *Address) OutputKey() []byte {
 }
 
 // NewAddress creates a new Address with validation.  It returns an error if
-// the version or hash length is invalid.  The zero-value address (version 0,
-// empty hash) is rejected by this constructor; callers wanting a placeholder
-// should construct the literal directly.
+// the version or hash length is invalid.
 func NewAddress(version uint8, hash []byte) (*Address, error) {
 	hashLen := len(hash)
-	if version == 0 && hashLen == 0 {
-		return nil, messageError("NewAddress",
-			"zero-value address may not be constructed via NewAddress")
-	}
 	if err := validateAddressFields(version, hashLen, "NewAddress"); err != nil {
 		return nil, err
 	}

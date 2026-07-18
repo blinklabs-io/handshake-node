@@ -288,6 +288,10 @@ func CheckTransactionSanity(tx *hnsutil.Tx) error {
 			return ruleError(ErrBadTxOutValue, str)
 		}
 
+		if len(txOut.Address.Hash) == 0 {
+			return ruleError(ErrBadTxOutValue,
+				"transaction output has an empty address")
+		}
 		if err := txOut.Address.Encode(io.Discard); err != nil {
 			str := fmt.Sprintf("transaction output has invalid "+
 				"address: %v", err)

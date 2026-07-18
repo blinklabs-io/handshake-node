@@ -5,6 +5,7 @@
 package txscript
 
 import (
+	"bytes"
 	"crypto/sha3"
 	"encoding/hex"
 	"errors"
@@ -90,6 +91,50 @@ func TestHandshakeWitnessSighashSignedVector(t *testing.T) {
 	}
 	if err := vm.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
+	}
+}
+
+func TestPrivateLegacySigHashNullOutputEncoding(t *testing.T) {
+	t.Parallel()
+
+	var prevHash chainhash.Hash
+	prevHash[0] = 0x01
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&prevHash, 0),
+		wire.MaxTxInSequenceNum, nil))
+	tx.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&prevHash, 1),
+		wire.MaxTxInSequenceNum, nil))
+	for i := byte(1); i <= 2; i++ {
+		tx.AddTxOut(wire.NewTxOut(int64(i), wire.Address{
+			Version: 0,
+			Hash:    repeatBytes(i, 20),
+		}, wire.Covenant{}))
+	}
+	var wireEncoding bytes.Buffer
+	if err := tx.SerializeNoWitness(&wireEncoding); err != nil {
+		t.Fatalf("SerializeNoWitness: %v", err)
+	}
+	var privateEncoding bytes.Buffer
+	if err := serializeLegacySigHashTx(&privateEncoding, tx); err != nil {
+		t.Fatalf("serializeLegacySigHashTx: %v", err)
+	}
+	if !bytes.Equal(privateEncoding.Bytes(), wireEncoding.Bytes()) {
+		t.Fatal("private legacy serializer differs for valid transaction")
+	}
+	invalidTx := tx.Copy()
+	invalidTx.TxOut[0].Address = wire.Address{}
+	privateEncoding.Reset()
+	if err := serializeLegacySigHashTx(&privateEncoding, invalidTx); err == nil {
+		t.Fatal("private legacy serializer accepted a real empty address")
+	}
+
+	// SigHashSingle for input one replaces output zero with the inherited
+	// synthetic 0000 address.  That encoding must remain private to this
+	// unreachable compatibility path and must not rely on Address.Encode.
+	hash := calcSignatureHash(nil, SigHashSingle, tx, 1)
+	if len(hash) != chainhash.HashSize {
+		t.Fatalf("calcSignatureHash length = %d, want %d",
+			len(hash), chainhash.HashSize)
 	}
 }
 

@@ -335,7 +335,7 @@ func TestCoinbaseAirdropConjuredValueRejectsDuplicateProof(t *testing.T) {
 		wire.TxWitness{proof}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
 		wire.TxWitness{proof}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{Hash: testAddressHash()}, wire.Covenant{}))
 	tx.AddTxOut(wire.NewTxOut(int64(outputValue), addr, wire.Covenant{}))
 	tx.AddTxOut(wire.NewTxOut(int64(outputValue), addr, wire.Covenant{}))
 
@@ -365,8 +365,8 @@ func TestCoinbaseClaimProofSanityRejectsNameMismatch(t *testing.T) {
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
 		wire.TxWitness{testOwnershipProof(t, "net", false,
 			"not-a-claim-payload", 1, 2)}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, claimCovenant("com")))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{Hash: testAddressHash()}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{Hash: testAddressHash()}, claimCovenant("com")))
 
 	if err := CheckTransactionSanity(hnsutil.NewTx(tx)); err == nil {
 		t.Fatal("CheckTransactionSanity: expected proof name mismatch")
@@ -466,7 +466,7 @@ func testCoinbaseClaimTxWithWeak(t *testing.T, height uint32,
 		wire.TxWitness{[]byte{0x02, 0x01}}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), ^uint32(0),
 		wire.TxWitness{proof}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{Hash: testAddressHash()}, wire.Covenant{}))
 	tx.AddTxOut(wire.NewTxOut(int64(outputValue), addr,
 		claimCovenantAt("com", height, commitHash, commitHeight, weak)))
 	return tx

@@ -66,7 +66,7 @@ var (
 		}},
 		TxOut: []*wire.TxOut{{
 			Value:    0,
-			Address:  wire.Address{},
+			Address:  wire.Address{Hash: make([]byte, 20)},
 			Covenant: wire.Covenant{},
 		}},
 		LockTime: 0,
@@ -108,7 +108,7 @@ var regressionNetParams = &chaincfg.Params{
 	DefaultPort: "18444",
 
 	// Chain parameters
-	GenesisBlock: &regTestGenesisBlock,
+	GenesisBlock:             &regTestGenesisBlock,
 	GenesisHash:              &regTestGenesisHash,
 	PowLimit:                 regressionPowLimit,
 	PowLimitBits:             0x207fffff,

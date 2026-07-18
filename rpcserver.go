@@ -666,10 +666,6 @@ func hnsutilAddressToWire(addr hnsutil.Address) (wire.Address, error) {
 
 	version := addr.Version()
 	hash := addr.Hash()
-	if version == txscript.TaprootWitnessVersion && len(hash) == 32 {
-		return wire.Address{}, errors.New("taproot-shaped version 1 " +
-			"32-byte addresses are not supported in Handshake")
-	}
 	wireAddr, err := wire.NewAddress(version, hash)
 	if err != nil {
 		return wire.Address{}, err

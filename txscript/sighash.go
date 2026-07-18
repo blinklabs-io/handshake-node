@@ -189,7 +189,7 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 	// transaction and the hash type (encoded as a 4-byte little-endian
 	// value) appended.
 	sigHashBytes := hnsHashRaw(func(w io.Writer) error {
-		if err := txCopy.SerializeNoWitness(w); err != nil {
+		if err := serializeLegacySigHashTx(w, &txCopy); err != nil {
 			return err
 		}
 		err := binary.Write(w, binary.LittleEndian, hashType)
@@ -200,6 +200,56 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 	})
 
 	return sigHashBytes[:]
+}
+
+// serializeLegacySigHashTx serializes the inherited legacy sighash transaction
+// form.  SigHashSingle uses synthetic null outputs encoded as value=-1,
+// address=0000, covenant=NONE.  Empty addresses are not valid Handshake wire
+// data, so this compatibility encoding is deliberately private to the
+// unreachable legacy sighash path instead of weakening wire.Address.Encode.
+func serializeLegacySigHashTx(w io.Writer, tx *wire.MsgTx) error {
+	if err := binary.Write(w, binary.LittleEndian, tx.Version); err != nil {
+		return err
+	}
+	if err := wire.WriteVarInt(w, 0, uint64(len(tx.TxIn))); err != nil {
+		return err
+	}
+	for _, txIn := range tx.TxIn {
+		if _, err := w.Write(txIn.PreviousOutPoint.Hash[:]); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian,
+			txIn.PreviousOutPoint.Index); err != nil {
+
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, txIn.Sequence); err != nil {
+			return err
+		}
+	}
+	if err := wire.WriteVarInt(w, 0, uint64(len(tx.TxOut))); err != nil {
+		return err
+	}
+	for _, txOut := range tx.TxOut {
+		if err := binary.Write(w, binary.LittleEndian, txOut.Value); err != nil {
+			return err
+		}
+		syntheticNullOutput := txOut.Value == -1 &&
+			txOut.Address.Version == 0 && len(txOut.Address.Hash) == 0 &&
+			txOut.Covenant.Type == wire.CovenantNone &&
+			len(txOut.Covenant.Items) == 0
+		if syntheticNullOutput {
+			if _, err := w.Write([]byte{0x00, 0x00}); err != nil {
+				return err
+			}
+		} else if err := txOut.Address.Encode(w); err != nil {
+			return err
+		}
+		if err := txOut.Covenant.Encode(w); err != nil {
+			return err
+		}
+	}
+	return binary.Write(w, binary.LittleEndian, tx.LockTime)
 }
 
 // calcWitnessSignatureHashRaw computes the sighash digest of a transaction's

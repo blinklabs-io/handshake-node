@@ -548,6 +548,10 @@ func TestAddressValidation(t *testing.T) {
 		data []byte
 	}{
 		{
+			name: "empty version 0 address",
+			data: []byte{0, 0},
+		},
+		{
 			name: "version > 31",
 			data: []byte{32, 20}, // version=32, hashLen=20
 		},
@@ -588,6 +592,23 @@ func TestAddressValidation(t *testing.T) {
 				t.Fatal("Encode: expected error, got nil")
 			}
 		})
+	}
+}
+
+func TestAddressZeroValueRejected(t *testing.T) {
+	t.Parallel()
+
+	var encoded bytes.Buffer
+	if err := (&Address{}).Encode(&encoded); err == nil {
+		t.Fatal("Encode accepted empty version 0 wire address")
+	}
+	if _, err := NewAddress(0, nil); err == nil {
+		t.Fatal("NewAddress accepted empty version 0 wire address")
+	}
+
+	var decoded Address
+	if err := decoded.Decode(bytes.NewReader([]byte{0, 0})); err == nil {
+		t.Fatal("Decode accepted empty version 0 wire address")
 	}
 }
 

@@ -38,15 +38,17 @@ func CreateSpendTx(spend *SpendableOut, fee hnsutil.Amount) *wire.MsgTx {
 		Sequence:         wire.MaxTxInSequenceNum,
 	})
 	spendTx.AddTxOut(wire.NewTxOut(int64(spend.Amount-fee),
-		wire.Address{}, wire.Covenant{}))
+		wire.Address{Version: 1, Hash: []byte{0x00, 0x00}}, wire.Covenant{}))
 	opRetScript, err := UniqueOpReturnScript()
 	if err != nil {
 		panic(err)
 	}
-	// Store the full OP_RETURN script as the Address hash so that the
-	// unique random payload is preserved (maintaining tx hash uniqueness)
-	// and the leading OP_RETURN opcode is visible for assertions.
-	spendTx.AddTxOut(wire.NewTxOut(0, wire.Address{Version: 0, Hash: opRetScript}, wire.Covenant{}))
+	// Store the pushed payload in Handshake's native nulldata address.  The
+	// compatibility script view reconstructs the original OP_RETURN script.
+	spendTx.AddTxOut(wire.NewTxOut(0, wire.Address{
+		Version: 31,
+		Hash:    append([]byte(nil), opRetScript[2:]...),
+	}, wire.Covenant{}))
 
 	return spendTx
 }
@@ -72,7 +74,7 @@ func CreateCoinbaseTx(blockHeight int32, blockSubsidy int64) *wire.MsgTx {
 	})
 	tx.AddTxOut(&wire.TxOut{
 		Value:    blockSubsidy,
-		Address:  wire.Address{},
+		Address:  wire.Address{Version: 1, Hash: []byte{0x00, 0x00}},
 		Covenant: wire.Covenant{},
 	})
 	return tx

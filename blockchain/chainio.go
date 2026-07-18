@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math/big"
 	"sync"
 	"time"
@@ -800,6 +801,19 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 		return nil, nil
 	}
 
+	// Validate native fields before calculating a size and entering the
+	// low-level encoder, which treats invalid in-memory state as a programmer
+	// error and panics.  Database upgrades can encounter unrepresentable legacy
+	// entries and must return an actionable error instead.
+	address := entry.Address()
+	if err := address.Encode(io.Discard); err != nil {
+		return nil, fmt.Errorf("unable to serialize utxo address: %w", err)
+	}
+	covenant := entry.Covenant()
+	if err := covenant.Encode(io.Discard); err != nil {
+		return nil, fmt.Errorf("unable to serialize utxo covenant: %w", err)
+	}
+
 	// Encode the header code.
 	headerCode, err := utxoEntryHeaderCode(entry)
 	if err != nil {
@@ -809,7 +823,7 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	// Calculate the size needed to serialize the entry.
 	size := serializeSizeVLQ(headerCode) +
 		compressedHnsTxOutSize(
-			uint64(entry.Amount()), entry.Address(), entry.Covenant(),
+			uint64(entry.Amount()), address, covenant,
 		)
 
 	// Serialize the header code followed by the compressed unspent
@@ -817,8 +831,7 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	serialized := make([]byte, size)
 	offset := putVLQ(serialized, headerCode)
 	offset += putCompressedHnsTxOut(
-		serialized[offset:], uint64(entry.Amount()), entry.Address(),
-		entry.Covenant(),
+		serialized[offset:], uint64(entry.Amount()), address, covenant,
 	)
 
 	return serialized, nil

@@ -1577,7 +1577,10 @@ func mempoolCovenantTx(tag uint32, covenant wire.Covenant) *hnsutil.Tx {
 		},
 		Sequence: wire.MaxTxInSequenceNum,
 	})
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, covenant))
+	tx.AddTxOut(wire.NewTxOut(1, wire.Address{
+		Version: 0,
+		Hash:    make([]byte, 20),
+	}, covenant))
 	return hnsutil.NewTx(tx)
 }
 

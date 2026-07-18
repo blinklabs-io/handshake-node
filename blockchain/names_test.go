@@ -19,6 +19,10 @@ import (
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
+func nameSanityTestAddress() wire.Address {
+	return wire.Address{Hash: make([]byte, 20)}
+}
+
 func TestNameStateEncodeRoundTrip(t *testing.T) {
 	nameHash := hashName([]byte("handshake"))
 	ns := newNameState(nameHash)
@@ -87,7 +91,7 @@ func TestVerifyName(t *testing.T) {
 func TestCheckCovenantSanityOpenRejectsHashMismatch(t *testing.T) {
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{
 		Type: wire.CovenantOpen,
 		Items: [][]byte{
 			hashItem("wrong"),
@@ -115,7 +119,7 @@ func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 		tx := wire.NewMsgTx(1)
 		tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32,
 			nil))
-		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+		tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{
 			Type: wire.CovenantRevoke + 1,
 			Items: [][]byte{
 				make([]byte, maxSingleItemSize),
@@ -142,7 +146,7 @@ func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 		tx := wire.NewMsgTx(1)
 		tx.AddTxIn(wire.NewTxIn(testOutPoint(2), math.MaxUint32,
 			nil))
-		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+		tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{
 			Type:  wire.CovenantRevoke + 1,
 			Items: items,
 		}))
@@ -160,7 +164,7 @@ func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 		tx := wire.NewMsgTx(1)
 		tx.AddTxIn(wire.NewTxIn(testOutPoint(3), math.MaxUint32,
 			nil))
-		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{
+		tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{
 			Type: wire.CovenantRevoke + 1,
 			Items: [][]byte{
 				make([]byte, 581),
@@ -186,7 +190,7 @@ func TestCheckBlockNameLimitsDuplicateAcrossTransactions(t *testing.T) {
 		tx := wire.NewMsgTx(1)
 		tx.AddTxIn(wire.NewTxIn(testOutPoint(uint32(i+1)),
 			math.MaxUint32, nil))
-		tx.AddTxOut(wire.NewTxOut(1, wire.Address{},
+		tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(),
 			openCovenant("dup")))
 		block.AddTransaction(tx)
 	}
@@ -206,8 +210,8 @@ func TestCheckBlockNameLimitsDuplicateAcrossTransactions(t *testing.T) {
 func TestCheckBlockNameLimitsAllowsDuplicateWithinTransaction(t *testing.T) {
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("dup")))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("dup")))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), openCovenant("dup")))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), openCovenant("dup")))
 
 	block := &wire.MsgBlock{}
 	block.AddTransaction(tx)
@@ -225,8 +229,8 @@ func TestCoinbaseAllowsLinkedClaimInputs(t *testing.T) {
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
 		wire.TxWitness{testOwnershipProof(t, "com", false,
 			"not-a-claim-payload", 1, 2)}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, claimCovenant("com")))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), claimCovenant("com")))
 
 	if !IsCoinBaseTx(tx) {
 		t.Fatal("IsCoinBaseTx: got false for linked claim coinbase")
@@ -243,7 +247,7 @@ func TestCoinbaseAllowsLinkedAirdropInput(t *testing.T) {
 		wire.TxWitness{[]byte{0x02, 0x01}}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
 		wire.TxWitness{testAirdropProof(t, addr, 100, 1)}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{}))
 	tx.AddTxOut(wire.NewTxOut(99, addr, wire.Covenant{}))
 
 	if err := CheckTransactionSanity(hnsutil.NewTx(tx)); err != nil {
@@ -257,7 +261,7 @@ func TestCoinbaseClaimInputRequiresLinkedOutput(t *testing.T) {
 		wire.TxWitness{[]byte{0x02, 0x01}}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
 		wire.TxWitness{[]byte{0x01}}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{}))
 
 	err := CheckTransactionSanity(hnsutil.NewTx(tx))
 	if err == nil {
@@ -277,7 +281,7 @@ func TestCoinbaseProofInputRequiresLinkedOutput(t *testing.T) {
 		wire.TxWitness{[]byte{0x02, 0x01}}))
 	tx.AddTxIn(wire.NewTxIn(nullOutPoint(), math.MaxUint32,
 		wire.TxWitness{[]byte{0x00}}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{}))
 
 	err := CheckTransactionSanity(hnsutil.NewTx(tx))
 	if err == nil {
@@ -296,7 +300,7 @@ func TestCheckTransactionNameLimitsRejectsTooManyOpens(t *testing.T) {
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
 	for i := 0; i < maxBlockNameOpens+1; i++ {
 		name := "name" + strconv.Itoa(i)
-		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant(name)))
+		tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), openCovenant(name)))
 	}
 
 	err := CheckTransactionSanity(hnsutil.NewTx(tx))
@@ -329,7 +333,7 @@ func TestVerifyCovenantSpendBidRevealBlind(t *testing.T) {
 			},
 		},
 	}
-	output := wire.NewTxOut(7, wire.Address{}, wire.Covenant{
+	output := wire.NewTxOut(7, nameSanityTestAddress(), wire.Covenant{
 		Type: wire.CovenantReveal,
 		Items: [][]byte{
 			hashBytes(nameHash),
@@ -361,13 +365,13 @@ func TestVerifyCovenantSpendUnknownCovenant(t *testing.T) {
 	}
 
 	if err := verifyCovenantSpend(prev,
-		wire.NewTxOut(1, wire.Address{}, wire.Covenant{})); err != nil {
+		wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{})); err != nil {
 
 		t.Fatalf("verifyCovenantSpend unknown to NONE: %v", err)
 	}
 
 	if err := verifyCovenantSpend(prev,
-		wire.NewTxOut(1, wire.Address{}, openCovenant("known"))); err == nil {
+		wire.NewTxOut(1, nameSanityTestAddress(), openCovenant("known"))); err == nil {
 
 		t.Fatal("verifyCovenantSpend: expected unknown to known name rejection")
 	}
@@ -386,7 +390,7 @@ func TestNameBlockViewOpenLifecycle(t *testing.T) {
 
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("opened")))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), openCovenant("opened")))
 	prevOutputs := []namePrevOutput{{
 		outpoint: *testOutPoint(1),
 		amount:   1,
@@ -423,7 +427,7 @@ func TestNameBlockViewRejectsLockedNameOpenWhenICANNLockupActive(t *testing.T) {
 
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant("com")))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), openCovenant("com")))
 	prevOutputs := []namePrevOutput{{
 		outpoint: *testOutPoint(1),
 		amount:   1,
@@ -457,7 +461,7 @@ func TestNameBlockViewRejectsWeakClaimRegisterAfterHardening(t *testing.T) {
 	}
 
 	tx := wire.NewMsgTx(1)
-	tx.AddTxOut(wire.NewTxOut(0, wire.Address{},
+	tx.AddTxOut(wire.NewTxOut(0, nameSanityTestAddress(),
 		registerCovenant(name, height)))
 	txOut := tx.TxOut[0]
 	prevOutputs := []namePrevOutput{{
@@ -504,8 +508,8 @@ func TestNameBlockViewRejectsUnlinkedRevealWithoutPanic(t *testing.T) {
 
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, revealCovenant(name, 1)))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), revealCovenant(name, 1)))
 
 	prevOutputs := []namePrevOutput{{
 		outpoint: *testOutPoint(1),
@@ -535,7 +539,7 @@ func TestNameBlockViewBidAcceptanceWindow(t *testing.T) {
 
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, bidCovenant(
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), bidCovenant(
 		name, ns.height, chainhash.Hash{0x01},
 	)))
 	prevOutputs := []namePrevOutput{{
@@ -589,7 +593,7 @@ func TestNameBlockViewRevealAcceptanceWindowAndBlind(t *testing.T) {
 	}}
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(&prevOut, math.MaxUint32, nil))
-	tx.AddTxOut(wire.NewTxOut(value, wire.Address{},
+	tx.AddTxOut(wire.NewTxOut(value, nameSanityTestAddress(),
 		revealCovenantWithNonce(name, ns.height, nonce)))
 
 	biddingHeight := ns.height + params.NameTreeInterval + 1
@@ -628,7 +632,7 @@ func TestNameBlockViewUpdatePreservesDataOnEmptyResource(t *testing.T) {
 	ns.data = []byte("old-resource")
 
 	tx := wire.NewMsgTx(1)
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), wire.Covenant{}))
 	covenant := wire.Covenant{
 		Type: wire.CovenantUpdate,
 		Items: [][]byte{
@@ -841,13 +845,13 @@ func TestCheckTransactionNamesRejectsMissingState(t *testing.T) {
 	prevTx := wire.NewMsgTx(1)
 	prevTx.AddTxIn(wire.NewTxIn(testOutPoint(1),
 		wire.MaxTxInSequenceNum, nil))
-	prevTx.AddTxOut(wire.NewTxOut(1, wire.Address{}, covenant))
+	prevTx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), covenant))
 	prev := hnsutil.NewTx(prevTx)
 
 	prevOut := wire.OutPoint{Hash: *prev.Hash(), Index: 0}
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(&prevOut, wire.MaxTxInSequenceNum, nil))
-	tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, covenant))
+	tx.AddTxOut(wire.NewTxOut(1, nameSanityTestAddress(), covenant))
 
 	view := NewUtxoViewpoint()
 	view.AddTxOut(prev, 0, 1)
@@ -980,7 +984,7 @@ func TestNameBlockViewEmptyResourcePreservesData(t *testing.T) {
 			hashBytes(chainhash.Hash{}),
 		},
 	}
-	registerTx.AddTxOut(wire.NewTxOut(ns.value, wire.Address{},
+	registerTx.AddTxOut(wire.NewTxOut(ns.value, nameSanityTestAddress(),
 		registerCovenant))
 	registerTxOut := registerTx.TxOut[0]
 	prevOutputs := []namePrevOutput{{
@@ -1010,7 +1014,7 @@ func TestNameBlockViewEmptyResourcePreservesData(t *testing.T) {
 			nil,
 		},
 	}
-	updateTx.AddTxOut(wire.NewTxOut(ns.value, wire.Address{},
+	updateTx.AddTxOut(wire.NewTxOut(ns.value, nameSanityTestAddress(),
 		updateCovenant))
 	updateOut := wire.OutPoint{Hash: *hnsutil.NewTx(registerTx).Hash(),
 		Index: 0}

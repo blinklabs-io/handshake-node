@@ -69,6 +69,38 @@ out:
 				break out
 			}
 
+			// Handshake address versions 1 through 30 are reserved for
+			// future upgrades.  They are anyone-can-spend at consensus and
+			// their witness is not executed.  Standard relay policy rejects
+			// them with the discourage-upgrades flag.  Handle them using the
+			// native address before attempting to synthesize a Bitcoin-style
+			// witness program, since versions 17 through 30 have no OP_N
+			// representation.
+			address := utxo.Address()
+			if address.Version >= 1 && address.Version <= 30 {
+				if len(txIn.Witness) > txscript.MaxStackSize {
+					str := fmt.Sprintf("failed to validate input %s:%d "+
+						"with witness stack size %d greater than max %d",
+						txVI.tx.Hash(), txVI.txInIndex,
+						len(txIn.Witness), txscript.MaxStackSize)
+					err := ruleError(ErrScriptValidation, str)
+					v.sendResult(err)
+					break out
+				}
+
+				if v.flags&txscript.ScriptVerifyDiscourageUpgradeableWitnessProgram != 0 {
+					str := fmt.Sprintf("failed to validate input %s:%d "+
+						"which references reserved address version %d",
+						txVI.tx.Hash(), txVI.txInIndex, address.Version)
+					err := ruleError(ErrScriptValidation, str)
+					v.sendResult(err)
+					break out
+				}
+
+				v.sendResult(nil)
+				continue
+			}
+
 			// Create a new script engine for the script pair.
 			// Handshake has no signature scripts; all signatures
 			// are in the witness.

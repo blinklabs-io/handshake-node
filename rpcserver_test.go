@@ -179,15 +179,20 @@ func TestConfiguredDeploymentNamesByNetwork(t *testing.T) {
 	}
 }
 
-func TestHnsutilAddressToWireRejectsTaprootShapedAddress(t *testing.T) {
+func TestHnsutilAddressToWireAcceptsReservedAddress(t *testing.T) {
 	addr, err := hnsutil.NewAddress(1, make([]byte, 32),
 		&chaincfg.RegressionNetParams)
 	if err != nil {
 		t.Fatalf("NewAddress: %v", err)
 	}
 
-	if _, err := hnsutilAddressToWire(addr); err == nil {
-		t.Fatal("hnsutilAddressToWire accepted taproot-shaped address")
+	wireAddr, err := hnsutilAddressToWire(addr)
+	if err != nil {
+		t.Fatalf("hnsutilAddressToWire: %v", err)
+	}
+	if wireAddr.Version != 1 || !bytes.Equal(wireAddr.Hash, addr.Hash()) {
+		t.Fatalf("wire address = version %d hash %x", wireAddr.Version,
+			wireAddr.Hash)
 	}
 }
 

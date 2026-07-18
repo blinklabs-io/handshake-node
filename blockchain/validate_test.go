@@ -199,6 +199,23 @@ func TestCoinbaseWitnessSizeMatchesHsdConsensus(t *testing.T) {
 	}
 }
 
+func TestCheckTransactionSanityRejectsEmptyAddress(t *testing.T) {
+	t.Parallel()
+
+	prevHash := chainhash.Hash{0x01}
+	msgTx := wire.NewMsgTx(wire.TxVersion)
+	msgTx.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&prevHash, 0),
+		wire.MaxTxInSequenceNum, nil))
+	msgTx.AddTxOut(wire.NewTxOut(1, wire.Address{}, wire.Covenant{}))
+
+	err := CheckTransactionSanity(hnsutil.NewTx(msgTx))
+	ruleErr, ok := err.(RuleError)
+	if !ok || ruleErr.ErrorCode != ErrBadTxOutValue {
+		t.Fatalf("CheckTransactionSanity error = %T %v, "+
+			"want ErrBadTxOutValue", err, err)
+	}
+}
+
 func TestHandshakeLockTimeTransactionFinality(t *testing.T) {
 	prevHash := chainhash.Hash{0x01}
 	prevOut := wire.NewOutPoint(&prevHash, 0)
@@ -483,7 +500,7 @@ var Block100000 = wire.MsgBlock{
 			TxOut: []*wire.TxOut{
 				{
 					Value:    0x12a05f200, // 5000000000
-					Address:  wire.Address{},
+					Address:  wire.Address{Hash: make([]byte, 20)},
 					Covenant: wire.Covenant{},
 				},
 			},
@@ -531,12 +548,12 @@ var Block100000 = wire.MsgBlock{
 			TxOut: []*wire.TxOut{
 				{
 					Value:    0x2123e300, // 556000000
-					Address:  wire.Address{},
+					Address:  wire.Address{Hash: make([]byte, 20)},
 					Covenant: wire.Covenant{},
 				},
 				{
 					Value:    0x108e20f00, // 4444000000
-					Address:  wire.Address{},
+					Address:  wire.Address{Hash: make([]byte, 20)},
 					Covenant: wire.Covenant{},
 				},
 			},
@@ -583,12 +600,12 @@ var Block100000 = wire.MsgBlock{
 			TxOut: []*wire.TxOut{
 				{
 					Value:    0xf4240, // 1000000
-					Address:  wire.Address{},
+					Address:  wire.Address{Hash: make([]byte, 20)},
 					Covenant: wire.Covenant{},
 				},
 				{
 					Value:    0x11d260c0, // 299000000
-					Address:  wire.Address{},
+					Address:  wire.Address{Hash: make([]byte, 20)},
 					Covenant: wire.Covenant{},
 				},
 			},
@@ -636,7 +653,7 @@ var Block100000 = wire.MsgBlock{
 			TxOut: []*wire.TxOut{
 				{
 					Value:    0xf4240, // 1000000
-					Address:  wire.Address{},
+					Address:  wire.Address{Hash: make([]byte, 20)},
 					Covenant: wire.Covenant{},
 				},
 			},

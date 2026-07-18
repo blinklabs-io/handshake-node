@@ -232,15 +232,13 @@ func (view *UtxoViewpoint) FetchPrevOutput(op wire.OutPoint) *wire.TxOut {
 }
 
 // addressFromPkScript reconstructs a wire.Address from a witness program
-// (pkScript).  Legacy compressed outputs may still contain Bitcoin-style
-// scripts, so non-witness scripts fall back to the zero address.
+// (pkScript).  Bitcoin-style legacy scripts cannot be represented losslessly
+// by Handshake's native Address type and must fail database migration.
 func addressFromPkScript(pkScript []byte) (wire.Address, error) {
 	addr, err := txscript.AddressFromWitnessProgram(pkScript)
 	if err != nil {
-		if txscript.IsWitnessProgram(pkScript) {
-			return wire.Address{}, err
-		}
-		return wire.Address{}, nil
+		return wire.Address{}, fmt.Errorf("pkScript is not a reconstructable "+
+			"Handshake witness program: %w", err)
 	}
 	return addr, nil
 }

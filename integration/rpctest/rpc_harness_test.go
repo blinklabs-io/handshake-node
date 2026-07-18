@@ -21,11 +21,15 @@ import (
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
+func testBurnAddress() wire.Address {
+	return wire.Address{Version: 0, Hash: make([]byte, 20)}
+}
+
 func testSendOutputs(r *Harness, t *testing.T) {
 	genSpend := func(amt hnsutil.Amount) *chainhash.Hash {
 		// Next, send amt HNS to this address, spending from one of our mature
 		// coinbase outputs.
-		output := wire.NewTxOut(int64(amt), wire.Address{}, wire.Covenant{})
+		output := wire.NewTxOut(int64(amt), testBurnAddress(), wire.Covenant{})
 		txid, err := r.SendOutputs([]*wire.TxOut{output}, 10)
 		if err != nil {
 			t.Fatalf("coinbase spend failed: %v", err)
@@ -200,7 +204,7 @@ func testJoinMempools(r *Harness, t *testing.T) {
 
 	// Generate a coinbase spend to a new address within the main harness'
 	// mempool.
-	output := wire.NewTxOut(5e8, wire.Address{}, wire.Covenant{})
+	output := wire.NewTxOut(5e8, testBurnAddress(), wire.Covenant{})
 	testTx, err := r.CreateTransaction([]*wire.TxOut{output}, 10, true)
 	if err != nil {
 		t.Fatalf("coinbase spend failed: %v", err)
@@ -322,7 +326,7 @@ func testJoinBlocks(r *Harness, t *testing.T) {
 
 func testGenerateAndSubmitBlock(r *Harness, t *testing.T) {
 	// Generate a few test spend transactions.
-	output := wire.NewTxOut(hnsutil.DooPerHNS, wire.Address{}, wire.Covenant{})
+	output := wire.NewTxOut(hnsutil.DooPerHNS, testBurnAddress(), wire.Covenant{})
 
 	const numTxns = 5
 	txns := make([]*hnsutil.Tx, 0, numTxns)
@@ -381,7 +385,7 @@ func testGenerateAndSubmitBlock(r *Harness, t *testing.T) {
 func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	t *testing.T) {
 	// Generate a few test spend transactions.
-	output := wire.NewTxOut(hnsutil.DooPerHNS, wire.Address{}, wire.Covenant{})
+	output := wire.NewTxOut(hnsutil.DooPerHNS, testBurnAddress(), wire.Covenant{})
 
 	const numTxns = 5
 	txns := make([]*hnsutil.Tx, 0, numTxns)
@@ -399,7 +403,7 @@ func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	block, err := r.GenerateAndSubmitBlockWithCustomCoinbaseOutputs(txns,
 		-1, time.Time{}, []wire.TxOut{{
 			Value:    0,
-			Address:  wire.Address{},
+			Address:  testBurnAddress(),
 			Covenant: wire.Covenant{},
 		}})
 	if err != nil {
@@ -426,7 +430,7 @@ func testGenerateAndSubmitBlockWithCustomCoinbaseOutputs(r *Harness,
 	block, err = r.GenerateAndSubmitBlockWithCustomCoinbaseOutputs(nil,
 		targetBlockVersion, timestamp, []wire.TxOut{{
 			Value:    0,
-			Address:  wire.Address{},
+			Address:  testBurnAddress(),
 			Covenant: wire.Covenant{},
 		}})
 	if err != nil {
@@ -494,7 +498,7 @@ func testMemWalletLockedOutputs(r *Harness, t *testing.T) {
 
 	// First, create a signed transaction spending some outputs.
 	outputAmt := hnsutil.Amount(50 * hnsutil.DooPerHNS)
-	output := wire.NewTxOut(int64(outputAmt), wire.Address{}, wire.Covenant{})
+	output := wire.NewTxOut(int64(outputAmt), testBurnAddress(), wire.Covenant{})
 	tx, err := r.CreateTransaction([]*wire.TxOut{output}, 10, true)
 	if err != nil {
 		t.Fatalf("unable to create transaction: %v", err)

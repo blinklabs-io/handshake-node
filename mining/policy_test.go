@@ -61,7 +61,7 @@ func TestCalcPriority(t *testing.T) {
 		}},
 		TxOut: []*wire.TxOut{{
 			Value:   5000000000,
-			Address: wire.Address{},
+			Address: wire.Address{Version: 1, Hash: []byte{0x00, 0x00}},
 		}},
 		LockTime: 0,
 	}
@@ -81,19 +81,20 @@ func TestCalcPriority(t *testing.T) {
 		}},
 		TxOut: []*wire.TxOut{{
 			Value:   1000000000,
-			Address: wire.Address{},
+			Address: wire.Address{Version: 1, Hash: []byte{0x00, 0x00}},
 		}, {
 			Value:   4000000000,
-			Address: wire.Address{},
+			Address: wire.Address{Version: 1, Hash: []byte{0x00, 0x00}},
 		}},
 		LockTime: 0,
 	}
 
-	const priorityDenom = 34
+	priorityDenom := commonRedeemTx1.SerializeSize() -
+		41*len(commonRedeemTx1.TxIn)
 	expectedPriority := func(inputHeight, nextHeight int32) float64 {
 		age := nextHeight - inputHeight
 		return float64(commonSourceTx1.TxOut[0].Value*int64(age)) /
-			priorityDenom
+			float64(priorityDenom)
 	}
 
 	tests := []struct {

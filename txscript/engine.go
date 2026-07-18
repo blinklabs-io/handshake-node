@@ -521,6 +521,15 @@ func (vm *Engine) isWitnessVersionActive(version uint) bool {
 // verifyWitnessProgram validates the stored witness program using the passed
 // witness as input.
 func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
+	// Handshake limits the number of witness stack items before dispatching
+	// on the address version.  Reserved versions remain anyone-can-spend,
+	// but they do not bypass this consensus resource limit.
+	if len(witness) > MaxStackSize {
+		str := fmt.Sprintf("witness stack size %d > max allowed %d",
+			len(witness), MaxStackSize)
+		return scriptError(ErrStackOverflow, str)
+	}
+
 	switch {
 
 	// We're attempting to verify a base (witness version 0) segwit output,
@@ -605,24 +614,15 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 			return scriptError(ErrWitnessProgramWrongLength, errStr)
 		}
 
-		// Handshake does not support Taproot spends.  Version 1, 32-byte
-		// witness programs are quarantined here even when ScriptVerifyTaproot
-		// is set.
-	case vm.isWitnessVersionActive(TaprootWitnessVersion) &&
-		len(vm.witnessProgram) == payToTaprootDataSize && !vm.bip16:
-
-		errStr := "taproot witness programs are not valid in Handshake"
-		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
-
 	case vm.hasFlag(ScriptVerifyDiscourageUpgradeableWitnessProgram):
 		errStr := fmt.Sprintf("new witness program versions "+
 			"invalid: %v", vm.witnessProgram)
 
 		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
 	default:
-		errStr := fmt.Sprintf("witness version %d is not valid in "+
-			"Handshake", vm.witnessVersion)
-		return scriptError(ErrDiscourageUpgradableWitnessProgram, errStr)
+		// Unknown Handshake address versions are anyone-can-spend at
+		// consensus.  Policy rejects them via the discourage flag above.
+		return nil
 	}
 
 	// TODO(roasbeef): other sanity checks here
@@ -725,6 +725,15 @@ func (vm *Engine) CheckErrorCondition(finalScript bool) error {
 	if vm.scriptIdx < len(vm.scripts) {
 		return scriptError(ErrScriptUnfinished,
 			"error check when script unfinished")
+	}
+
+	// Unknown witness program versions are anyone-can-spend at consensus,
+	// regardless of the truthiness of the bytes in the reserved program.
+	// Policy rejection, when requested, happens in verifyWitnessProgram.
+	if finalScript && vm.witnessProgram != nil &&
+		vm.witnessVersion != BaseSegwitWitnessVersion {
+
+		return nil
 	}
 
 	// If we're in version zero witness execution mode, and this was the

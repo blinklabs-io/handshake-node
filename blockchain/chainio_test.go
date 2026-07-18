@@ -52,31 +52,34 @@ func TestStxoSerialization(t *testing.T) {
 			name: "Spends last output of coinbase",
 			stxo: SpentTxOut{
 				Amount:     5000000000,
-				PkScript:   hexToBytes("0000"),
+				Address:    wire.Address{Hash: make([]byte, 20)},
+				PkScript:   hexToBytes("00140000000000000000000000000000000000000000"),
 				IsCoinBase: true,
 				Height:     9,
 			},
-			serialized: hexToBytes("13003200000000"),
+			serialized: hexToBytes("130032001400000000000000000000000000000000000000000000"),
 		},
 		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Spends last output of non coinbase",
 			stxo: SpentTxOut{
 				Amount:     13761000000,
-				PkScript:   hexToBytes("0000"),
+				Address:    wire.Address{Hash: make([]byte, 20)},
+				PkScript:   hexToBytes("00140000000000000000000000000000000000000000"),
 				IsCoinBase: false,
 				Height:     100024,
 			},
-			serialized: hexToBytes("8b99700086c64700000000"),
+			serialized: hexToBytes("8b99700086c647001400000000000000000000000000000000000000000000"),
 		},
 		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Does not spend last output, legacy format",
 			stxo: SpentTxOut{
 				Amount:   34405000000,
-				PkScript: hexToBytes("0000"),
+				Address:  wire.Address{Hash: make([]byte, 20)},
+				PkScript: hexToBytes("00140000000000000000000000000000000000000000"),
 			},
-			serialized: hexToBytes("0091f20f00000000"),
+			serialized: hexToBytes("0091f20f001400000000000000000000000000000000000000000000"),
 		},
 	}
 
@@ -224,7 +227,8 @@ func TestSpendJournalSerialization(t *testing.T) {
 			name: "One tx with one input spends last output of coinbase",
 			entry: []SpentTxOut{{
 				Amount:     5000000000,
-				PkScript:   hexToBytes("0000"),
+				Address:    wire.Address{Hash: make([]byte, 20)},
+				PkScript:   hexToBytes("00140000000000000000000000000000000000000000"),
 				IsCoinBase: true,
 				Height:     9,
 			}},
@@ -249,19 +253,21 @@ func TestSpendJournalSerialization(t *testing.T) {
 				}},
 				LockTime: 0,
 			}},
-			serialized: hexToBytes("13003200000000"),
+			serialized: hexToBytes("130032001400000000000000000000000000000000000000000000"),
 		},
 		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Two txns when one spends last output, one doesn't",
 			entry: []SpentTxOut{{
 				Amount:     34405000000,
-				PkScript:   hexToBytes("0000"),
+				Address:    wire.Address{Hash: make([]byte, 20)},
+				PkScript:   hexToBytes("00140000000000000000000000000000000000000000"),
 				IsCoinBase: false,
 				Height:     100024,
 			}, {
 				Amount:     13761000000,
-				PkScript:   hexToBytes("0000"),
+				Address:    wire.Address{Hash: make([]byte, 20)},
+				PkScript:   hexToBytes("00140000000000000000000000000000000000000000"),
 				IsCoinBase: false,
 				Height:     100024,
 			}},
@@ -306,7 +312,7 @@ func TestSpendJournalSerialization(t *testing.T) {
 				}},
 				LockTime: 0,
 			}},
-			serialized: hexToBytes("8b99700086c647000000008b99700091f20f00000000"),
+			serialized: hexToBytes("8b99700086c6470014000000000000000000000000000000000000000000008b99700091f20f001400000000000000000000000000000000000000000000"),
 		},
 	}
 
@@ -424,11 +430,12 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 1, coinbase",
 			entry: &UtxoEntry{
 				amount:      5000000000,
-				pkScript:    hexToBytes("0000"),
+				address:     wire.Address{Hash: make([]byte, 20)},
+				pkScript:    hexToBytes("00140000000000000000000000000000000000000000"),
 				blockHeight: 1,
 				packedFlags: tfCoinBase,
 			},
-			serialized: hexToBytes("033200000000"),
+			serialized: hexToBytes("0332001400000000000000000000000000000000000000000000"),
 		},
 		// From tx in main blockchain:
 		// 0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098:0
@@ -436,7 +443,8 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 1, coinbase, spent",
 			entry: &UtxoEntry{
 				amount:      5000000000,
-				pkScript:    hexToBytes("0000"),
+				address:     wire.Address{Hash: make([]byte, 20)},
+				pkScript:    hexToBytes("00140000000000000000000000000000000000000000"),
 				blockHeight: 1,
 				packedFlags: tfCoinBase | tfSpent,
 			},
@@ -448,11 +456,12 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 100001, not coinbase",
 			entry: &UtxoEntry{
 				amount:      1000000,
-				pkScript:    hexToBytes("0000"),
+				address:     wire.Address{Hash: make([]byte, 20)},
+				pkScript:    hexToBytes("00140000000000000000000000000000000000000000"),
 				blockHeight: 100001,
 				packedFlags: 0,
 			},
-			serialized: hexToBytes("8b99420700000000"),
+			serialized: hexToBytes("8b994207001400000000000000000000000000000000000000000000"),
 		},
 		// From tx in main blockchain:
 		// 8131ffb0a2c945ecaf9b9063e59558784f9c3a74741ce6ae2a18d0571dac15bb:1
@@ -460,7 +469,8 @@ func TestUtxoSerialization(t *testing.T) {
 			name: "height 100001, not coinbase, spent",
 			entry: &UtxoEntry{
 				amount:      1000000,
-				pkScript:    hexToBytes("0000"),
+				address:     wire.Address{Hash: make([]byte, 20)},
+				pkScript:    hexToBytes("00140000000000000000000000000000000000000000"),
 				blockHeight: 100001,
 				packedFlags: tfSpent,
 			},
@@ -642,7 +652,7 @@ func TestLegacyUtxoV2SerializationConvertsToAddress(t *testing.T) {
 	}
 }
 
-func TestLegacyUtxoV2NonWitnessScriptUsesZeroAddress(t *testing.T) {
+func TestLegacyUtxoV2NonWitnessScriptRejected(t *testing.T) {
 	t.Parallel()
 
 	pkScript := hexToBytes("76a9141018853670f9f3b0582c5b9ee8ce93764ac32b9388ac")
@@ -656,20 +666,42 @@ func TestLegacyUtxoV2NonWitnessScriptUsesZeroAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serializeUtxoEntryV2: %v", err)
 	}
-	decodedV2, err := deserializeUtxoEntryV2(serializedV2)
-	if err != nil {
-		t.Fatalf("deserializeUtxoEntryV2: %v", err)
+	if _, err := deserializeUtxoEntryV2(serializedV2); err == nil {
+		t.Fatal("deserializeUtxoEntryV2 accepted non-witness pkScript")
 	}
-	if !reflect.DeepEqual(decodedV2.Address(), wire.Address{}) {
-		t.Fatalf("address mismatch: got %#v, want zero address",
-			decodedV2.Address())
+}
+
+func TestSerializeUtxoEntryRejectsInvalidNativeFields(t *testing.T) {
+	t.Parallel()
+
+	validAddress := wire.Address{Hash: make([]byte, 20)}
+	tests := []struct {
+		name     string
+		address  wire.Address
+		covenant wire.Covenant
+	}{
+		{name: "empty address", address: wire.Address{}},
+		{
+			name:    "oversized covenant item",
+			address: validAddress,
+			covenant: wire.Covenant{
+				Items: [][]byte{make([]byte, 586)},
+			},
+		},
 	}
-	if !bytes.Equal(decodedV2.PkScript(), pkScript) {
-		t.Fatalf("pkScript mismatch: got %x, want %x",
-			decodedV2.PkScript(), pkScript)
-	}
-	if _, err := serializeUtxoEntry(decodedV2); err != nil {
-		t.Fatalf("serializeUtxoEntry: %v", err)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entry := &UtxoEntry{
+				amount:      1,
+				address:     test.address,
+				covenant:    test.covenant,
+				blockHeight: 1,
+			}
+			if _, err := serializeUtxoEntry(entry); err == nil {
+				t.Fatal("serializeUtxoEntry accepted invalid native fields")
+			}
+		})
 	}
 }
 
@@ -713,6 +745,21 @@ func TestLegacySpendJournalDecodeFallback(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stxo mismatch: got %#v, want %#v", got, want)
+	}
+}
+
+func TestLegacySpendJournalNonWitnessScriptRejected(t *testing.T) {
+	t.Parallel()
+
+	stxos := []SpentTxOut{{
+		Amount:   546,
+		PkScript: hexToBytes("76a9141018853670f9f3b0582c5b9ee8ce93764ac32b9388ac"),
+	}}
+	serialized := serializeLegacySpendJournalEntry(stxos)
+	blockTxns := []*wire.MsgTx{{TxIn: []*wire.TxIn{{}}}}
+
+	if _, err := deserializeSpendJournalEntryV1(serialized, blockTxns); err == nil {
+		t.Fatal("deserializeSpendJournalEntryV1 accepted non-witness pkScript")
 	}
 }
 

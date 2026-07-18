@@ -275,39 +275,24 @@ func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, e
 
 // createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy
 // based on the passed block height to the provided address.  When the address
-// is nil, the coinbase transaction will instead be redeemable by anyone.
+// is nil, the coinbase transaction uses a reserved-version, anyone-can-spend
+// placeholder that external getblocktemplate miners replace.
 //
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
 func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockHeight int32, addr hnsutil.Address) (*hnsutil.Tx, error) {
 	// Derive the wire.Address from the hnsutil.Address.  Handshake uses
 	// a single unified address type consisting of a version (0-31) and a
-	// hash (2-40 bytes); we copy those fields into the wire form
-	// directly.  When addr is nil the coinbase is redeemable by anyone
-	// (the zero-length Address serialises to 0x00 0x00).
-	var outputAddr wire.Address
+	// hash (2-40 bytes); copy those fields into the wire form directly.
+	// A reserved version is consensus-valid and anyone-can-spend, making it
+	// suitable for the temporary external-coinbase template output.
+	outputAddr := wire.Address{Version: 1, Hash: []byte{0x00, 0x00}}
 	if addr != nil {
-		// wire.Address only supports witness versions 0-16 (OP_0 through
-		// OP_16), whereas hnsutil.Address allows up to version 31.  Reject
-		// upfront rather than waiting for serialization to fail.
-		version := addr.Version()
-		hash := addr.Hash()
-		if version > 16 {
-			return nil, fmt.Errorf("coinbase address version %d "+
-				"exceeds max supported wire version 16", version)
+		wireAddr, err := wire.NewAddress(addr.Version(), addr.Hash())
+		if err != nil {
+			return nil, fmt.Errorf("invalid coinbase address: %w", err)
 		}
-		if version == txscript.TaprootWitnessVersion &&
-			len(hash) == 32 {
-
-			return nil, fmt.Errorf("coinbase address version %d "+
-				"with 32-byte hash is a taproot-shaped "+
-				"payout, which Handshake does not support",
-				version)
-		}
-		outputAddr = wire.Address{
-			Version: version,
-			Hash:    hash,
-		}
+		outputAddr = *wireAddr
 	}
 
 	tx := wire.NewMsgTx(wire.TxVersion)
