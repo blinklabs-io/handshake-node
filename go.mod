@@ -8,7 +8,9 @@ require (
 	github.com/btcsuite/go-socks v0.0.0-20170105172521-4720035b7bfd
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/btcsuite/winsvc v1.0.0
+	github.com/cloudflare/circl v1.6.4
 	github.com/davecgh/go-spew v1.1.1
+	github.com/deatil/go-cryptobin v1.1.1013
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/decred/dcrd/lru v1.0.0
 	github.com/gorilla/websocket v1.5.0

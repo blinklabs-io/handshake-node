@@ -1300,7 +1300,7 @@ func TestCoinbaseProofRateUsesIncrementalCoinbaseWeight(t *testing.T) {
 	}
 }
 
-func TestNewBlockTemplateIncludesCoinbaseClaimProof(t *testing.T) {
+func TestNewBlockTemplateRejectsForgedCoinbaseClaimProof(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil
 
@@ -1342,53 +1342,13 @@ func TestNewBlockTemplateIncludesCoinbaseClaimProof(t *testing.T) {
 	generator = NewBlkTmplGenerator(&policy, &params,
 		txSource, chain, timeSource, sigCache, hashCache)
 
-	template, err := generator.NewBlockTemplate(payAddr)
-	if err != nil {
-		t.Fatalf("NewBlockTemplate height 2: %v", err)
-	}
+	_, err = generator.NewBlockTemplate(payAddr)
+	if err == nil || !strings.Contains(err.Error(),
+		"CLAIM ownership proof signature is invalid") {
 
-	coinbase := template.Block.Transactions[0]
-	if len(coinbase.TxIn) != 2 {
-		t.Fatalf("coinbase input count = %d, want 2", len(coinbase.TxIn))
+		t.Fatalf("NewBlockTemplate forged CLAIM error = %v, "+
+			"want signature rejection", err)
 	}
-	if len(coinbase.TxOut) != 2 {
-		t.Fatalf("coinbase output count = %d, want 2", len(coinbase.TxOut))
-	}
-	if !bytes.Equal(coinbase.TxIn[1].Witness[0], proof) {
-		t.Fatal("coinbase CLAIM witness mismatch")
-	}
-	if got := coinbase.TxOut[1].Covenant.Type; got != wire.CovenantClaim {
-		t.Fatalf("proof covenant = %d, want CLAIM", got)
-	}
-	if got := coinbase.TxOut[1].Value; got != proofOutput.Value {
-		t.Fatalf("proof output value = %d, want %d", got,
-			proofOutput.Value)
-	}
-	if len(template.CoinbaseProofs) != 1 {
-		t.Fatalf("template coinbase proof count = %d, want 1",
-			len(template.CoinbaseProofs))
-	}
-	if !bytes.Equal(template.CoinbaseProofs[0].Witness, proof) {
-		t.Fatal("template CLAIM proof witness mismatch")
-	}
-	txSource.coinbaseProofs[0].Witness[0] ^= 0xff
-	if bytes.Equal(template.CoinbaseProofs[0].Witness,
-		txSource.coinbaseProofs[0].Witness) {
-
-		t.Fatal("template CLAIM proof witness was not cloned")
-	}
-
-	wantPayout := blockchain.CalcBlockSubsidy(template.Height, &params) +
-		int64(claimFee)
-	if got := coinbase.TxOut[0].Value; got != wantPayout {
-		t.Fatalf("coinbase payout = %d, want subsidy plus proof fee %d",
-			got, wantPayout)
-	}
-	if got, want := template.Fees, []int64{0}; !int64sEqual(got, want) {
-		t.Fatalf("template fees = %v, want %v", got, want)
-	}
-
-	connectMiningTestTemplate(t, chain, template)
 }
 
 func TestCreateCoinbaseTxRejectsTaprootShapedPayout(t *testing.T) {

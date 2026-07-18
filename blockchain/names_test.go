@@ -766,42 +766,33 @@ func TestNameBlockViewOwnerOperationsRequireCurrentOwner(t *testing.T) {
 
 func TestNameBlockViewRejectsReplacementClaimValueMismatch(t *testing.T) {
 	params := chaincfg.MainNetParams
+	// Keep the mainnet reservation database and deflation rules while making
+	// the synthetic prior state immediately replacement-eligible.
+	params.NameClaimFrequency = 0
 	chain := &BlockChain{chainParams: &params}
-	name := "com"
-	nameHash := hashName([]byte(name))
-	height := params.NameDeflationHeight + params.NameClaimFrequency + 1
-	commitHeight := uint32(2)
-	commitHash := chainhash.Hash{0x44}
+	proof, data, prevTime := testMainnetClaimData(t)
+	nameHash := hashName([]byte(data.name))
+	height := params.NameDeflationHeight
 	prevOwner := *testOutPoint(21)
-	addr := wire.Address{
-		Version: 0,
-		Hash:    testAddressHash(),
-	}
-	reservedValue, ok := reservedNameValue(nameHash)
-	if !ok {
-		t.Fatal("missing reserved value for com")
-	}
-	fee := uint64(1000)
-	outputValue := int64(reservedValue - fee)
-	txt := testClaimTXT(t, &params, addr, fee, commitHash, commitHeight)
-	proof := testOwnershipProof(t, name, false, txt, 50, 150)
-	tx := testCoinbaseClaimTx(t, height, addr, uint64(outputValue),
-		commitHash, commitHeight, proof)
+	addr := wire.Address{Version: data.version, Hash: data.hash}
+	outputValue := int64(data.value - data.fee)
+	tx := testCoinbaseClaimTxForNameWithWeak(t, data.name, height, addr,
+		uint64(outputValue), data.commitHash, data.commitHeight, proof, data.weak)
 
 	newView := func(ownerValue int64) *nameBlockView {
 		ns := newNameState(nameHash)
-		ns.set([]byte(name), height-params.NameClaimFrequency)
-		ns.claimed = 1
+		ns.set([]byte(data.name), height)
 		ns.owner = prevOwner
-
 		view := nameBlockViewWithStates(chain, ns)
 		view.mainChainHeight = func(hash chainhash.Hash) (int32, error) {
-			if hash != commitHash {
+			if hash != data.commitHash {
 				return -1, nil
 			}
-			return int32(commitHeight), nil
+			return int32(data.commitHeight), nil
 		}
-		view.ownerCoinValue = func(_ database.Tx, owner wire.OutPoint) (int64, bool, error) {
+		view.ownerCoinValue = func(_ database.Tx,
+			owner wire.OutPoint) (int64, bool, error) {
+
 			if owner != prevOwner {
 				return 0, false, nil
 			}
@@ -810,8 +801,8 @@ func TestNameBlockViewRejectsReplacementClaimValueMismatch(t *testing.T) {
 		return view
 	}
 
-	err := newView(outputValue+1).applyTx(nil, hnsutil.NewTx(tx),
-		height, 100, nil, handshakeDeploymentFlags{})
+	err := newView(outputValue+1).applyTx(nil, hnsutil.NewTx(tx), height,
+		prevTime, nil, handshakeDeploymentFlags{})
 	if err == nil {
 		t.Fatal("applyTx replacement CLAIM: expected value mismatch")
 	}
@@ -820,7 +811,7 @@ func TestNameBlockViewRejectsReplacementClaimValueMismatch(t *testing.T) {
 	}
 
 	err = newView(outputValue).applyTx(nil, hnsutil.NewTx(tx), height,
-		100, nil, handshakeDeploymentFlags{})
+		prevTime, nil, handshakeDeploymentFlags{})
 	if err != nil {
 		t.Fatalf("applyTx replacement CLAIM matching value: %v", err)
 	}
