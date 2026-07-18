@@ -82,6 +82,13 @@ jobs:
         run: |
           mkdir -p dist/${{ matrix.os }}-${{ matrix.arch }}
           GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} GOBIN=$PWD/dist/${{ matrix.os }}-${{ matrix.arch }} make release-install
+      - name: Verify binary VCS metadata
+        run: |
+          for binary in handshake-node hnsctl; do
+            metadata="$(go version -m dist/${{ matrix.os }}-${{ matrix.arch }}/${binary})"
+            grep -Fq $'build\tvcs.revision=${{ github.sha }}' <<< "${metadata}"
+            grep -Fq $'build\tvcs.modified=false' <<< "${metadata}"
+          done
       - name: Create release asset
         if: startsWith(github.ref, 'refs/tags/')
         run: |
