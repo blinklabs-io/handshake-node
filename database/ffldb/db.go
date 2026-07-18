@@ -7,12 +7,14 @@ package ffldb
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
@@ -1609,6 +1611,9 @@ func (tx *transaction) close() {
 		tx.snapshot.Release()
 		tx.snapshot = nil
 	}
+	if !tx.writable {
+		tx.db.pruneLock.RUnlock()
+	}
 
 	tx.db.closeLock.RUnlock()
 
@@ -1626,17 +1631,26 @@ func (tx *transaction) close() {
 //
 // This function MUST only be called when there is pending data to be written.
 func (tx *transaction) writePendingAndCommit() error {
-	// Loop through all the pending file deletions and delete them.
-	// We do this first before doing any of the writes as we can't undo
-	// deletions of files.
-	for _, fileNum := range tx.pendingDelFileNums {
-		// Make sure the file is closed before attempting to delete it.
-		tx.db.store.closeFile(fileNum)
-
-		err := tx.db.store.deleteFileFunc(fileNum)
-		if err != nil {
-			// Nothing we can do if we fail to delete blocks besides
-			// return an error.
+	pruning := len(tx.pendingDelFileNums) != 0
+	if pruning {
+		// Merge any deletion intent left by an earlier interrupted cleanup
+		// into this transaction.  The record is committed atomically with
+		// all metadata changes below before any block file is deleted.
+		var existingFileNums []uint32
+		serialized := tx.fetchKey(pruneStateKey)
+		if serialized != nil {
+			var err error
+			existingFileNums, err = deserializePruneState(serialized)
+			if err != nil {
+				return err
+			}
+		}
+		fileNums := mergePruneFileNums(existingFileNums,
+			tx.pendingDelFileNums)
+		if err := tx.putKey(pruneStateKey, serializePruneState(fileNums)); err != nil {
+			return err
+		}
+		if err := tx.putKey(prunedKey, prunedValue); err != nil {
 			return err
 		}
 	}
@@ -1686,9 +1700,73 @@ func (tx *transaction) writePendingAndCommit() error {
 		return convertErr("failed to store write cursor", err)
 	}
 
-	// Atomically update the database cache.  The cache automatically
-	// handles flushing to the underlying persistent storage database.
-	return tx.db.cache.commitTx(tx)
+	if !pruning {
+		// Atomically update the database cache.  The cache automatically
+		// handles flushing to the underlying persistent storage database.
+		if err := tx.db.cache.commitTx(tx); err != nil {
+			return err
+		}
+
+		// A previous pruning commit may have retained its durable marker
+		// because an older reader was active.  Opportunistically retry
+		// cleanup after every later write without ever waiting for readers.
+		if err := tx.db.tryFinishPendingPrune(); err != nil {
+			if !isPrunePhysicalCleanupError(err) {
+				tx.db.recoveryRequired.Store(true)
+			}
+			log.Warnf("Unable to finish pending pruned block file cleanup: %v", err)
+		}
+		return nil
+	}
+
+	// Pruning must cross a stronger durability boundary than ordinary
+	// metadata caching.  First flush all earlier cached metadata and sync
+	// the current block file.  Then atomically and synchronously commit the
+	// pruning transaction, including its deletion intent, before unlinking
+	// any block file.
+	if err := tx.db.cache.flushSync(); err != nil {
+		rollback()
+		var ambiguousErr *ambiguousMetadataWriteError
+		if errors.As(err, &ambiguousErr) {
+			// The cached batch contains only transactions that preceded this
+			// pruning transaction, so its current block append can still be
+			// rolled back.  The cached batch itself might be durable, though,
+			// and its in-memory cache cannot be trusted until startup
+			// reconciles LevelDB with the restored block write cursor.
+			tx.db.recoveryRequired.Store(true)
+			str := "cached metadata commit outcome is unknown; database must be reopened"
+			return makeDbErr(database.ErrDriverSpecific, str, err)
+		}
+		return err
+	}
+	tx.db.signalPruneStage(pruneStageBlocksSynced)
+
+	if err := tx.db.cache.commitTreapsSync(tx.pendingKeys, tx.pendingRemove); err != nil {
+		// A synchronous storage error does not prove the atomic LevelDB
+		// batch was rejected.  It might have reached stable storage before
+		// the final sync reported an error.  Rolling back block files here
+		// could therefore leave committed metadata pointing at truncated
+		// data.  Preserve all block data and fail closed until reopen can
+		// reconcile the durable write cursor.
+		tx.db.recoveryRequired.Store(true)
+		str := "pruning metadata commit outcome is unknown; database must be reopened"
+		return makeDbErr(database.ErrDriverSpecific, str, err)
+	}
+	tx.pendingKeys = nil
+	tx.pendingRemove = nil
+	tx.db.signalPruneStage(pruneStageMetadataCommitted)
+
+	// The transaction is durably committed at this point, so cleanup
+	// failures must not be reported as transaction failures.  Leaving the
+	// durable record in place is safe and causes startup (or a later prune)
+	// to retry the idempotent file deletions.
+	if err := tx.db.tryFinishPendingPrune(); err != nil {
+		if !isPrunePhysicalCleanupError(err) {
+			tx.db.recoveryRequired.Store(true)
+		}
+		log.Warnf("Unable to finish pruned block file cleanup: %v", err)
+	}
+	return nil
 }
 
 // PruneBlocks deletes the block files until it reaches the target size
@@ -1706,6 +1784,10 @@ func (tx *transaction) PruneBlocks(targetSize uint64) ([]chainhash.Hash, error) 
 	if !tx.writable {
 		str := "prune blocks requires a writable database transaction"
 		return nil, makeDbErr(database.ErrTxNotWritable, str, nil)
+	}
+	if !directorySyncSupported {
+		return nil, fmt.Errorf("pruning is unsupported on %s because block "+
+			"directory updates cannot be durably synchronized", runtime.GOOS)
 	}
 
 	// Make a local alias for the maxBlockFileSize.
@@ -1791,7 +1873,15 @@ func (tx *transaction) PruneBlocks(targetSize uint64) ([]chainhash.Hash, error) 
 //
 // This function is part of the database.Tx interface implementation.
 func (tx *transaction) BeenPruned() (bool, error) {
-	first, last, _, hasFiles, err := scanBlockFiles(tx.db.store.basePath)
+	// Once prune metadata and deletion intent have been durably committed,
+	// the database is logically pruned even if physical file cleanup has not
+	// completed yet.  The permanent flag remains after cleanup so the result
+	// does not depend on how many files pruning happened to retain.
+	if tx.fetchKey(prunedKey) != nil || tx.fetchKey(pruneStateKey) != nil {
+		return true, nil
+	}
+
+	first, _, _, hasFiles, err := scanBlockFiles(tx.db.store.basePath)
 	if err != nil {
 		return false, err
 	}
@@ -1799,10 +1889,9 @@ func (tx *transaction) BeenPruned() (bool, error) {
 		return false, nil
 	}
 
-	// If the database is pruned, then the first .fdb will not be there.
-	// We also check that there isn't just 1 file on disk or if there are
-	// no files on disk by checking if first != last.
-	return first != 0 && (first != last), nil
+	// Fall back to the filesystem heuristic for databases pruned by older
+	// versions that predate the durable flag.
+	return first != 0, nil
 }
 
 // Commit commits all changes that have been made to the root metadata bucket
@@ -1865,9 +1954,20 @@ func (tx *transaction) Rollback() error {
 type db struct {
 	writeLock sync.Mutex   // Limit to one write transaction at a time.
 	closeLock sync.RWMutex // Make database close block while txns active.
+	pruneLock sync.RWMutex // Keep files available to read transactions.
 	closed    bool         // Is the database closed?
 	store     *blockStore  // Handles read/writing blocks to flat files.
 	cache     *dbCache     // Cache layer which wraps underlying leveldb DB.
+
+	// recoveryRequired is set when a synchronous metadata commit returns an
+	// error with an ambiguous outcome.  No new transactions are allowed until
+	// the database is closed and reopened so reconciliation can determine
+	// whether the atomic batch was committed.
+	recoveryRequired atomic.Bool
+
+	// pruneFailpoint is only set by white-box subprocess tests to simulate
+	// process termination at each durable pruning boundary.
+	pruneFailpoint func(pruneStage)
 }
 
 // Enforce db implements the database.DB interface.
@@ -1909,11 +2009,25 @@ func (db *db) begin(writable bool) (*transaction, error) {
 		return nil, makeDbErr(database.ErrDbNotOpen, errDbNotOpenStr,
 			nil)
 	}
+	if db.recoveryRequired.Load() {
+		db.closeLock.RUnlock()
+		if writable {
+			db.writeLock.Unlock()
+		}
+		str := "database requires reopen after an ambiguous metadata commit"
+		return nil, makeDbErr(database.ErrDriverSpecific, str, nil)
+	}
+	if !writable {
+		db.pruneLock.RLock()
+	}
 
 	// Grab a snapshot of the database cache (which in turn also handles the
 	// underlying database).
 	snapshot, err := db.cache.Snapshot()
 	if err != nil {
+		if !writable {
+			db.pruneLock.RUnlock()
+		}
 		db.closeLock.RUnlock()
 		if writable {
 			db.writeLock.Unlock()
@@ -2162,5 +2276,22 @@ func openDB(dbPath string, network wire.BitcoinNet, create bool) (database.DB, e
 
 	// Perform any reconciliation needed between the block and metadata as
 	// well as database initialization, if needed.
-	return reconcileDB(pdb, create)
+	if _, err := reconcileDB(pdb, create); err != nil {
+		_ = pdb.Close()
+		return nil, err
+	}
+
+	// Complete any block file deletion that was interrupted after its
+	// metadata transaction was durably committed.  A cleanup error does not
+	// make the logical database inconsistent, so leave the durable intent in
+	// place and retry on the next open.
+	if err := pdb.finishPendingPrune(); err != nil {
+		if isPrunePhysicalCleanupError(err) {
+			log.Warnf("Unable to finish pending pruned block file cleanup: %v", err)
+		} else {
+			_ = pdb.Close()
+			return nil, err
+		}
+	}
+	return pdb, nil
 }

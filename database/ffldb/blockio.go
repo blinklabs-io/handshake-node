@@ -183,6 +183,7 @@ type blockStore struct {
 	openFileFunc      func(fileNum uint32) (*lockableFile, error)
 	openWriteFileFunc func(fileNum uint32) (filer, error)
 	deleteFileFunc    func(fileNum uint32) error
+	syncDirFunc       func() error
 }
 
 // blockLocation identifies a particular block file and location.
@@ -324,7 +325,7 @@ func (s *blockStore) deleteFile(fileNum uint32) error {
 		err := fmt.Errorf("attempted to delete open file at %v", filePath)
 		return makeDbErr(database.ErrDriverSpecific, err.Error(), err)
 	}
-	if err := os.Remove(filePath); err != nil {
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return makeDbErr(database.ErrDriverSpecific, err.Error(), err)
 	}
 
@@ -458,6 +459,11 @@ func (s *blockStore) writeBlock(rawBlock []byte) (blockLocation, error) {
 		wc.Lock()
 		wc.curFile.Lock()
 		if wc.curFile.file != nil {
+			if err := s.syncBlockFile(wc.curFileNum, wc.curFile.file); err != nil {
+				wc.curFile.Unlock()
+				wc.Unlock()
+				return blockLocation{}, err
+			}
 			_ = wc.curFile.file.Close()
 			wc.curFile.file = nil
 		}
@@ -617,9 +623,26 @@ func (s *blockStore) readBlockRegion(loc blockLocation, offset, numBytes uint32)
 	return serializedData, nil
 }
 
+// syncBlockFile synchronizes a block file to stable storage.
+func (s *blockStore) syncBlockFile(fileNum uint32, file filer) error {
+	if err := file.Sync(); err != nil {
+		if errors.Is(err, syscall.ENOSPC) {
+			log.Errorf("%v. Cannot save any more blocks "+
+				"due to the disk being full "+
+				"-- exiting", err)
+			os.Exit(1)
+		}
+		str := fmt.Sprintf("failed to sync file %d: %v", fileNum, err)
+		return makeDbErr(database.ErrDriverSpecific, str, err)
+	}
+	return nil
+}
+
 // syncBlocks performs a file system sync on the flat file associated with the
-// store's current write cursor.  It is safe to call even when there is not a
-// current write file in which case it will have no effect.
+// store's current write cursor and on the block directory.  Rotated files are
+// synced before they are closed by writeBlock, so this establishes that every
+// block file and newly created directory entry is durable before metadata can
+// refer to it.  It is safe to call when there is no current write file.
 //
 // This is used when flushing cached metadata updates to disk to ensure all the
 // block data is fully written before updating the metadata.  This ensures the
@@ -627,29 +650,29 @@ func (s *blockStore) readBlockRegion(loc blockLocation, offset, numBytes uint32)
 func (s *blockStore) syncBlocks() error {
 	wc := s.writeCursor
 	wc.RLock()
-	defer wc.RUnlock()
 
 	// Nothing to do if there is no current file associated with the write
 	// cursor.
 	wc.curFile.RLock()
-	defer wc.curFile.RUnlock()
-	if wc.curFile.file == nil {
-		return nil
-	}
-
-	// Sync the file to disk.
-	if err := wc.curFile.file.Sync(); err != nil {
-		if errors.Is(err, syscall.ENOSPC) {
-			log.Errorf("%v. Cannot save any more blocks "+
-				"due to the disk being full "+
-				"-- exiting", err)
-			os.Exit(1)
+	file := wc.curFile.file
+	fileNum := wc.curFileNum
+	if file != nil {
+		if err := s.syncBlockFile(fileNum, file); err != nil {
+			wc.curFile.RUnlock()
+			wc.RUnlock()
+			return err
 		}
-		str := fmt.Sprintf("failed to sync file %d: %v", wc.curFileNum,
-			err)
-		return makeDbErr(database.ErrDriverSpecific, str, err)
 	}
+	wc.curFile.RUnlock()
+	wc.RUnlock()
 
+	// Directory synchronization is supported on all release platforms.  On
+	// other platforms pruning is rejected before it can create durable
+	// deletion intent, and normal block commits retain their historical
+	// behavior.
+	if directorySyncSupported {
+		return s.syncDirFunc()
+	}
 	return nil
 }
 
@@ -833,5 +856,6 @@ func newBlockStore(basePath string, network wire.BitcoinNet) (*blockStore, error
 	store.openFileFunc = store.openFile
 	store.openWriteFileFunc = store.openWriteFile
 	store.deleteFileFunc = store.deleteFile
+	store.syncDirFunc = store.syncDir
 	return store, nil
 }
