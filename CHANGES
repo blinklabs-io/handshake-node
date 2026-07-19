@@ -3,6 +3,15 @@ User visible changes for handshake-node
   A Handshake full node implementation written in Go
 ============================================================================
 
+Changes in 0.2.1-rc1 (release candidate)
+  - Storage and release hardening:
+    - Make flat-file pruning crash safe with durable recovery metadata and
+      filesystem synchronization at each persistence boundary. (#86)
+    - Build release binaries from a clean source tree and verify their embedded
+      revision and modification state before packaging. (#85)
+  - Contributors (alphabetical order):
+    - Chris Gianelloni
+
 Changes in 0.2.0-rc1 (release candidate)
   - Consensus and hsd compatibility:
     - Enforce hsd claim and airdrop hardening, sequence locks, bounded future
