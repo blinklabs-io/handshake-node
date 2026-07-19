@@ -612,8 +612,6 @@ var rpcLimited = map[string]struct{}{
 	"getrawmempool":         {},
 	"getrawtransaction":     {},
 	"gettxout":              {},
-	"invalidateblock":       {},
-	"reconsiderblock":       {},
 	"searchrawtransactions": {},
 	"sendrawairdrop":        {},
 	"sendrawclaim":          {},

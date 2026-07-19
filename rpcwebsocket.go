@@ -1560,7 +1560,8 @@ out:
 						Message: "limited user not authorized for this method",
 					}
 					// Marshal and send response.
-					reply, err = createMarshalledReply("", req.ID, nil, jsonErr)
+					reply, err = createMarshalledReply(req.Jsonrpc, req.ID, nil,
+						jsonErr)
 					if err != nil {
 						rpcsLog.Errorf("Failed to marshal parse failure "+
 							"reply: %v", err)
