@@ -190,6 +190,13 @@ func (e Error) Error() string {
 	return e.Description
 }
 
+// Unwrap returns the underlying driver error, when present.  This allows
+// callers to use errors.Is and errors.As without discarding the database error
+// code and description.
+func (e Error) Unwrap() error {
+	return e.Err
+}
+
 // makeError creates an Error given a set of arguments.  The error code must
 // be one of the error codes provided by this package.
 func makeError(c ErrorCode, desc string, err error) Error {

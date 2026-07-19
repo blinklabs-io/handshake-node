@@ -1704,6 +1704,17 @@ func (tx *transaction) writePendingAndCommit() error {
 		// Atomically update the database cache.  The cache automatically
 		// handles flushing to the underlying persistent storage database.
 		if err := tx.db.cache.commitTx(tx); err != nil {
+			var ambiguousErr *ambiguousMetadataWriteError
+			if errors.As(err, &ambiguousErr) {
+				// A metadata write error does not prove the atomic LevelDB
+				// transaction was rejected.  Preserve the appended block data
+				// and fail closed until startup reconciliation determines which
+				// write cursor was committed.
+				tx.db.recoveryRequired.Store(true)
+				str := "metadata commit outcome is unknown; database must be reopened"
+				return makeDbErr(database.ErrDriverSpecific, str, err)
+			}
+			rollback()
 			return err
 		}
 
@@ -2230,6 +2241,22 @@ func initDB(ldb *leveldb.DB) error {
 	return nil
 }
 
+func metadataDBOptions(create bool) *opt.Options {
+	return &opt.Options{
+		ErrorIfExist: create,
+		Strict:       opt.DefaultStrict,
+		Compression:  opt.NoCompression,
+		Filter:       filter.NewBloomFilter(10),
+		NoSync:       tstNoSync,
+
+		// FFldb metadata batches must remain on LevelDB's write-ahead-log
+		// path.  The alternative large-batch transaction path leaves a
+		// failed commit open, and closing it can delete SST files that an
+		// ambiguously durable manifest already references.
+		DisableLargeBatchTransaction: true,
+	}
+}
+
 // openDB opens the database at the provided path.  database.ErrDbDoesNotExist
 // is returned if the database doesn't exist and the create flag is not set.
 func openDB(dbPath string, network wire.BitcoinNet, create bool) (database.DB, error) {
@@ -2250,14 +2277,7 @@ func openDB(dbPath string, network wire.BitcoinNet, create bool) (database.DB, e
 	}
 
 	// Open the metadata database (will create it if needed).
-	opts := opt.Options{
-		ErrorIfExist: create,
-		Strict:       opt.DefaultStrict,
-		Compression:  opt.NoCompression,
-		Filter:       filter.NewBloomFilter(10),
-		NoSync:       tstNoSync,
-	}
-	ldb, err := leveldb.OpenFile(metadataDbPath, &opts)
+	ldb, err := leveldb.OpenFile(metadataDbPath, metadataDBOptions(create))
 	if err != nil {
 		return nil, convertErr(err.Error(), err)
 	}

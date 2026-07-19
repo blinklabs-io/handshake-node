@@ -7,7 +7,6 @@ package ffldb
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"syscall"
@@ -397,12 +396,17 @@ type dbCache struct {
 	// field so white-box tests can simulate the documented case where a
 	// durable write succeeds but its final sync reports an error.
 	writeBatchSyncFunc func(batch *leveldb.Batch) error
+
+	// writeBatchFunc is the normal LevelDB batch writer.  It is a field so
+	// white-box tests can simulate an error with an ambiguous commit outcome
+	// at the actual atomic writer boundary.
+	writeBatchFunc func(batch *leveldb.Batch) error
 }
 
-// ambiguousMetadataWriteError identifies a synchronous metadata batch write
-// that returned an error after the write was attempted.  LevelDB may have
-// persisted the atomic batch before reporting the error, so callers must not
-// assume the cached metadata is absent.
+// ambiguousMetadataWriteError identifies a metadata write that returned an
+// error after the write was attempted.  LevelDB may have persisted the atomic
+// batch before reporting the error, so callers must not assume the metadata is
+// absent.
 type ambiguousMetadataWriteError struct {
 	err error
 }
@@ -439,30 +443,6 @@ func (c *dbCache) Snapshot() (*dbCacheSnapshot, error) {
 	return cacheSnapshot, nil
 }
 
-// updateDB invokes the passed function in the context of a managed leveldb
-// transaction.  Any errors returned from the user-supplied function will cause
-// the transaction to be rolled back and are returned from this function.
-// Otherwise, the transaction is committed when the user-supplied function
-// returns a nil error.
-func (c *dbCache) updateDB(fn func(ldbTx *leveldb.Transaction) error) error {
-	// Start a leveldb transaction.
-	ldbTx, err := c.ldb.OpenTransaction()
-	if err != nil {
-		return convertErr("failed to open ldb transaction", err)
-	}
-
-	if err := fn(ldbTx); err != nil {
-		ldbTx.Discard()
-		return err
-	}
-
-	// Commit the leveldb transaction and convert any errors as needed.
-	if err := ldbTx.Commit(); err != nil {
-		return convertErr("failed to commit leveldb transaction", err)
-	}
-	return nil
-}
-
 // TreapForEacher is an interface which allows iteration of a treap in ascending
 // order using a user-supplied callback for each key/value pair.  It mainly
 // exists so both mutable and immutable treaps can be atomically committed to
@@ -471,44 +451,8 @@ type TreapForEacher interface {
 	ForEach(func(k, v []byte) bool)
 }
 
-// commitTreaps atomically commits all of the passed pending add/update/remove
-// updates to the underlying database.
-func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error {
-	// Perform all leveldb updates using an atomic transaction.
-	return c.updateDB(func(ldbTx *leveldb.Transaction) error {
-		var innerErr error
-		pendingKeys.ForEach(func(k, v []byte) bool {
-			if dbErr := ldbTx.Put(k, v, nil); dbErr != nil {
-				str := fmt.Sprintf("failed to put key %q to "+
-					"ldb transaction", k)
-				innerErr = convertErr(str, dbErr)
-				return false
-			}
-			return true
-		})
-		if innerErr != nil {
-			return innerErr
-		}
-
-		pendingRemove.ForEach(func(k, v []byte) bool {
-			if dbErr := ldbTx.Delete(k, nil); dbErr != nil {
-				str := fmt.Sprintf("failed to delete "+
-					"key %q from ldb transaction",
-					k)
-				innerErr = convertErr(str, dbErr)
-				return false
-			}
-			return true
-		})
-		return innerErr
-	})
-}
-
-// commitTreapsSync atomically commits all of the passed updates to the
-// underlying database and requests that the write is synced to stable storage.
-// It is used by pruning so metadata removals and their durable deletion intent
-// reach disk before any block files are unlinked.
-func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) error {
+// treapsToBatch returns a LevelDB batch containing all of the passed updates.
+func treapsToBatch(pendingKeys, pendingRemove TreapForEacher) *leveldb.Batch {
 	batch := new(leveldb.Batch)
 	pendingKeys.ForEach(func(k, v []byte) bool {
 		batch.Put(k, v)
@@ -518,9 +462,32 @@ func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) er
 		batch.Delete(k)
 		return true
 	})
+	return batch
+}
 
-	if err := c.writeBatchSyncFunc(batch); err != nil {
-		return convertErr("failed to durably commit pruning transaction", err)
+// commitTreaps atomically commits all of the passed pending add/update/remove
+// updates to the underlying database through LevelDB's write-ahead log.
+func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error {
+	if err := c.writeBatchFunc(treapsToBatch(pendingKeys, pendingRemove)); err != nil {
+		return convertErr("failed to commit metadata batch", err)
+	}
+	return nil
+}
+
+// commitTreapsSync atomically commits all of the passed updates to the
+// underlying database and requests that the write is synced to stable storage.
+// It is used by pruning so metadata removals and their durable deletion intent
+// reach disk before any block files are unlinked.
+func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) error {
+	if err := c.writeBatchSyncFunc(treapsToBatch(pendingKeys, pendingRemove)); err != nil {
+		dbErr := convertErr("failed to durably commit pruning transaction", err)
+		if errors.Is(dbErr, syscall.ENOSPC) {
+			log.Errorf("%v. Cannot save any more blocks "+
+				"due to the disk being full "+
+				"-- exiting", dbErr)
+			os.Exit(1)
+		}
+		return dbErr
 	}
 	return nil
 }
@@ -571,10 +538,7 @@ func (c *dbCache) flushWithSync(syncMetadata bool) error {
 				"-- exiting", err)
 			os.Exit(1)
 		}
-		if syncMetadata {
-			return &ambiguousMetadataWriteError{err: err}
-		}
-		return err
+		return &ambiguousMetadataWriteError{err: err}
 	}
 
 	// Clear the cache since it has been flushed.
@@ -651,10 +615,16 @@ func (c *dbCache) commitTx(tx *transaction) error {
 			return err
 		}
 
-		// Perform all leveldb updates using an atomic transaction.
+		// Perform all LevelDB updates using an atomic write-ahead-log batch.
 		err := c.commitTreaps(tx.pendingKeys, tx.pendingRemove)
 		if err != nil {
-			return err
+			if errors.Is(err, syscall.ENOSPC) {
+				log.Errorf("%v. Cannot save any more blocks "+
+					"due to the disk being full "+
+					"-- exiting", err)
+				os.Exit(1)
+			}
+			return &ambiguousMetadataWriteError{err: err}
 		}
 
 		// Clear the transaction entries since they have been committed.
@@ -744,6 +714,9 @@ func newDbCache(ldb *leveldb.DB, store *blockStore, maxSize uint64, flushInterva
 	}
 	cache.writeBatchSyncFunc = func(batch *leveldb.Batch) error {
 		return ldb.Write(batch, syncWriteOptions)
+	}
+	cache.writeBatchFunc = func(batch *leveldb.Batch) error {
+		return ldb.Write(batch, nil)
 	}
 	return cache
 }
