@@ -6,8 +6,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -30,8 +33,304 @@ import (
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btclog"
+	"github.com/btcsuite/websocket"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChainMutationRPCAuthorization(t *testing.T) {
+	const (
+		adminUser   = "admin"
+		adminPass   = "admin-pass"
+		limitedUser = "limited"
+		limitedPass = "limited-pass"
+	)
+	methods := []string{"invalidateblock", "reconsiderblock"}
+
+	// Replace the chain-mutating handlers with side-effect-free sentinels.  An
+	// admin request must reach these handlers, while a limited request must be
+	// rejected before dispatch.
+	originalHandlers := make(map[string]commandHandler, len(methods))
+	for _, method := range methods {
+		method := method
+		originalHandlers[method] = rpcHandlers[method]
+		rpcHandlers[method] = func(*rpcServer, interface{}, <-chan struct{}) (
+			interface{}, error) {
+
+			return "authorized:" + method, nil
+		}
+	}
+	defer func() {
+		for method, handler := range originalHandlers {
+			rpcHandlers[method] = handler
+		}
+	}()
+
+	originalCfg := cfg
+	cfg = &config{
+		RPCMaxClients:        defaultMaxRPCClients,
+		RPCMaxWebsockets:     defaultMaxRPCWebsockets,
+		RPCMaxConcurrentReqs: defaultMaxRPCConcurrentReqs,
+	}
+	defer func() {
+		cfg = originalCfg
+	}()
+	// The RPC log backend normally requires the daemon's log rotator.  Disable
+	// its output while request handlers log expected authorization failures, and
+	// restore the original level without replacing the package-global logger.
+	originalRPCLogLevel := rpcsLog.Level()
+	rpcsLog.SetLevel(btclog.LevelOff)
+	defer rpcsLog.SetLevel(originalRPCLogLevel)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := &rpcServer{
+		cfg: rpcserverConfig{
+			Listeners: []net.Listener{listener},
+		},
+		statusLines:            make(map[int]string),
+		requestProcessShutdown: make(chan struct{}),
+		quit:                   make(chan int),
+	}
+	server.authsha = testRPCAuthHash(adminUser, adminPass)
+	server.limitauthsha = testRPCAuthHash(limitedUser, limitedPass)
+	server.ntfnMgr = newWsNotificationManager(server)
+	server.Start()
+	defer func() {
+		if err := server.Stop(); err != nil {
+			t.Errorf("stop RPC server: %v", err)
+		}
+	}()
+
+	httpURL := "http://" + listener.Addr().String() + "/"
+	wsURL := "ws://" + listener.Addr().String() + "/ws"
+
+	transports := []struct {
+		name string
+		call func(*testing.T, string, string, string) hnsjson.Response
+	}{
+		{
+			name: "http",
+			call: func(t *testing.T, method, user, pass string) hnsjson.Response {
+				return callHTTPRPCForAuthTest(t, httpURL, method, user, pass)
+			},
+		},
+		{
+			name: "websocket",
+			call: func(t *testing.T, method, user, pass string) hnsjson.Response {
+				return callWebsocketRPCForAuthTest(t, wsURL, method, user, pass)
+			},
+		},
+	}
+
+	for _, transport := range transports {
+		for _, method := range methods {
+			t.Run(transport.name+"/limited/"+method, func(t *testing.T) {
+				response := transport.call(t, method, limitedUser, limitedPass)
+				if response.Error == nil || !strings.Contains(
+					response.Error.Message,
+					"limited user not authorized for this method",
+				) {
+
+					t.Fatalf("limited %s response error = %v, want authorization error",
+						method, response.Error)
+				}
+			})
+
+			t.Run(transport.name+"/admin/"+method, func(t *testing.T) {
+				response := transport.call(t, method, adminUser, adminPass)
+				if response.Error != nil {
+					t.Fatalf("admin %s response error = %v", method,
+						response.Error)
+				}
+				var result string
+				if err := json.Unmarshal(response.Result, &result); err != nil {
+					t.Fatalf("decode admin %s result: %v", method, err)
+				}
+				want := "authorized:" + method
+				if result != want {
+					t.Fatalf("admin %s result = %q, want %q", method,
+						result, want)
+				}
+			})
+		}
+	}
+
+	for _, role := range []struct {
+		name    string
+		user    string
+		pass    string
+		limited bool
+	}{
+		{name: "limited", user: limitedUser, pass: limitedPass, limited: true},
+		{name: "admin", user: adminUser, pass: adminPass},
+	} {
+		t.Run("websocket-batch/"+role.name, func(t *testing.T) {
+			responses := callWebsocketRPCBatchForAuthTest(t, wsURL, methods,
+				role.user, role.pass)
+			if len(responses) != len(methods) {
+				t.Fatalf("response count = %d, want %d", len(responses),
+					len(methods))
+			}
+
+			for i, method := range methods {
+				response := responses[i]
+				if role.limited {
+					if response.Error == nil || !strings.Contains(
+						response.Error.Message,
+						"limited user not authorized for this method",
+					) {
+
+						t.Fatalf("limited %s response error = %v, want authorization error",
+							method, response.Error)
+					}
+					continue
+				}
+
+				if response.Error != nil {
+					t.Fatalf("admin %s response error = %v", method,
+						response.Error)
+				}
+				var result string
+				if err := json.Unmarshal(response.Result, &result); err != nil {
+					t.Fatalf("decode admin %s result: %v", method, err)
+				}
+				want := "authorized:" + method
+				if result != want {
+					t.Fatalf("admin %s result = %q, want %q", method,
+						result, want)
+				}
+			}
+		})
+	}
+}
+
+func testRPCAuthHash(user, pass string) [sha256.Size]byte {
+	login := user + ":" + pass
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(login))
+	return sha256.Sum256([]byte(auth))
+}
+
+func chainMutationAuthTestRequest(t *testing.T, method string) *hnsjson.Request {
+	t.Helper()
+	request, err := hnsjson.NewRequest(hnsjson.RpcVersion1, 1, method,
+		[]interface{}{strings.Repeat("0", chainhash.MaxHashStringSize)})
+	if err != nil {
+		t.Fatalf("create %s request: %v", method, err)
+	}
+	return request
+}
+
+func callHTTPRPCForAuthTest(t *testing.T, url, method, user,
+	pass string) hnsjson.Response {
+
+	t.Helper()
+	payload, err := json.Marshal(chainMutationAuthTestRequest(t, method))
+	if err != nil {
+		t.Fatalf("marshal %s request: %v", method, err)
+	}
+	request, err := http.NewRequest(http.MethodPost, url,
+		bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("create HTTP %s request: %v", method, err)
+	}
+	request.SetBasicAuth(user, pass)
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("HTTP %s request: %v", method, err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close HTTP %s response body: %v", method, err)
+		}
+	}()
+
+	var rpcResponse hnsjson.Response
+	if err := json.NewDecoder(response.Body).Decode(&rpcResponse); err != nil {
+		t.Fatalf("decode HTTP %s response: %v", method, err)
+	}
+	return rpcResponse
+}
+
+func callWebsocketRPCForAuthTest(t *testing.T, url, method, user,
+	pass string) hnsjson.Response {
+
+	t.Helper()
+	header := make(http.Header)
+	login := user + ":" + pass
+	header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString(
+		[]byte(login)))
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+	conn, _, err := dialer.Dial(url, header)
+	if err != nil {
+		t.Fatalf("dial websocket for %s: %v", method, err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("close websocket for %s: %v", method, err)
+		}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		t.Fatalf("set websocket read deadline for %s: %v", method, err)
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		t.Fatalf("set websocket write deadline for %s: %v", method, err)
+	}
+	if err := conn.WriteJSON(chainMutationAuthTestRequest(t, method)); err != nil {
+		t.Fatalf("write websocket %s request: %v", method, err)
+	}
+
+	var rpcResponse hnsjson.Response
+	if err := conn.ReadJSON(&rpcResponse); err != nil {
+		t.Fatalf("read websocket %s response: %v", method, err)
+	}
+	return rpcResponse
+}
+
+func callWebsocketRPCBatchForAuthTest(t *testing.T, url string,
+	methods []string, user, pass string) []hnsjson.Response {
+
+	t.Helper()
+	header := make(http.Header)
+	login := user + ":" + pass
+	header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString(
+		[]byte(login)))
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+	conn, _, err := dialer.Dial(url, header)
+	if err != nil {
+		t.Fatalf("dial websocket batch: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("close websocket batch: %v", err)
+		}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		t.Fatalf("set websocket batch read deadline: %v", err)
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		t.Fatalf("set websocket batch write deadline: %v", err)
+	}
+	requests := make([]*hnsjson.Request, 0, len(methods))
+	for i, method := range methods {
+		request := chainMutationAuthTestRequest(t, method)
+		request.ID = i + 1
+		requests = append(requests, request)
+	}
+	if err := conn.WriteJSON(requests); err != nil {
+		t.Fatalf("write websocket batch: %v", err)
+	}
+
+	var rpcResponses []hnsjson.Response
+	if err := conn.ReadJSON(&rpcResponses); err != nil {
+		t.Fatalf("read websocket batch response: %v", err)
+	}
+	return rpcResponses
+}
 
 func TestReadLimitedRPCRequestBody(t *testing.T) {
 	tests := []struct {
