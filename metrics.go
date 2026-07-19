@@ -41,7 +41,16 @@ func (m *nodeMetrics) observeP2PMessage(direction string,
 	if m == nil || msg == nil {
 		return
 	}
-	m.p2pMessages.add(direction, msg.Type().String())
+	m.observeP2PMessageType(direction, msg.Type())
+}
+
+func (m *nodeMetrics) observeP2PMessageType(direction string,
+	msgType wire.HnsMsgType) {
+
+	if m == nil {
+		return
+	}
+	m.p2pMessages.add(direction, msgType.String())
 }
 
 func (m *nodeMetrics) observeBlockValidation(d time.Duration) {

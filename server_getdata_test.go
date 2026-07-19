@@ -8,6 +8,8 @@ import (
 	"math"
 	"net"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,15 +175,52 @@ func addServerTestBlock(t *testing.T, chain *blockchain.BlockChain,
 
 func connectServerTestPeer(t *testing.T, sp *serverPeer) (net.Conn, func()) {
 	t.Helper()
+	return connectServerTestPeerWithWriteGate(t, sp, nil, 0)
+}
+
+type serverTestWriteGate struct {
+	blocked   atomic.Bool
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newServerTestWriteGate() *serverTestWriteGate {
+	return &serverTestWriteGate{closed: make(chan struct{})}
+}
+
+type serverTestWriteGateConn struct {
+	net.Conn
+	gate *serverTestWriteGate
+}
+
+func (c *serverTestWriteGateConn) Write(data []byte) (int, error) {
+	if c.gate.blocked.Load() {
+		<-c.gate.closed
+		return 0, net.ErrClosed
+	}
+	return c.Conn.Write(data)
+}
+
+func (c *serverTestWriteGateConn) Close() error {
+	c.gate.closeOnce.Do(func() { close(c.gate.closed) })
+	return c.Conn.Close()
+}
+
+func connectServerTestPeerWithWriteGate(t *testing.T, sp *serverPeer,
+	gate *serverTestWriteGate, maxOutboundQueueBytes uint64) (net.Conn, func()) {
+
+	t.Helper()
 
 	verack := make(chan struct{}, 1)
 	sp.Peer = peer.NewInboundPeer(&peer.Config{
-		ChainParams:    &chaincfg.RegressionNetParams,
-		AllowSelfConns: true,
+		ChainParams:           &chaincfg.RegressionNetParams,
+		AllowSelfConns:        true,
+		MaxOutboundQueueBytes: maxOutboundQueueBytes,
 		Listeners: peer.MessageListeners{
 			OnVerAck: func(*peer.Peer, *wire.HnsMsgVerack) {
 				verack <- struct{}{}
 			},
+			OnGetHeaders: sp.OnGetHeaders,
 		},
 	})
 
@@ -197,6 +236,9 @@ func connectServerTestPeer(t *testing.T, sp *serverPeer) (net.Conn, func()) {
 		if err != nil {
 			accepted <- err
 			return
+		}
+		if gate != nil {
+			conn = &serverTestWriteGateConn{Conn: conn, gate: gate}
 		}
 		sp.Peer.AssociateConnection(conn)
 		accepted <- nil
@@ -293,6 +335,36 @@ func TestPushTxMsgNoMempool(t *testing.T) {
 	requireDoneSignal(t, done)
 }
 
+func TestBlockResponseWorkspaceRejectsBeforeDatabaseFetch(t *testing.T) {
+	const budgetBytes = 128 * 1024 * 1024
+	budget := peer.NewOutboundQueueBudget(budgetBytes)
+	held, ok := budget.AcquireWorkspace(63 * 1024 * 1024)
+	if !ok {
+		t.Fatal("failed to reserve test workspace")
+	}
+
+	s := &server{outboundQueueBudget: budget}
+	sp := newServerPeer(s, false)
+	sp.Peer = peer.NewInboundPeer(&peer.Config{
+		ChainParams: &chaincfg.RegressionNetParams,
+	})
+	done := make(chan struct{}, 1)
+	if err := s.pushBlockMsg(
+		sp, chaincfg.RegressionNetParams.GenesisHash, done,
+		wire.BaseEncoding,
+	); err != nil {
+		t.Fatalf("pushBlockMsg workspace rejection: %v", err)
+	}
+	requireDoneSignal(t, done)
+
+	held.Release()
+	workspace, ok := budget.AcquireWorkspace(blockResponseWorkspaceBytes)
+	if !ok {
+		t.Fatal("response workspace was not released after rejection")
+	}
+	workspace.Release()
+}
+
 func TestOnGetBlocksServesLocatedBlockInventory(t *testing.T) {
 	_, sp, teardown := newGetDataTestServer(t)
 	defer teardown()
@@ -367,6 +439,66 @@ func TestOnGetHeadersServesLocatedHeadersWhenCurrent(t *testing.T) {
 	gotHash := headers.Headers[0].BlockHash()
 	if !gotHash.IsEqual(block.Hash()) {
 		t.Fatalf("header hash = %v, want %v", gotHash, block.Hash())
+	}
+}
+
+func TestGetHeadersFloodDisconnectsNonReadingPeer(t *testing.T) {
+	_, sp, teardown := newGetDataTestServer(t)
+	defer teardown()
+
+	addServerTestBlock(t, sp.server.chain, &chaincfg.RegressionNetParams)
+
+	syncManager, err := netsync.New(&netsync.Config{
+		PeerNotifier:       sp.server,
+		Chain:              sp.server.chain,
+		ChainParams:        &chaincfg.RegressionNetParams,
+		DisableCheckpoints: true,
+		MaxPeers:           1,
+	})
+	if err != nil {
+		t.Fatalf("netsync.New: %v", err)
+	}
+	sp.server.syncManager = syncManager
+	syncManager.Start()
+	defer func() {
+		if err := syncManager.Stop(); err != nil {
+			t.Errorf("syncManager.Stop: %v", err)
+		}
+	}()
+
+	// Block writes in-process after negotiation so the real peer and server
+	// handlers exercise deterministic backpressure without kernel buffering.
+	writeGate := newServerTestWriteGate()
+	remote, cleanup := connectServerTestPeerWithWriteGate(
+		t, sp, writeGate, 16*1024,
+	)
+	defer cleanup()
+	writeGate.blocked.Store(true)
+	if err := remote.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+
+	msg := &wire.HnsMsgGetHeaders{}
+	if err := msg.AddBlockLocatorHash(chaincfg.RegressionNetParams.GenesisHash); err != nil {
+		t.Fatalf("AddBlockLocatorHash: %v", err)
+	}
+	for i := 0; i < 512 && sp.Connected(); i++ {
+		if _, err := wire.WriteHnsMessageN(remote, msg,
+			chaincfg.RegressionNetParams.Net); err != nil {
+
+			break
+		}
+	}
+
+	disconnected := make(chan struct{})
+	go func() {
+		sp.WaitForDisconnect()
+		close(disconnected)
+	}()
+	select {
+	case <-disconnected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("non-reading getheaders peer was not disconnected")
 	}
 }
 

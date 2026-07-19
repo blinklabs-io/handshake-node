@@ -120,6 +120,13 @@ type Config struct {
 	// connections in that case.
 	OnAccept func(net.Conn)
 
+	// OnAcceptPreflight, when non-nil, is called synchronously immediately
+	// after a connection is accepted and before an OnAccept goroutine is
+	// started.  It must return quickly.  A false result leaves ownership with
+	// the connection manager, which closes the connection and does not invoke
+	// OnAccept.  A true result transfers ownership to OnAccept as usual.
+	OnAcceptPreflight func(net.Conn) bool
+
 	// TargetOutbound is the number of outbound network connections to
 	// maintain. Defaults to 8.
 	TargetOutbound uint32
@@ -525,6 +532,12 @@ func (cm *ConnManager) listenHandler(listener net.Listener) {
 			if atomic.LoadInt32(&cm.stop) == 0 {
 				log.Errorf("Can't accept connection: %v", err)
 			}
+			continue
+		}
+		if preflight := cm.cfg.OnAcceptPreflight; preflight != nil &&
+			!preflight(conn) {
+
+			_ = conn.Close()
 			continue
 		}
 		go cm.cfg.OnAccept(conn)

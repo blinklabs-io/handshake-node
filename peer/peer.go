@@ -63,6 +63,33 @@ const (
 	// idleTimeout is the duration of inactivity before we time out a peer.
 	idleTimeout = 5 * time.Minute
 
+	// maxQueuedOutboundMessages and maxQueuedOutboundBytes bound all messages
+	// accepted by a peer's asynchronous output queue, including the message
+	// currently being written.
+	maxQueuedOutboundMessages = 100000
+	maxQueuedOutboundBytes    = 32 * 1024 * 1024
+	maxQueuedControlMessages  = 16
+	maxQueuedControlBytes     = 256 * 1024
+	maxQueuedInventory        = maxInvTrickleSize
+	outboundMessageOverhead   = 128
+	outboundInventoryOverhead = 64
+	defaultControlReserve     = 2 * 1024 * 1024
+	brontideFrameOverhead     = 64
+	brontideTransientCopies   = 3
+
+	// outboundSerializationMemoryFactor accounts for the peak payload and
+	// immutable envelope allocations made by EncodeHnsMessage.  Once encoding
+	// completes, only the exact envelope and fixed queue/list metadata remain.
+	outboundSerializationMemoryFactor = 2
+
+	// A decoded transaction can encode an empty witness element in one byte
+	// while retaining a 24-byte slice header.  A factor of 32 covers that
+	// worst per-element amplification plus containing slices and structs for
+	// legacy concrete OnWrite callbacks.  The full node uses OnWriteType and
+	// avoids this decoded allocation entirely.
+	outboundDecodedCallbackMemoryFactor = 32
+	legacyOnWriteWorkspaceBytes         = 256 * 1024 * 1024
+
 	// stallTickInterval is the interval of time between each check for
 	// stalled peers.
 	stallTickInterval = 15 * time.Second
@@ -73,6 +100,22 @@ const (
 	// only checked on each stall tick interval.
 	stallResponseTimeout = 30 * time.Second
 )
+
+// DefaultWriteTimeout bounds one P2P message write while allowing a maximum
+// block to cross slow or proxied links without an aggressive disconnect.
+const DefaultWriteTimeout = 2 * time.Minute
+
+// MinimumOutboundQueueBudget is the minimum aggregate budget that can prepare
+// and retain any single valid plaintext Handshake message while preserving the
+// small control-message reserve.
+const MinimumOutboundQueueBudget = outboundSerializationMemoryFactor*(wire.HnsMessageHeaderSize+wire.HnsMaxMessagePayload) +
+	outboundMessageOverhead + defaultControlReserve
+
+// MinimumBrontideOutboundQueueBudget is the corresponding minimum when the
+// retained plaintext message may also need the bounded Brontide encryption
+// copies charged while it is written.
+const MinimumBrontideOutboundQueueBudget = (1+brontideTransientCopies)*(wire.HnsMessageHeaderSize+wire.HnsMaxMessagePayload) +
+	outboundMessageOverhead + brontideFrameOverhead + defaultControlReserve
 
 var (
 	// nodeCount is the total number of peer connections made since startup
@@ -86,6 +129,28 @@ var (
 	// sentNonces houses the unique nonces that are generated when pushing
 	// version messages that are used to detect self connections.
 	sentNonces = lru.NewCache(50)
+
+	// legacyOnWriteWorkspaceBudget bounds concrete message reconstruction for
+	// legacy OnWrite observers across all peers without making the serialized
+	// message itself consume a type-maximum per-peer queue charge.
+	legacyOnWriteWorkspaceBudget = &OutboundQueueBudget{
+		maxBytes: legacyOnWriteWorkspaceBytes,
+	}
+)
+
+var (
+	// ErrPeerDisconnected indicates an outbound message was not accepted
+	// because the peer is already stopping.
+	ErrPeerDisconnected = errors.New("peer is disconnected")
+
+	// ErrOutboundQueueLimit indicates the peer exceeded its own bounded
+	// outbound queue and was disconnected as a slow consumer.
+	ErrOutboundQueueLimit = errors.New("peer outbound queue limit exceeded")
+
+	// ErrOutboundQueueBudget indicates the aggregate queue budget was full.
+	// The message is shed, but the peer remains connected so slow peers cannot
+	// force unrelated healthy peers to disconnect.
+	ErrOutboundQueueBudget = errors.New("aggregate outbound queue budget exhausted")
 )
 
 // MessageListeners defines callback function pointers to invoke with native
@@ -196,8 +261,13 @@ type MessageListeners struct {
 	// OnRead is invoked when a peer receives a Handshake message.
 	OnRead func(p *Peer, bytesRead int, msg wire.HandshakeMessage, err error)
 
-	// OnWrite is invoked when we write a Handshake message to a peer.
+	// OnWrite is invoked when we write a Handshake message to a peer.  The
+	// callback receives the concrete message value.
 	OnWrite func(p *Peer, bytesWritten int, msg wire.HandshakeMessage, err error)
+
+	// OnWriteType is the allocation-free alternative for observers that only
+	// need the message class.  It is invoked for direct and queued writes.
+	OnWriteType func(p *Peer, bytesWritten int, msgType wire.HnsMsgType, err error)
 }
 
 // Config is the struct to hold configuration options useful to Peer.
@@ -271,9 +341,105 @@ type Config struct {
 	// under test.
 	DisableStallHandler bool
 
+	// WriteTimeout bounds each write to the remote peer.  A non-positive value
+	// selects DefaultWriteTimeout.
+	WriteTimeout time.Duration
+
+	// OutboundQueueBudget optionally shares an aggregate byte budget across
+	// multiple peers.  The server supplies one budget to all of its peers.
+	OutboundQueueBudget *OutboundQueueBudget
+
+	// MaxOutboundQueueMessages and MaxOutboundQueueBytes optionally override
+	// the per-peer queue bounds.  Non-positive values select safe defaults.
+	MaxOutboundQueueMessages int
+	MaxOutboundQueueBytes    uint64
+
+	// MaxOutboundInventory optionally overrides the number of inventory
+	// announcements retained for trickled delivery.  A non-positive value
+	// selects the default.
+	MaxOutboundInventory int
+
 	// UsingV2Conn is defined if and only if we accept and attempt to make
 	// v2 connections.
 	UsingV2Conn bool
+}
+
+// OutboundQueueBudget bounds response generation, serialization, retained
+// queue data, and transport-copy workspace across a group of peers.  It is not
+// a bound on all process memory used by P2P handling.
+type OutboundQueueBudget struct {
+	prepareMu           sync.Mutex
+	mu                  sync.Mutex
+	maxBytes            uint64
+	controlReserveBytes uint64
+	usedBytes           uint64
+}
+
+// NewOutboundQueueBudget constructs a shared outbound queue budget.  A zero
+// maximum disables the aggregate limit.
+func NewOutboundQueueBudget(maxBytes uint64) *OutboundQueueBudget {
+	controlReserve := uint64(defaultControlReserve)
+	if fraction := maxBytes / 8; controlReserve > fraction {
+		controlReserve = fraction
+	}
+	return &OutboundQueueBudget{
+		maxBytes:            maxBytes,
+		controlReserveBytes: controlReserve,
+	}
+}
+
+func (b *OutboundQueueBudget) reserve(bytes uint64, control bool) bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	limit := b.maxBytes
+	if !control && limit > b.controlReserveBytes {
+		limit -= b.controlReserveBytes
+	}
+	if b.maxBytes > 0 && (bytes > limit || b.usedBytes > limit-bytes) {
+
+		return false
+	}
+	b.usedBytes += bytes
+	return true
+}
+
+func (b *OutboundQueueBudget) release(bytes uint64) {
+	if b == nil || bytes == 0 {
+		return
+	}
+	b.mu.Lock()
+	b.usedBytes -= bytes
+	b.mu.Unlock()
+}
+
+// OutboundQueueWorkspace reserves bounded transient memory used to construct
+// an outbound response before it has an immutable serialized representation.
+type OutboundQueueWorkspace struct {
+	budget *OutboundQueueBudget
+	bytes  uint64
+	once   sync.Once
+}
+
+// AcquireWorkspace reserves response-generation memory from the aggregate
+// output budget.  The returned workspace must be released.
+func (b *OutboundQueueBudget) AcquireWorkspace(
+	bytes uint64) (*OutboundQueueWorkspace, bool) {
+
+	if !b.reserve(bytes, false) {
+		return nil, false
+	}
+	return &OutboundQueueWorkspace{budget: b, bytes: bytes}, true
+}
+
+// Release returns a response-generation workspace reservation.
+func (w *OutboundQueueWorkspace) Release() {
+	if w == nil {
+		return
+	}
+	w.once.Do(func() { w.budget.release(w.bytes) })
 }
 
 // FormatUserAgent returns the local user-agent string advertised to peers.
@@ -341,9 +507,50 @@ func newNetAddress(addr net.Addr, services wire.ServiceFlag) (*wire.NetAddress, 
 // when the message has been sent (or won't be sent due to things such as
 // shutdown)
 type outMsg struct {
-	message  wire.HandshakeMessage
-	doneChan chan<- struct{}
+	message           wire.HandshakeMessage
+	messageType       wire.HnsMsgType
+	encoded           []byte
+	doneChan          chan<- struct{}
+	callbackWorkspace *OutboundQueueWorkspace
+	queueBytes        uint64
+	budgetReserved    bool
+	control           bool
+	reserved          bool
 }
+
+type outInv struct {
+	invVect    wire.InvVect
+	queueBytes uint64
+	reserved   bool
+}
+
+// serializedHandshakeMessage is the allocation-free message type view used by
+// the stall handler for queued messages.
+type serializedHandshakeMessage struct {
+	messageType wire.HnsMsgType
+}
+
+func (m *serializedHandshakeMessage) Type() wire.HnsMsgType {
+	return m.messageType
+}
+
+func (m *serializedHandshakeMessage) Encode() []byte {
+	return nil
+}
+
+func (*serializedHandshakeMessage) Decode([]byte) error {
+	return nil
+}
+
+type outboundQueueResult uint8
+
+const (
+	outboundQueueAccepted outboundQueueResult = iota
+	outboundQueueStopped
+	outboundQueuePeerLimit
+	outboundQueueGlobalLimit
+	outboundQueueDuplicate
+)
 
 // stallControlCmd represents the command of a stall control message.
 type stallControlCmd uint8
@@ -463,6 +670,20 @@ type Peer struct {
 	wireEncoding wire.MessageEncoding
 
 	knownInventory     lru.Cache
+	prepareMtx         sync.Mutex
+	queueMtx           sync.Mutex
+	queueEnqueueWg     sync.WaitGroup
+	queueStopped       bool
+	queuedMessages     int
+	queuedInventory    int
+	queuedBytes        uint64
+	queuedControlMsgs  int
+	queuedControlBytes uint64
+	queuedInventorySet map[wire.InvVect]struct{}
+	maxQueuedMessages  int
+	maxQueuedInventory int
+	maxQueuedBytes     uint64
+	queueBudget        *OutboundQueueBudget
 	prevGetBlocksMtx   sync.Mutex
 	prevGetBlocksBegin *chainhash.Hash
 	prevGetBlocksStop  *chainhash.Hash
@@ -486,7 +707,7 @@ type Peer struct {
 	outputQueue   chan outMsg
 	sendQueue     chan outMsg
 	sendDoneQueue chan struct{}
-	outputInvChan chan *wire.InvVect
+	outputInvChan chan outInv
 	inQuit        chan struct{}
 	queueQuit     chan struct{}
 	outQuit       chan struct{}
@@ -533,7 +754,9 @@ func (p *Peer) UpdateLastAnnouncedBlock(blkHash *chainhash.Hash) {
 //
 // This function is safe for concurrent access.
 func (p *Peer) AddKnownInventory(invVect *wire.InvVect) {
-	p.knownInventory.Add(invVect)
+	if invVect != nil {
+		p.knownInventory.Add(*invVect)
+	}
 }
 
 // StatsSnapshot returns a snapshot of the current peer flags and statistics.
@@ -860,7 +1083,9 @@ func (p *Peer) PushAddrMsg(addresses []*wire.NetAddress) ([]*wire.NetAddress, er
 	for i := range addrList {
 		msg.Peers[i] = wire.NewHnsNetAddress(addrList[i])
 	}
-	p.QueueMessage(msg, nil)
+	if err := p.TryQueueMessage(msg, nil); err != nil {
+		return nil, err
+	}
 	return addrList, nil
 }
 
@@ -898,7 +1123,9 @@ func (p *Peer) PushGetBlocksMsg(locator blockchain.BlockLocator, stopHash *chain
 			return err
 		}
 	}
-	p.QueueMessage(msg, nil)
+	if err := p.TryQueueMessage(msg, nil); err != nil {
+		return err
+	}
 
 	// Update the previous getblocks request information for filtering
 	// duplicates.
@@ -943,7 +1170,9 @@ func (p *Peer) PushGetHeadersMsg(locator blockchain.BlockLocator, stopHash *chai
 			return err
 		}
 	}
-	p.QueueMessage(msg, nil)
+	if err := p.TryQueueMessage(msg, nil); err != nil {
+		return err
+	}
 
 	// Update the previous getheaders request information for filtering
 	// duplicates.
@@ -1018,7 +1247,12 @@ func hnsTimeToTime(sec uint64) time.Time {
 // handlePingMsg is invoked when a peer receives a ping message.
 func (p *Peer) handlePingMsg(msg *wire.HnsMsgPing) {
 	// Include nonce from ping so pong can be identified.
-	p.QueueHnsMessage(&wire.HnsMsgPong{Nonce: msg.Nonce}, nil)
+	if err := p.TryQueueHnsMessage(
+		&wire.HnsMsgPong{Nonce: msg.Nonce}, nil,
+	); err != nil {
+		log.Debugf("Unable to queue mandatory pong to %s: %v", p, err)
+		p.Disconnect()
+	}
 }
 
 // handlePongMsg is invoked when a peer receives a pong message. It updates the
@@ -1087,32 +1321,433 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 
 // writeMessage sends a Handshake message to the peer with logging.
 func (p *Peer) writeMessage(msg wire.HandshakeMessage) error {
+	encoded, err := wire.EncodeHnsMessage(msg,
+		uint32(p.cfg.ChainParams.Net))
+	if err != nil {
+		return err
+	}
+	return p.writeEncodedMessage(msg, msg.Type(), encoded)
+}
+
+func (p *Peer) writeEncodedMessage(msg wire.HandshakeMessage,
+	msgType wire.HnsMsgType, encoded []byte) error {
+
 	// Don't do anything if we're disconnecting.
 	if atomic.LoadInt32(&p.disconnect) != 0 {
 		return nil
 	}
 
-	n, err := wire.WriteHandshakeMessageN(p.conn, msg, p.cfg.ChainParams.Net)
+	written := 0
+	err := p.conn.SetWriteDeadline(time.Now().Add(p.cfg.WriteTimeout))
+	if err == nil {
+		for written < len(encoded) {
+			var n int
+			n, err = p.conn.Write(encoded[written:])
+			written += n
+			if err != nil {
+				break
+			}
+			if n == 0 {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if clearErr := p.conn.SetWriteDeadline(time.Time{}); err == nil {
+			err = clearErr
+		}
+	}
 
 	// Use closures to log expensive operations so they are only run when
 	// the logging level requires it.
 	log.Debugf("%v", newLogClosure(func() string {
 		// Debug summary of message.
-		summary := messageSummary(msg)
+		var summary string
+		if msg != nil {
+			summary = messageSummary(msg)
+		}
 		if len(summary) > 0 {
 			summary = " (" + summary + ")"
 		}
-		return fmt.Sprintf("Sending %v%s to %s", msg.Type(),
+		return fmt.Sprintf("Sending %v%s to %s", msgType,
 			summary, p)
 	}))
-	log.Tracef("%v", newLogClosure(func() string {
-		return spew.Sdump(msg)
-	}))
-	atomic.AddUint64(&p.bytesSent, uint64(n))
+	if msg != nil {
+		log.Tracef("%v", newLogClosure(func() string {
+			return spew.Sdump(msg)
+		}))
+	}
+	atomic.AddUint64(&p.bytesSent, uint64(written))
 	if p.cfg.Listeners.OnWrite != nil {
-		p.cfg.Listeners.OnWrite(p, n, msg, err)
+		p.cfg.Listeners.OnWrite(p, written, msg, err)
+	}
+	if p.cfg.Listeners.OnWriteType != nil {
+		p.cfg.Listeners.OnWriteType(p, written, msgType, err)
 	}
 	return err
+}
+
+func (p *Peer) prepareOutboundMessage(msg *outMsg) error {
+	if msg.encoded != nil {
+		return nil
+	}
+	if msg.message == nil {
+		msg.queueBytes = outboundMessageOverhead
+		return nil
+	}
+	msg.messageType = msg.message.Type()
+	msg.control = isOutboundControlMessage(msg.messageType)
+	encoded, err := wire.EncodeHnsMessage(msg.message,
+		uint32(p.cfg.ChainParams.Net))
+	if err != nil {
+		return err
+	}
+	msg.encoded = encoded
+	// The legacy OnWrite callback promises the original concrete message.
+	// Retain it only when that callback is configured.  OnWriteType users,
+	// including the full node, keep the allocation-free serialized path.
+	if p.cfg.Listeners.OnWrite == nil {
+		msg.message = nil
+	}
+	msg.queueBytes = uint64(len(encoded)) + outboundMessageOverhead
+	if p.cfg.UsingV2Conn {
+		msg.queueBytes += uint64(len(encoded))*brontideTransientCopies +
+			brontideFrameOverhead
+	}
+	return nil
+}
+
+func (p *Peer) reserveLegacyOnWriteWorkspace(msg *outMsg) bool {
+	if p.cfg.Listeners.OnWrite == nil || msg.message == nil ||
+		msg.callbackWorkspace != nil {
+
+		return true
+	}
+
+	workspaceBytes := uint64(len(msg.encoded)) *
+		outboundDecodedCallbackMemoryFactor
+	workspace, ok := legacyOnWriteWorkspaceBudget.AcquireWorkspace(workspaceBytes)
+	if !ok {
+		return false
+	}
+	msg.callbackWorkspace = workspace
+	return true
+}
+
+func releaseLegacyOnWriteWorkspace(msg *outMsg) {
+	if msg.callbackWorkspace == nil {
+		return
+	}
+	msg.callbackWorkspace.Release()
+	msg.callbackWorkspace = nil
+}
+
+func (p *Peer) releasePreparedOutboundMessage(msg *outMsg) {
+	if msg.budgetReserved {
+		p.queueBudget.release(msg.queueBytes)
+		msg.budgetReserved = false
+	}
+	releaseLegacyOnWriteWorkspace(msg)
+}
+
+func isOutboundControlMessage(msgType wire.HnsMsgType) bool {
+	switch msgType {
+	case wire.HnsMsgTypeVersion,
+		wire.HnsMsgTypeVerack,
+		wire.HnsMsgTypePing,
+		wire.HnsMsgTypePong,
+		wire.HnsMsgTypeGetAddr,
+		wire.HnsMsgTypeSendHeaders,
+		wire.HnsMsgTypeReject,
+		wire.HnsMsgTypeMempool,
+		wire.HnsMsgTypeFilterLoad,
+		wire.HnsMsgTypeFilterAdd,
+		wire.HnsMsgTypeFilterClear,
+		wire.HnsMsgTypeFeeFilter,
+		wire.HnsMsgTypeSendCmpct,
+		wire.HnsMsgTypeGetProof:
+
+		return true
+	default:
+		return false
+	}
+}
+
+func outboundDataByteLimit(limit uint64) uint64 {
+	controlReserve := uint64(maxQueuedControlBytes)
+	if halfLimit := limit / 2; controlReserve > halfLimit {
+		controlReserve = halfLimit
+	}
+	return limit - controlReserve
+}
+
+func outboundDataMessageLimit(limit int) int {
+	controlReserve := maxQueuedControlMessages
+	if halfLimit := limit / 2; controlReserve > halfLimit {
+		controlReserve = halfLimit
+	}
+	return limit - controlReserve
+}
+
+func (p *Peer) prepareOutboundMessageBudgeted(
+	msg *outMsg) (outboundQueueResult, error) {
+
+	if msg.encoded != nil || msg.message == nil || p.queueBudget == nil {
+		return outboundQueueAccepted, p.prepareOutboundMessage(msg)
+	}
+	msg.messageType = msg.message.Type()
+	msg.control = isOutboundControlMessage(msg.messageType)
+
+	// Reserve the type-specific worst-case serialization footprint before
+	// EncodeHnsMessage allocates its payload and immutable envelope.  The
+	// preparation mutex ensures this conservative reservation can be reduced
+	// to the exact retained charge before another message starts encoding.
+	maxEncoded := uint64(wire.HnsMessageHeaderSize) +
+		uint64(wire.MaxHnsPayloadLength(msg.message.Type()))
+	preparationBytes := maxEncoded*outboundSerializationMemoryFactor +
+		outboundMessageOverhead
+	if !p.queueBudget.reserve(preparationBytes, msg.control) {
+		return outboundQueueGlobalLimit, nil
+	}
+	msg.budgetReserved = true
+
+	if err := p.prepareOutboundMessage(msg); err != nil {
+		p.queueBudget.release(preparationBytes)
+		msg.budgetReserved = false
+		return outboundQueueStopped, err
+	}
+	if preparationBytes > msg.queueBytes {
+		p.queueBudget.release(preparationBytes - msg.queueBytes)
+	} else if preparationBytes < msg.queueBytes {
+		// The wire package's type maximums must always make this impossible.
+		// Keep the check defensive in case a new message type is added without
+		// a corresponding maximum.
+		if !p.queueBudget.reserve(
+			msg.queueBytes-preparationBytes, msg.control,
+		) {
+			p.queueBudget.release(preparationBytes)
+			msg.budgetReserved = false
+			return outboundQueueGlobalLimit, nil
+		}
+	}
+	return outboundQueueAccepted, nil
+}
+
+func (p *Peer) lockOutboundPreparation() func() {
+	if p.queueBudget != nil {
+		p.queueBudget.prepareMu.Lock()
+		return p.queueBudget.prepareMu.Unlock
+	}
+	p.prepareMtx.Lock()
+	return p.prepareMtx.Unlock
+}
+
+func (p *Peer) reserveOutboundMessageLocked(
+	msg *outMsg) outboundQueueResult {
+
+	if msg.reserved {
+		return outboundQueueAccepted
+	}
+	if p.queueStopped {
+		if msg.budgetReserved {
+			p.queueBudget.release(msg.queueBytes)
+			msg.budgetReserved = false
+		}
+		return outboundQueueStopped
+	}
+	peerByteLimit := p.maxQueuedBytes
+	if !msg.control {
+		peerByteLimit = outboundDataByteLimit(peerByteLimit)
+	}
+	peerMessageLimit := p.maxQueuedMessages
+	if !msg.control {
+		peerMessageLimit = outboundDataMessageLimit(peerMessageLimit)
+	}
+	if p.queuedMessages >= peerMessageLimit ||
+		msg.queueBytes > peerByteLimit ||
+		p.queuedBytes > peerByteLimit-msg.queueBytes {
+
+		if msg.budgetReserved {
+			p.queueBudget.release(msg.queueBytes)
+			msg.budgetReserved = false
+		}
+		return outboundQueuePeerLimit
+	}
+	if msg.control && (p.queuedControlMsgs >= maxQueuedControlMessages ||
+		msg.queueBytes > maxQueuedControlBytes ||
+		p.queuedControlBytes > maxQueuedControlBytes-msg.queueBytes) {
+
+		if msg.budgetReserved {
+			p.queueBudget.release(msg.queueBytes)
+			msg.budgetReserved = false
+		}
+		return outboundQueuePeerLimit
+	}
+	if !msg.budgetReserved &&
+		!p.queueBudget.reserve(msg.queueBytes, msg.control) {
+
+		return outboundQueueGlobalLimit
+	}
+	p.queuedMessages++
+	p.queuedBytes += msg.queueBytes
+	if msg.control {
+		p.queuedControlMsgs++
+		p.queuedControlBytes += msg.queueBytes
+	}
+	msg.reserved = true
+	msg.budgetReserved = true
+	return outboundQueueAccepted
+}
+
+func (p *Peer) reserveOutboundMessage(msg *outMsg) outboundQueueResult {
+	p.queueMtx.Lock()
+	result := p.reserveOutboundMessageLocked(msg)
+	p.queueMtx.Unlock()
+	return result
+}
+
+func (p *Peer) prepareAndReserveOutboundMessage(
+	msg *outMsg) (outboundQueueResult, error) {
+
+	unlock := p.lockOutboundPreparation()
+	defer unlock()
+	result, err := p.prepareOutboundMessageBudgeted(msg)
+	if err != nil || result != outboundQueueAccepted {
+		return result, err
+	}
+	if !p.reserveLegacyOnWriteWorkspace(msg) {
+		p.releasePreparedOutboundMessage(msg)
+		return outboundQueueGlobalLimit, nil
+	}
+	result = p.reserveOutboundMessage(msg)
+	if result != outboundQueueAccepted {
+		p.releasePreparedOutboundMessage(msg)
+	}
+	return result, nil
+}
+
+func (p *Peer) beginOutboundMessageEnqueue(
+	msg *outMsg) outboundQueueResult {
+
+	p.queueMtx.Lock()
+	result := p.reserveOutboundMessageLocked(msg)
+	if result == outboundQueueAccepted {
+		p.queueEnqueueWg.Add(1)
+	}
+	p.queueMtx.Unlock()
+	return result
+}
+
+func (p *Peer) finishOutboundMessageEnqueue(
+	msg *outMsg) outboundQueueResult {
+
+	select {
+	case p.outputQueue <- *msg:
+		p.queueEnqueueWg.Done()
+		return outboundQueueAccepted
+	case <-p.quit:
+		p.releaseOutboundMessage(*msg)
+		p.queueEnqueueWg.Done()
+		return outboundQueueStopped
+	}
+}
+
+func (p *Peer) prepareAndEnqueueOutboundMessage(
+	msg *outMsg) (outboundQueueResult, error) {
+
+	unlock := p.lockOutboundPreparation()
+	result, err := p.prepareOutboundMessageBudgeted(msg)
+	if err != nil || result != outboundQueueAccepted {
+		unlock()
+		return result, err
+	}
+	if !p.reserveLegacyOnWriteWorkspace(msg) {
+		p.releasePreparedOutboundMessage(msg)
+		unlock()
+		return outboundQueueGlobalLimit, nil
+	}
+	result = p.beginOutboundMessageEnqueue(msg)
+	unlock()
+	if result != outboundQueueAccepted {
+		p.releasePreparedOutboundMessage(msg)
+		return result, nil
+	}
+	return p.finishOutboundMessageEnqueue(msg), nil
+}
+
+func (p *Peer) releaseOutboundMessage(msg outMsg) {
+	if !msg.reserved {
+		releaseLegacyOnWriteWorkspace(&msg)
+		return
+	}
+
+	p.queueMtx.Lock()
+	p.queuedMessages--
+	p.queuedBytes -= msg.queueBytes
+	if msg.control {
+		p.queuedControlMsgs--
+		p.queuedControlBytes -= msg.queueBytes
+	}
+	p.queueBudget.release(msg.queueBytes)
+	p.queueMtx.Unlock()
+	releaseLegacyOnWriteWorkspace(&msg)
+}
+
+func (p *Peer) enqueueOutboundInventory(inv *outInv) outboundQueueResult {
+	p.queueMtx.Lock()
+	if p.queueStopped {
+		p.queueMtx.Unlock()
+		return outboundQueueStopped
+	}
+	if _, ok := p.queuedInventorySet[inv.invVect]; ok {
+		p.queueMtx.Unlock()
+		return outboundQueueDuplicate
+	}
+	peerByteLimit := outboundDataByteLimit(p.maxQueuedBytes)
+	if p.queuedInventory >= p.maxQueuedInventory ||
+		inv.queueBytes > peerByteLimit ||
+		p.queuedBytes > peerByteLimit-inv.queueBytes {
+
+		p.queueMtx.Unlock()
+		return outboundQueuePeerLimit
+	}
+	if !p.queueBudget.reserve(inv.queueBytes, false) {
+		p.queueMtx.Unlock()
+		return outboundQueueGlobalLimit
+	}
+	p.queuedInventory++
+	p.queuedBytes += inv.queueBytes
+	p.queuedInventorySet[inv.invVect] = struct{}{}
+	inv.reserved = true
+	p.queueEnqueueWg.Add(1)
+	p.queueMtx.Unlock()
+
+	select {
+	case p.outputInvChan <- *inv:
+		p.queueEnqueueWg.Done()
+		return outboundQueueAccepted
+	case <-p.quit:
+		p.releaseOutboundInventory(*inv)
+		p.queueEnqueueWg.Done()
+		return outboundQueueStopped
+	}
+}
+
+func (p *Peer) releaseOutboundInventory(inv outInv) {
+	if !inv.reserved {
+		return
+	}
+	p.queueMtx.Lock()
+	p.queuedInventory--
+	p.queuedBytes -= inv.queueBytes
+	delete(p.queuedInventorySet, inv.invVect)
+	p.queueBudget.release(inv.queueBytes)
+	p.queueMtx.Unlock()
+}
+
+func signalMessageDone(doneChan chan<- struct{}) {
+	if doneChan != nil {
+		doneChan <- struct{}{}
+	}
 }
 
 // isAllowedReadError returns whether or not the passed error is allowed without
@@ -1636,20 +2271,45 @@ func (p *Peer) queueHandler() {
 	waiting := false
 
 	// To avoid duplication below.
-	queuePacket := func(msg outMsg, list *list.List, waiting bool) bool {
+	queuePacket := func(msg outMsg, list *list.List,
+		waiting bool) (bool, bool) {
+
+		result, err := p.prepareAndReserveOutboundMessage(&msg)
+		if err != nil {
+			log.Warnf("Cannot serialize outbound message for peer %s: %v", p, err)
+			signalMessageDone(msg.doneChan)
+			p.Disconnect()
+			return waiting, false
+		}
+		switch result {
+		case outboundQueueAccepted:
+		case outboundQueueGlobalLimit:
+			log.Debugf("Dropping outbound message for peer %s because the "+
+				"aggregate queue budget is exhausted", p)
+			signalMessageDone(msg.doneChan)
+			return waiting, false
+		case outboundQueuePeerLimit:
+			log.Warnf("Peer %s exceeded outbound queue limits -- disconnecting", p)
+			signalMessageDone(msg.doneChan)
+			p.Disconnect()
+			return waiting, false
+		default:
+			signalMessageDone(msg.doneChan)
+			return waiting, false
+		}
 		if !waiting {
 			p.sendQueue <- msg
 		} else {
 			list.PushBack(msg)
 		}
 		// we are always waiting now.
-		return true
+		return true, true
 	}
 out:
 	for {
 		select {
 		case msg := <-p.outputQueue:
-			waiting = queuePacket(msg, pendingMsgs, waiting)
+			waiting, _ = queuePacket(msg, pendingMsgs, waiting)
 
 		// This channel is notified when a message has been sent across
 		// the network socket.
@@ -1667,9 +2327,10 @@ out:
 			val := pendingMsgs.Remove(next)
 			p.sendQueue <- val.(outMsg)
 
-		case iv := <-p.outputInvChan:
+		case queuedInv := <-p.outputInvChan:
 			// No handshake?  They'll find out soon enough.
 			if p.VersionKnown() {
+				iv := &queuedInv.invVect
 				// If this is a new block, then we'll blast it
 				// out immediately, sipping the inv trickle
 				// queue.
@@ -1677,12 +2338,19 @@ out:
 					iv.Type == wire.InvTypeWitnessBlock {
 
 					invMsg := wire.NewHnsMsgInvSizeHint(1)
-					invMsg.AddInvVect(iv)
-					waiting = queuePacket(outMsg{message: invMsg},
+					_ = invMsg.AddInvVect(iv)
+					p.releaseOutboundInventory(queuedInv)
+					var accepted bool
+					waiting, accepted = queuePacket(outMsg{message: invMsg},
 						pendingMsgs, waiting)
+					if accepted {
+						p.AddKnownInventory(iv)
+					}
 				} else {
-					invSendQueue.PushBack(iv)
+					invSendQueue.PushBack(queuedInv)
 				}
+			} else {
+				p.releaseOutboundInventory(queuedInv)
 			}
 
 		case <-trickleTicker.C:
@@ -1698,54 +2366,71 @@ out:
 			// drain the inventory send queue.
 			invMsg := wire.NewHnsMsgInvSizeHint(uint(invSendQueue.Len()))
 			for e := invSendQueue.Front(); e != nil; e = invSendQueue.Front() {
-				iv := invSendQueue.Remove(e).(*wire.InvVect)
+				queuedInv := invSendQueue.Remove(e).(outInv)
+				iv := &queuedInv.invVect
 
 				// Don't send inventory that became known after
 				// the initial check.
-				if p.knownInventory.Contains(iv) {
+				if p.knownInventory.Contains(*iv) {
+					p.releaseOutboundInventory(queuedInv)
 					continue
 				}
 
-				invMsg.AddInvVect(iv)
+				_ = invMsg.AddInvVect(iv)
+				p.releaseOutboundInventory(queuedInv)
 				if len(invMsg.Inventory) >= maxInvTrickleSize {
-					waiting = queuePacket(
+					var accepted bool
+					waiting, accepted = queuePacket(
 						outMsg{message: invMsg},
 						pendingMsgs, waiting)
+					if accepted {
+						for _, sentIV := range invMsg.InvVects() {
+							p.AddKnownInventory(sentIV)
+						}
+					}
 					invMsg = wire.NewHnsMsgInvSizeHint(uint(invSendQueue.Len()))
 				}
-
-				// Add the inventory that is being relayed to
-				// the known inventory for the peer.
-				p.AddKnownInventory(iv)
 			}
 			if len(invMsg.Inventory) > 0 {
-				waiting = queuePacket(outMsg{message: invMsg},
+				var accepted bool
+				waiting, accepted = queuePacket(outMsg{message: invMsg},
 					pendingMsgs, waiting)
+				if accepted {
+					for _, sentIV := range invMsg.InvVects() {
+						p.AddKnownInventory(sentIV)
+					}
+				}
 			}
 
 		case <-p.quit:
 			break out
 		}
 	}
+	p.queueMtx.Lock()
+	p.queueStopped = true
+	p.queueMtx.Unlock()
+	p.queueEnqueueWg.Wait()
 
 	// Drain any wait channels before we go away so we don't leave something
 	// waiting for us.
 	for e := pendingMsgs.Front(); e != nil; e = pendingMsgs.Front() {
 		val := pendingMsgs.Remove(e)
 		msg := val.(outMsg)
-		if msg.doneChan != nil {
-			msg.doneChan <- struct{}{}
-		}
+		p.releaseOutboundMessage(msg)
+		signalMessageDone(msg.doneChan)
+	}
+	for e := invSendQueue.Front(); e != nil; e = invSendQueue.Front() {
+		queuedInv := invSendQueue.Remove(e).(outInv)
+		p.releaseOutboundInventory(queuedInv)
 	}
 cleanup:
 	for {
 		select {
 		case msg := <-p.outputQueue:
-			if msg.doneChan != nil {
-				msg.doneChan <- struct{}{}
-			}
-		case <-p.outputInvChan:
-			// Just drain channel
+			p.releaseOutboundMessage(msg)
+			signalMessageDone(msg.doneChan)
+		case queuedInv := <-p.outputInvChan:
+			p.releaseOutboundInventory(queuedInv)
 		// sendDoneQueue is buffered so doesn't need draining.
 		default:
 			break cleanup
@@ -1783,34 +2468,40 @@ out:
 	for {
 		select {
 		case msg := <-p.sendQueue:
-			if msg.message == nil {
+			if len(msg.encoded) < wire.HnsMessageHeaderSize {
+				p.releaseOutboundMessage(msg)
 				p.Disconnect()
-				if msg.doneChan != nil {
-					msg.doneChan <- struct{}{}
-				}
+				signalMessageDone(msg.doneChan)
 				continue
 			}
 
-			switch m := msg.message.(type) {
-			case *wire.HnsMsgPing:
+			if msg.messageType == wire.HnsMsgTypePing &&
+				len(msg.encoded) >= wire.HnsMessageHeaderSize+8 {
+
 				p.statsMtx.Lock()
-				p.lastPingNonce = binary.LittleEndian.Uint64(m.Nonce[:])
+				p.lastPingNonce = binary.LittleEndian.Uint64(
+					msg.encoded[wire.HnsMessageHeaderSize:],
+				)
 				p.lastPingTime = time.Now()
 				p.statsMtx.Unlock()
 			}
 
-			p.stallControl <- stallControlMsg{sccSendMessage, msg.message}
+			messageView := &serializedHandshakeMessage{
+				messageType: msg.messageType,
+			}
+			p.stallControl <- stallControlMsg{sccSendMessage, messageView}
 
-			err := p.writeMessage(msg.message)
+			err := p.writeEncodedMessage(
+				msg.message, msg.messageType, msg.encoded,
+			)
+			p.releaseOutboundMessage(msg)
 			if err != nil {
 				p.Disconnect()
 				if p.shouldLogWriteError(err) {
 					log.Errorf("Failed to send message to "+
 						"%s: %v", p, err)
 				}
-				if msg.doneChan != nil {
-					msg.doneChan <- struct{}{}
-				}
+				signalMessageDone(msg.doneChan)
 				continue
 			}
 
@@ -1820,9 +2511,7 @@ out:
 			// signal the send queue to the deliver the next queued
 			// message.
 			atomic.StoreInt64(&p.lastSend, time.Now().Unix())
-			if msg.doneChan != nil {
-				msg.doneChan <- struct{}{}
-			}
+			signalMessageDone(msg.doneChan)
 			p.sendDoneQueue <- struct{}{}
 
 		case <-p.quit:
@@ -1839,9 +2528,8 @@ cleanup:
 	for {
 		select {
 		case msg := <-p.sendQueue:
-			if msg.doneChan != nil {
-				msg.doneChan <- struct{}{}
-			}
+			p.releaseOutboundMessage(msg)
+			signalMessageDone(msg.doneChan)
 			// no need to send on sendDoneQueue since queueHandler
 			// has been waited on and already exited.
 		default:
@@ -1881,25 +2569,77 @@ out:
 func (p *Peer) QueueHnsMessage(msg wire.HandshakeMessage,
 	doneChan chan<- struct{}) {
 
-	p.QueueMessage(msg, doneChan)
+	_ = p.TryQueueMessage(msg, doneChan)
+}
+
+// TryQueueHnsMessage adds the passed native Handshake message to the peer send
+// queue and reports whether it was accepted.
+func (p *Peer) TryQueueHnsMessage(msg wire.HandshakeMessage,
+	doneChan chan<- struct{}) error {
+
+	return p.TryQueueMessage(msg, doneChan)
 }
 
 // QueueMessage adds the passed Handshake message to the peer send queue.
+// Call TryQueueMessage when the caller needs explicit admission status.
 //
 // This function is safe for concurrent access.
 func (p *Peer) QueueMessage(msg wire.HandshakeMessage, doneChan chan<- struct{}) {
+	_ = p.TryQueueMessage(msg, doneChan)
+}
+
+// TryQueueMessage adds the passed Handshake message to the peer send queue and
+// returns an error when the message was not accepted.  In particular,
+// ErrOutboundQueueBudget means the item was shed without disconnecting the
+// peer.  When doneChan is non-nil it is signaled exactly once whether the
+// message is sent or rejected, so callers waiting on a response batch cannot
+// hang during backpressure or shutdown.
+//
+// This function is safe for concurrent access.
+func (p *Peer) TryQueueMessage(msg wire.HandshakeMessage,
+	doneChan chan<- struct{}) error {
+
 	// Avoid risk of deadlock if goroutine already exited.  The goroutine
 	// we will be sending to hangs around until it knows for a fact that
 	// it is marked as disconnected and *then* it drains the channels.
 	if !p.Connected() {
 		if doneChan != nil {
-			go func() {
-				doneChan <- struct{}{}
-			}()
+			go signalMessageDone(doneChan)
 		}
-		return
+		return ErrPeerDisconnected
 	}
-	p.outputQueue <- outMsg{message: msg, doneChan: doneChan}
+	queued := outMsg{message: msg, doneChan: doneChan}
+	result, err := p.prepareAndEnqueueOutboundMessage(&queued)
+	if err != nil {
+		log.Warnf("Cannot serialize outbound message for peer %s: %v", p, err)
+		p.Disconnect()
+		if doneChan != nil {
+			go signalMessageDone(doneChan)
+		}
+		return err
+	}
+	switch result {
+	case outboundQueueAccepted:
+		return nil
+	case outboundQueueGlobalLimit:
+		log.Debugf("Dropping outbound message for peer %s because the "+
+			"aggregate queue budget is exhausted", p)
+	case outboundQueuePeerLimit:
+		log.Warnf("Peer %s exceeded outbound queue limits -- disconnecting", p)
+		p.Disconnect()
+	default:
+		// The peer is already stopping.
+	}
+	if doneChan != nil {
+		go signalMessageDone(doneChan)
+	}
+	if result == outboundQueueGlobalLimit {
+		return ErrOutboundQueueBudget
+	}
+	if result == outboundQueuePeerLimit {
+		return ErrOutboundQueueLimit
+	}
+	return ErrPeerDisconnected
 }
 
 // QueueInventory adds the passed inventory to the inventory send queue which
@@ -1908,9 +2648,12 @@ func (p *Peer) QueueMessage(msg wire.HandshakeMessage, doneChan chan<- struct{})
 //
 // This function is safe for concurrent access.
 func (p *Peer) QueueInventory(invVect *wire.InvVect) {
+	if invVect == nil {
+		return
+	}
 	// Don't add the inventory to the send queue if the peer is already
 	// known to have it.
-	if p.knownInventory.Contains(invVect) {
+	if p.knownInventory.Contains(*invVect) {
 		return
 	}
 
@@ -1921,7 +2664,20 @@ func (p *Peer) QueueInventory(invVect *wire.InvVect) {
 		return
 	}
 
-	p.outputInvChan <- invVect
+	queued := outInv{
+		invVect:    *invVect,
+		queueBytes: wire.HnsInvItemSize + outboundInventoryOverhead,
+	}
+	switch result := p.enqueueOutboundInventory(&queued); result {
+	case outboundQueueAccepted, outboundQueueDuplicate, outboundQueueStopped:
+		return
+	case outboundQueuePeerLimit:
+		log.Debugf("Dropping inventory announcement for peer %s because its "+
+			"bounded inventory queue is full", p)
+	case outboundQueueGlobalLimit:
+		log.Debugf("Dropping inventory announcement for peer %s because the "+
+			"aggregate queue budget is exhausted", p)
+	}
 }
 
 // Connected returns whether or not the peer is currently connected.
@@ -2423,23 +3179,40 @@ func newPeerBase(origCfg *Config, inbound bool) *Peer {
 	if cfg.TrickleInterval <= 0 {
 		cfg.TrickleInterval = DefaultTrickleInterval
 	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = DefaultWriteTimeout
+	}
+	if cfg.MaxOutboundQueueMessages <= 0 {
+		cfg.MaxOutboundQueueMessages = maxQueuedOutboundMessages
+	}
+	if cfg.MaxOutboundQueueBytes == 0 {
+		cfg.MaxOutboundQueueBytes = maxQueuedOutboundBytes
+	}
+	if cfg.MaxOutboundInventory <= 0 {
+		cfg.MaxOutboundInventory = maxQueuedInventory
+	}
 
 	p := Peer{
-		inbound:         inbound,
-		wireEncoding:    wire.BaseEncoding,
-		knownInventory:  lru.NewCache(maxKnownInventory),
-		stallControl:    make(chan stallControlMsg, 1), // nonblocking sync
-		outputQueue:     make(chan outMsg, outputBufferSize),
-		sendQueue:       make(chan outMsg, 1),   // nonblocking sync
-		sendDoneQueue:   make(chan struct{}, 1), // nonblocking sync
-		outputInvChan:   make(chan *wire.InvVect, outputBufferSize),
-		inQuit:          make(chan struct{}),
-		queueQuit:       make(chan struct{}),
-		outQuit:         make(chan struct{}),
-		quit:            make(chan struct{}),
-		cfg:             cfg, // Copy so caller can't mutate.
-		services:        cfg.Services,
-		protocolVersion: cfg.ProtocolVersion,
+		inbound:            inbound,
+		wireEncoding:       wire.BaseEncoding,
+		knownInventory:     lru.NewCache(maxKnownInventory),
+		queuedInventorySet: make(map[wire.InvVect]struct{}),
+		maxQueuedMessages:  cfg.MaxOutboundQueueMessages,
+		maxQueuedInventory: cfg.MaxOutboundInventory,
+		maxQueuedBytes:     cfg.MaxOutboundQueueBytes,
+		queueBudget:        cfg.OutboundQueueBudget,
+		stallControl:       make(chan stallControlMsg, 1), // nonblocking sync
+		outputQueue:        make(chan outMsg, outputBufferSize),
+		sendQueue:          make(chan outMsg, 1),   // nonblocking sync
+		sendDoneQueue:      make(chan struct{}, 1), // nonblocking sync
+		outputInvChan:      make(chan outInv, outputBufferSize),
+		inQuit:             make(chan struct{}),
+		queueQuit:          make(chan struct{}),
+		outQuit:            make(chan struct{}),
+		quit:               make(chan struct{}),
+		cfg:                cfg, // Copy so caller can't mutate.
+		services:           cfg.Services,
+		protocolVersion:    cfg.ProtocolVersion,
 	}
 
 	// Transport encryption is set by the server after Brontide/plaintext
