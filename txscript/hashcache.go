@@ -317,33 +317,132 @@ func NewTxSigHashes(tx *wire.MsgTx,
 	return &sigHashes
 }
 
-// HashCache houses a set of partial sighashes keyed by txid. The set of partial
-// sighashes are those introduced within BIP0143 by the new more efficient
-// sighash digest calculation algorithm. Using this threadsafe shared cache,
-// multiple goroutines can safely re-use the pre-computed partial sighashes
-// speeding up validation time amongst all inputs found within a block.
-type HashCache struct {
-	sigHashes map[chainhash.Hash]*TxSigHashes
+// hashCacheEntry houses a cached set of partial sighashes and the links needed
+// to evict entries in insertion order.
+type hashCacheEntry struct {
+	txid      chainhash.Hash
+	sigHashes *TxSigHashes
+	prev      *hashCacheEntry
+	next      *hashCacheEntry
+}
 
+// HashCache houses a bounded set of partial sighashes keyed by txid. The set of
+// partial sighashes are those introduced within BIP0143 by the new more
+// efficient sighash digest calculation algorithm. Using this threadsafe shared
+// cache, multiple goroutines can safely re-use the pre-computed partial
+// sighashes speeding up validation time amongst all inputs found within a
+// block. Entries are evicted in insertion order once the configured maximum is
+// reached. Updating an existing entry does not change its eviction position.
+type HashCache struct {
 	sync.RWMutex
+	sigHashes  map[chainhash.Hash]*hashCacheEntry
+	oldest     *hashCacheEntry
+	newest     *hashCacheEntry
+	maxEntries uint
 }
 
 // NewHashCache returns a new instance of the HashCache given a maximum number
 // of entries which may exist within it at anytime.
 func NewHashCache(maxSize uint) *HashCache {
 	return &HashCache{
-		sigHashes: make(map[chainhash.Hash]*TxSigHashes, maxSize),
+		sigHashes:  make(map[chainhash.Hash]*hashCacheEntry),
+		maxEntries: maxSize,
 	}
 }
 
-// AddSigHashes computes, then adds the partial sighashes for the passed
-// transaction.
+// removeEntry removes the provided entry from the cache and eviction list. The
+// caller must hold the cache write lock.
+func (h *HashCache) removeEntry(entry *hashCacheEntry) {
+	if entry.prev != nil {
+		entry.prev.next = entry.next
+	} else {
+		h.oldest = entry.next
+	}
+	if entry.next != nil {
+		entry.next.prev = entry.prev
+	} else {
+		h.newest = entry.prev
+	}
+	delete(h.sigHashes, entry.txid)
+	entry.prev = nil
+	entry.next = nil
+}
+
+// addEntry adds the provided sighashes to the cache. The caller must hold the
+// cache write lock. A zero-capacity cache intentionally does not retain the
+// entry.
+func (h *HashCache) addEntry(txid chainhash.Hash, sigHashes *TxSigHashes) {
+	if h.maxEntries == 0 {
+		return
+	}
+
+	if entry, ok := h.sigHashes[txid]; ok {
+		entry.sigHashes = sigHashes
+		return
+	}
+
+	if uint(len(h.sigHashes)) >= h.maxEntries {
+		h.removeEntry(h.oldest)
+	}
+
+	entry := &hashCacheEntry{
+		txid:      txid,
+		sigHashes: sigHashes,
+		prev:      h.newest,
+	}
+	if h.newest != nil {
+		h.newest.next = entry
+	} else {
+		h.oldest = entry
+	}
+	h.newest = entry
+	h.sigHashes[txid] = entry
+}
+
+// AddSigHashes computes and stores the partial sighashes for the passed
+// transaction when the cache has nonzero capacity. Callers that need the
+// computed value should use GetOrAddSigHashes to avoid a lookup race.
 func (h *HashCache) AddSigHashes(tx *wire.MsgTx,
 	inputFetcher PrevOutputFetcher) {
 
+	if h.maxEntries == 0 {
+		return
+	}
+
+	txid := tx.TxHash()
+	sigHashes := NewTxSigHashes(tx, inputFetcher)
+
 	h.Lock()
-	h.sigHashes[tx.TxHash()] = NewTxSigHashes(tx, inputFetcher)
-	h.Unlock()
+	defer h.Unlock()
+	h.addEntry(txid, sigHashes)
+}
+
+// GetOrAddSigHashes returns the cached partial sighashes for the transaction,
+// computing them when they are not already present. Hashing is performed
+// outside the cache lock. A write-lock double-check ensures concurrent callers
+// use the value that won insertion, while later eviction cannot invalidate the
+// returned value. A zero-capacity cache still returns the computed sighashes
+// without retaining them.
+func (h *HashCache) GetOrAddSigHashes(tx *wire.MsgTx,
+	inputFetcher PrevOutputFetcher) *TxSigHashes {
+
+	txid := tx.TxHash()
+	h.RLock()
+	if entry, ok := h.sigHashes[txid]; ok {
+		h.RUnlock()
+		return entry.sigHashes
+	}
+	h.RUnlock()
+
+	sigHashes := NewTxSigHashes(tx, inputFetcher)
+
+	h.Lock()
+	defer h.Unlock()
+	if entry, ok := h.sigHashes[txid]; ok {
+		return entry.sigHashes
+	}
+	h.addEntry(txid, sigHashes)
+	return sigHashes
 }
 
 // ContainsHashes returns true if the partial sighashes for the passed
@@ -362,7 +461,11 @@ func (h *HashCache) ContainsHashes(txid *chainhash.Hash) bool {
 // be present within the HashCache.
 func (h *HashCache) GetSigHashes(txid *chainhash.Hash) (*TxSigHashes, bool) {
 	h.RLock()
-	item, found := h.sigHashes[*txid]
+	entry, found := h.sigHashes[*txid]
+	var item *TxSigHashes
+	if found {
+		item = entry.sigHashes
+	}
 	h.RUnlock()
 
 	return item, found
@@ -372,6 +475,8 @@ func (h *HashCache) GetSigHashes(txid *chainhash.Hash) (*TxSigHashes, bool) {
 // the passed transaction.
 func (h *HashCache) PurgeSigHashes(txid *chainhash.Hash) {
 	h.Lock()
-	delete(h.sigHashes, *txid)
+	if entry, ok := h.sigHashes[*txid]; ok {
+		h.removeEntry(entry)
+	}
 	h.Unlock()
 }
