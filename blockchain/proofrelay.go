@@ -48,6 +48,9 @@ func CoinbaseClaimProofFromRaw(serialized []byte, height uint32, prevTime int64,
 	if !proof.verifyTimes(prevTime) {
 		return RawCoinbaseProof{}, badCovenant("CLAIM ownership proof time is invalid")
 	}
+	if !proof.verifySignatures() {
+		return RawCoinbaseProof{}, badCovenant("CLAIM ownership proof signature is invalid")
+	}
 
 	data, err := proof.claimData(params)
 	if err != nil {

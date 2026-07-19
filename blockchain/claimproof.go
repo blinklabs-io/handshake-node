@@ -243,8 +243,14 @@ func verifyCoinbaseClaimProof(tx *hnsutil.Tx, outputIndex int, height uint32,
 	if err != nil {
 		return 0, badCovenant("CLAIM ownership proof is invalid")
 	}
+	if !proof.isSane() {
+		return 0, badCovenant("CLAIM ownership proof is not sane")
+	}
 	if !proof.verifyTimes(prevTime) {
 		return 0, badCovenant("CLAIM ownership proof time is invalid")
+	}
+	if !proof.verifySignatures() {
+		return 0, badCovenant("CLAIM ownership proof signature is invalid")
 	}
 
 	data, err := proof.claimData(params)
@@ -606,29 +612,27 @@ func (p *ownershipProof) verifyTimes(unixTime int64) bool {
 	}
 
 	start, end := p.window()
-	if start == 0 && end == 0 {
-		return false
-	}
-
 	return unixTime >= int64(start) && unixTime <= int64(end)
 }
 
 func (p *ownershipProof) window() (uint32, uint32) {
 	var start, end uint32
+	seen := false
 	for _, rr := range p.records() {
 		sig, ok := rr.(*dns.RRSIG)
 		if !ok {
 			continue
 		}
 
-		if start == 0 || sig.Inception > start {
+		if !seen || sig.Inception > start {
 			start = sig.Inception
 		}
-		if end == 0 || sig.Expiration < end {
+		if !seen || sig.Expiration < end {
 			end = sig.Expiration
 		}
+		seen = true
 	}
-	if start == 0 || end == 0 || start > end {
+	if !seen || start > end {
 		return 0, 0
 	}
 	return start, end
