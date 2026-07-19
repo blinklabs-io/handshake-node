@@ -12,13 +12,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
@@ -36,6 +40,59 @@ import (
 	"github.com/btcsuite/websocket"
 	"github.com/stretchr/testify/require"
 )
+
+type rpcTestAddr string
+
+func (a rpcTestAddr) Network() string { return "tcp" }
+func (a rpcTestAddr) String() string  { return string(a) }
+
+type rpcTestListener struct {
+	connections chan net.Conn
+	closed      chan struct{}
+	closeOnce   sync.Once
+	closeErr    error
+}
+
+func newRPCTestListener(closeErr error) *rpcTestListener {
+	return &rpcTestListener{
+		connections: make(chan net.Conn, 1),
+		closed:      make(chan struct{}),
+		closeErr:    closeErr,
+	}
+}
+
+func (l *rpcTestListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.connections:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *rpcTestListener) Close() error {
+	l.closeOnce.Do(func() {
+		close(l.closed)
+	})
+	return l.closeErr
+}
+
+func (l *rpcTestListener) Addr() net.Addr {
+	return rpcTestAddr("127.0.0.1:0")
+}
+
+type rpcReadTrackingConn struct {
+	net.Conn
+	readStarted chan struct{}
+}
+
+func (c *rpcReadTrackingConn) Read(p []byte) (int, error) {
+	select {
+	case c.readStarted <- struct{}{}:
+	default:
+	}
+	return c.Conn.Read(p)
+}
 
 func TestChainMutationRPCAuthorization(t *testing.T) {
 	const (
@@ -203,6 +260,406 @@ func TestChainMutationRPCAuthorization(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRPCHandlerStateShutdown(t *testing.T) {
+	var handlers rpcHandlerState
+	if !handlers.begin() {
+		t.Fatal("initial handler admission rejected")
+	}
+
+	drained := handlers.stop()
+	if handlers.begin() {
+		t.Fatal("handler admitted after shutdown started")
+	}
+	select {
+	case <-drained:
+		t.Fatal("handlers reported drained while a handler was active")
+	default:
+	}
+
+	handlers.done()
+	<-drained
+}
+
+func TestRPCServerStopClosesActiveHTTPConnection(t *testing.T) {
+	const (
+		adminUser = "admin"
+		adminPass = "admin-pass"
+	)
+
+	originalCfg := cfg
+	cfg = &config{
+		RPCMaxClients:        defaultMaxRPCClients,
+		RPCMaxWebsockets:     defaultMaxRPCWebsockets,
+		RPCMaxConcurrentReqs: defaultMaxRPCConcurrentReqs,
+	}
+	originalRPCLogLevel := rpcsLog.Level()
+	rpcsLog.SetLevel(btclog.LevelOff)
+	t.Cleanup(func() {
+		rpcsLog.SetLevel(originalRPCLogLevel)
+		cfg = originalCfg
+	})
+
+	listener := newRPCTestListener(nil)
+	serverConn, clientConn := net.Pipe()
+	defer func() {
+		_ = clientConn.Close()
+	}()
+	readStarted := make(chan struct{}, 2)
+	listener.connections <- &rpcReadTrackingConn{
+		Conn:        serverConn,
+		readStarted: readStarted,
+	}
+
+	server := &rpcServer{
+		cfg: rpcserverConfig{
+			Listeners: []net.Listener{listener},
+		},
+		statusLines:            make(map[int]string),
+		requestProcessShutdown: make(chan struct{}),
+		quit:                   make(chan int),
+	}
+	server.authsha = testRPCAuthHash(adminUser, adminPass)
+	server.ntfnMgr = newWsNotificationManager(server)
+	server.Start()
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			if err := server.Stop(); err != nil {
+				t.Errorf("stop RPC server: %v", err)
+			}
+		}
+	})
+
+	server.lifecycleMu.Lock()
+	httpServer := server.httpServer
+	server.lifecycleMu.Unlock()
+	if httpServer == nil {
+		t.Fatal("shared HTTP server was not stored")
+	}
+
+	// Wait for net/http's initial request read, then provide headers for a
+	// body which is intentionally left incomplete.  The second read proves
+	// the admitted handler is blocked reading that body before Stop begins.
+	<-readStarted
+	auth := base64.StdEncoding.EncodeToString(
+		[]byte(adminUser + ":" + adminPass))
+	request := "POST / HTTP/1.1\r\n" +
+		"Host: localhost\r\n" +
+		"Authorization: Basic " + auth + "\r\n" +
+		"Content-Type: application/json\r\n" +
+		"Content-Length: 1\r\n" +
+		"Connection: close\r\n\r\n"
+	if _, err := io.WriteString(clientConn, request); err != nil {
+		t.Fatalf("write incomplete HTTP request: %v", err)
+	}
+	<-readStarted
+
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop RPC server: %v", err)
+	}
+	stopped = true
+
+	server.handlers.mu.Lock()
+	active := server.handlers.active
+	server.handlers.mu.Unlock()
+	if active != 0 {
+		t.Fatalf("active handler count after Stop = %d, want 0", active)
+	}
+}
+
+func TestRPCServerStopClosesHijackedHTTPConnection(t *testing.T) {
+	const (
+		adminUser = "admin"
+		adminPass = "admin-pass"
+	)
+
+	originalHandler := rpcHandlers["help"]
+	handlerStarted := make(chan struct{})
+	rpcHandlers["help"] = func(_ *rpcServer, _ interface{},
+		closeChan <-chan struct{}) (interface{}, error) {
+
+		close(handlerStarted)
+		<-closeChan
+		return nil, ErrClientQuit
+	}
+	t.Cleanup(func() {
+		rpcHandlers["help"] = originalHandler
+	})
+
+	originalCfg := cfg
+	cfg = &config{
+		RPCMaxClients:        defaultMaxRPCClients,
+		RPCMaxWebsockets:     defaultMaxRPCWebsockets,
+		RPCMaxConcurrentReqs: defaultMaxRPCConcurrentReqs,
+	}
+	originalRPCLogLevel := rpcsLog.Level()
+	rpcsLog.SetLevel(btclog.LevelOff)
+	t.Cleanup(func() {
+		rpcsLog.SetLevel(originalRPCLogLevel)
+		cfg = originalCfg
+	})
+
+	listener := newRPCTestListener(nil)
+	serverConn, clientConn := net.Pipe()
+	defer func() {
+		_ = clientConn.Close()
+	}()
+	listener.connections <- serverConn
+
+	server := &rpcServer{
+		cfg: rpcserverConfig{
+			Listeners: []net.Listener{listener},
+		},
+		statusLines:            make(map[int]string),
+		requestProcessShutdown: make(chan struct{}),
+		quit:                   make(chan int),
+	}
+	server.authsha = testRPCAuthHash(adminUser, adminPass)
+	server.ntfnMgr = newWsNotificationManager(server)
+	server.Start()
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			if err := server.Stop(); err != nil {
+				t.Errorf("stop RPC server: %v", err)
+			}
+		}
+	})
+
+	rpcRequest, err := hnsjson.NewRequest(hnsjson.RpcVersion1, 1, "help",
+		[]interface{}{})
+	if err != nil {
+		t.Fatalf("create help request: %v", err)
+	}
+	body, err := json.Marshal(rpcRequest)
+	if err != nil {
+		t.Fatalf("marshal help request: %v", err)
+	}
+	auth := base64.StdEncoding.EncodeToString(
+		[]byte(adminUser + ":" + adminPass))
+	request := fmt.Sprintf("POST / HTTP/1.1\r\n"+
+		"Host: localhost\r\n"+
+		"Authorization: Basic %s\r\n"+
+		"Content-Type: application/json\r\n"+
+		"Content-Length: %d\r\n"+
+		"Connection: close\r\n\r\n%s", auth, len(body), body)
+	if _, err := io.WriteString(clientConn, request); err != nil {
+		t.Fatalf("write HTTP request: %v", err)
+	}
+	<-handlerStarted
+
+	// The disconnect watcher must continue after reading unexpected client
+	// data so closing the tracked connection still cancels the RPC handler.
+	if _, err := clientConn.Write([]byte{'x'}); err != nil {
+		t.Fatalf("write post-request byte: %v", err)
+	}
+
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop RPC server: %v", err)
+	}
+	stopped = true
+
+	server.lifecycleMu.Lock()
+	hijackedConnCount := len(server.hijackedConns)
+	server.lifecycleMu.Unlock()
+	if hijackedConnCount != 0 {
+		t.Fatalf("hijacked connection count after Stop = %d, want 0",
+			hijackedConnCount)
+	}
+}
+
+func TestRPCServerStopWaitersReceiveCloseError(t *testing.T) {
+	originalRPCLogLevel := rpcsLog.Level()
+	rpcsLog.SetLevel(btclog.LevelOff)
+	t.Cleanup(func() {
+		rpcsLog.SetLevel(originalRPCLogLevel)
+	})
+
+	synctest.Test(t, func(t *testing.T) {
+		closeErr := errors.New("listener close failed")
+		listener := newRPCTestListener(closeErr)
+		server := &rpcServer{
+			cfg: rpcserverConfig{
+				Listeners: []net.Listener{listener},
+			},
+			requestProcessShutdown: make(chan struct{}),
+			quit:                   make(chan int),
+		}
+		server.ntfnMgr = newWsNotificationManager(server)
+		if !server.handlers.begin() {
+			t.Fatal("initial handler admission rejected")
+		}
+
+		firstResult := make(chan error, 1)
+		go func() {
+			firstResult <- server.Stop()
+		}()
+		<-listener.closed
+		synctest.Wait()
+		select {
+		case err := <-firstResult:
+			t.Fatalf("Stop returned before its active handler drained: %v", err)
+		default:
+		}
+
+		secondResult := make(chan error, 1)
+		go func() {
+			secondResult <- server.Stop()
+		}()
+		synctest.Wait()
+		select {
+		case err := <-secondResult:
+			t.Fatalf("concurrent Stop returned before shutdown completed: %v", err)
+		default:
+		}
+
+		server.handlers.done()
+		synctest.Wait()
+
+		if err := <-firstResult; !errors.Is(err, closeErr) {
+			t.Fatalf("first Stop error = %v, want %v", err, closeErr)
+		}
+		if err := <-secondResult; !errors.Is(err, closeErr) {
+			t.Fatalf("concurrent Stop error = %v, want %v", err, closeErr)
+		}
+		if err := server.Stop(); !errors.Is(err, closeErr) {
+			t.Fatalf("repeated Stop error = %v, want %v", err, closeErr)
+		}
+	})
+}
+
+func TestRPCServerStopBeforeStart(t *testing.T) {
+	originalRPCLogLevel := rpcsLog.Level()
+	rpcsLog.SetLevel(btclog.LevelOff)
+	t.Cleanup(func() {
+		rpcsLog.SetLevel(originalRPCLogLevel)
+	})
+
+	listener := newRPCTestListener(net.ErrClosed)
+	server := &rpcServer{
+		cfg: rpcserverConfig{
+			Listeners: []net.Listener{listener},
+		},
+		requestProcessShutdown: make(chan struct{}),
+		quit:                   make(chan int),
+	}
+	server.ntfnMgr = newWsNotificationManager(server)
+
+	if err := server.Stop(); err != nil {
+		t.Fatalf("Stop before Start: %v", err)
+	}
+	server.Start()
+
+	server.lifecycleMu.Lock()
+	httpServer := server.httpServer
+	server.lifecycleMu.Unlock()
+	if httpServer != nil {
+		t.Fatal("HTTP server was created after Stop completed")
+	}
+	if atomic.LoadInt32(&server.started) != 0 {
+		t.Fatal("Start launched after Stop completed")
+	}
+	if err := server.Stop(); err != nil {
+		t.Fatalf("repeated Stop before Start: %v", err)
+	}
+}
+
+func TestRPCServerStopDrainsWebsocketHandlers(t *testing.T) {
+	const (
+		adminUser = "admin"
+		adminPass = "admin-pass"
+	)
+
+	originalCfg := cfg
+	cfg = &config{
+		RPCMaxClients:        defaultMaxRPCClients,
+		RPCMaxWebsockets:     defaultMaxRPCWebsockets,
+		RPCMaxConcurrentReqs: defaultMaxRPCConcurrentReqs,
+	}
+	originalRPCLogLevel := rpcsLog.Level()
+	rpcsLog.SetLevel(btclog.LevelOff)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		rpcsLog.SetLevel(originalRPCLogLevel)
+		cfg = originalCfg
+		t.Fatalf("listen: %v", err)
+	}
+	server := &rpcServer{
+		cfg: rpcserverConfig{
+			Listeners: []net.Listener{listener},
+		},
+		statusLines:            make(map[int]string),
+		requestProcessShutdown: make(chan struct{}),
+		quit:                   make(chan int),
+	}
+	server.authsha = testRPCAuthHash(adminUser, adminPass)
+	server.ntfnMgr = newWsNotificationManager(server)
+	server.Start()
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			if err := server.Stop(); err != nil {
+				t.Errorf("stop RPC server: %v", err)
+			}
+		}
+		rpcsLog.SetLevel(originalRPCLogLevel)
+		cfg = originalCfg
+	})
+
+	header := make(http.Header)
+	login := adminUser + ":" + adminPass
+	header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString(
+		[]byte(login)))
+	conn, _, err := (&websocket.Dialer{}).Dial(
+		"ws://"+listener.Addr().String()+"/ws", header,
+	)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	request, err := hnsjson.NewRequest(hnsjson.RpcVersion1, 1, "session",
+		[]interface{}{})
+	if err != nil {
+		t.Fatalf("create session request: %v", err)
+	}
+	if err := conn.WriteJSON(request); err != nil {
+		t.Fatalf("write session request: %v", err)
+	}
+	var response hnsjson.Response
+	if err := conn.ReadJSON(&response); err != nil {
+		t.Fatalf("read session response: %v", err)
+	}
+	if response.Error != nil {
+		t.Fatalf("session response error: %v", response.Error)
+	}
+
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop RPC server: %v", err)
+	}
+	stopped = true
+
+	server.handlers.mu.Lock()
+	active := server.handlers.active
+	stopping := server.handlers.stopping
+	server.handlers.mu.Unlock()
+	if active != 0 {
+		t.Fatalf("active handler count after Stop = %d, want 0", active)
+	}
+	if !stopping {
+		t.Fatal("handler admission remained open after Stop")
+	}
+	if server.handlers.begin() {
+		t.Fatal("handler admitted after Stop returned")
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("websocket remained connected after Stop returned")
 	}
 }
 

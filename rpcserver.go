@@ -5666,6 +5666,11 @@ func validateFeeRate(feeDoo hnsutil.Amount, txSize int64,
 type rpcServer struct {
 	started                int32
 	shutdown               int32
+	lifecycleMu            sync.Mutex
+	httpServer             *http.Server
+	hijackedConns          map[net.Conn]struct{}
+	shutdownDone           chan struct{}
+	shutdownErr            error
 	cfg                    rpcserverConfig
 	authsha                [sha256.Size]byte
 	limitauthsha           [sha256.Size]byte
@@ -5673,11 +5678,121 @@ type rpcServer struct {
 	numClients             int32
 	statusLines            map[int]string
 	statusLock             sync.RWMutex
+	handlers               rpcHandlerState
 	wg                     sync.WaitGroup
 	gbtWorkState           *gbtWorkState
 	helpCacher             *helpCacher
 	requestProcessShutdown chan struct{}
 	quit                   chan int
+}
+
+// firstCloseError records the first error which does not simply report that a
+// server or listener has already been closed.
+func firstCloseError(first *error, err error) {
+	if err == nil || errors.Is(err, http.ErrServerClosed) ||
+		errors.Is(err, net.ErrClosed) {
+
+		return
+	}
+	if *first == nil {
+		*first = err
+	}
+}
+
+// registerHijackedConn records a JSON-RPC HTTP connection after net/http no
+// longer owns it.  Admission is serialized with Stop so every connection is
+// either tracked for shutdown or rejected after shutdown has started.
+func (s *rpcServer) registerHijackedConn(conn net.Conn) bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if atomic.LoadInt32(&s.shutdown) != 0 {
+		return false
+	}
+	if s.hijackedConns == nil {
+		s.hijackedConns = make(map[net.Conn]struct{})
+	}
+	s.hijackedConns[conn] = struct{}{}
+	return true
+}
+
+// unregisterHijackedConn removes a JSON-RPC HTTP connection after its handler
+// has finished closing it.
+func (s *rpcServer) unregisterHijackedConn(conn net.Conn) {
+	s.lifecycleMu.Lock()
+	delete(s.hijackedConns, conn)
+	s.lifecycleMu.Unlock()
+}
+
+// closeHijackedConns closes the HTTP connections which net/http stopped
+// tracking after jsonRPCRead hijacked them.
+func (s *rpcServer) closeHijackedConns() {
+	s.lifecycleMu.Lock()
+	conns := make([]net.Conn, 0, len(s.hijackedConns))
+	for conn := range s.hijackedConns {
+		conns = append(conns, conn)
+	}
+	s.lifecycleMu.Unlock()
+
+	for _, conn := range conns {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			rpcsLog.Debugf("Problem closing hijacked RPC connection: %v", err)
+		}
+	}
+}
+
+// rpcHandlerState tracks RPC handlers which have entered the server.  Handler
+// admission and shutdown are serialized under the same mutex so shutdown can
+// wait for the active set without racing a WaitGroup Add against Wait.
+type rpcHandlerState struct {
+	mu       sync.Mutex
+	stopping bool
+	active   uint64
+	drained  chan struct{}
+}
+
+// begin admits a handler unless shutdown has already started.
+func (h *rpcHandlerState) begin() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.stopping {
+		return false
+	}
+	if h.drained == nil {
+		h.drained = make(chan struct{})
+	}
+	h.active++
+	return true
+}
+
+// done marks an admitted handler as complete.
+func (h *rpcHandlerState) done() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.active--
+	if h.stopping && h.active == 0 {
+		close(h.drained)
+	}
+}
+
+// stop prevents new handler admission and returns a channel which is closed
+// after every previously admitted handler has completed.
+func (h *rpcHandlerState) stop() <-chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.drained == nil {
+		h.drained = make(chan struct{})
+	}
+	if !h.stopping {
+		h.stopping = true
+		if h.active == 0 {
+			close(h.drained)
+		}
+	}
+	return h.drained
 }
 
 // httpStatusLine returns a response Status-Line (RFC 2616 Section 6.1)
@@ -5737,24 +5852,57 @@ func (s *rpcServer) writeHTTPResponseHeaders(req *http.Request, headers http.Hea
 
 // Stop is used by server.go to stop the rpc listener.
 func (s *rpcServer) Stop() error {
-	if atomic.AddInt32(&s.shutdown, 1) != 1 {
-		rpcsLog.Infof("RPC server is already in the process of shutting down")
-		return nil
+	s.lifecycleMu.Lock()
+	if s.shutdownDone != nil {
+		done := s.shutdownDone
+		s.lifecycleMu.Unlock()
+		<-done
+
+		s.lifecycleMu.Lock()
+		err := s.shutdownErr
+		s.lifecycleMu.Unlock()
+		return err
 	}
+	s.shutdownDone = make(chan struct{})
+	done := s.shutdownDone
+	atomic.StoreInt32(&s.shutdown, 1)
+	httpServer := s.httpServer
+	s.lifecycleMu.Unlock()
+
 	rpcsLog.Warnf("RPC server shutting down")
-	for _, listener := range s.cfg.Listeners {
-		err := listener.Close()
-		if err != nil {
-			rpcsLog.Errorf("Problem shutting down rpc: %v", err)
-			return err
+	handlersDrained := s.handlers.stop()
+	var closeErr error
+	if httpServer != nil {
+		err := httpServer.Close()
+		firstCloseError(&closeErr, err)
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			rpcsLog.Errorf("Problem shutting down RPC HTTP server: %v", err)
 		}
 	}
+
+	// Close configured listeners as well.  This covers shutdown racing a
+	// Serve goroutine before it has registered its listener with net/http.
+	for _, listener := range s.cfg.Listeners {
+		err := listener.Close()
+		firstCloseError(&closeErr, err)
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			rpcsLog.Errorf("Problem shutting down RPC listener: %v", err)
+		}
+	}
+	s.closeHijackedConns()
 	s.ntfnMgr.Shutdown()
 	s.ntfnMgr.WaitForShutdown()
 	close(s.quit)
 	s.wg.Wait()
+	<-handlersDrained
+
+	s.lifecycleMu.Lock()
+	s.shutdownErr = closeErr
+	close(done)
+	s.lifecycleMu.Unlock()
+
 	rpcsLog.Infof("RPC server shutdown complete")
-	return nil
+	return closeErr
 }
 
 // RequestedProcessShutdown returns a channel that is sent to when an authorized
@@ -6077,19 +6225,33 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 		http.Error(w, strconv.Itoa(errCode)+" "+err.Error(), errCode)
 		return
 	}
-	defer conn.Close()
-	defer buf.Flush()
-	conn.SetReadDeadline(timeZeroVal)
+	if !s.registerHijackedConn(conn) {
+		_ = conn.Close()
+		return
+	}
+	defer s.unregisterHijackedConn(conn)
+	_ = conn.SetReadDeadline(timeZeroVal)
 
 	// Attempt to parse the raw body into a JSON-RPC request.
 	// Setup a close notifier.  Since the connection is hijacked,
 	// the CloseNotifier on the ResponseWriter is not available.
 	closeChan := make(chan struct{}, 1)
+	readerDone := make(chan struct{})
 	go func() {
-		_, err = conn.Read(make([]byte, 1))
-		if err != nil {
-			close(closeChan)
+		defer close(readerDone)
+
+		var readBuf [1]byte
+		for {
+			if _, err := conn.Read(readBuf[:]); err != nil {
+				close(closeChan)
+				return
+			}
 		}
+	}()
+	defer func() {
+		_ = buf.Flush()
+		_ = conn.Close()
+		<-readerDone
 	}()
 
 	var results []json.RawMessage
@@ -6303,7 +6465,12 @@ func jsonAuthFail(w http.ResponseWriter) {
 
 // Start is used by server.go to start the rpc listener.
 func (s *rpcServer) Start() {
-	if atomic.AddInt32(&s.started, 1) != 1 {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if atomic.LoadInt32(&s.shutdown) != 0 ||
+		!atomic.CompareAndSwapInt32(&s.started, 0, 1) {
+
 		return
 	}
 
@@ -6316,7 +6483,15 @@ func (s *rpcServer) Start() {
 		// handshake within the allowed timeframe.
 		ReadTimeout: time.Second * rpcAuthTimeoutSeconds,
 	}
+	s.httpServer = httpServer
 	rpcServeMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if !s.handlers.begin() {
+			http.Error(w, "503 Service Unavailable.",
+				http.StatusServiceUnavailable)
+			return
+		}
+		defer s.handlers.done()
+
 		w.Header().Set("Connection", "close")
 		w.Header().Set("Content-Type", "application/json")
 		r.Close = true
@@ -6345,6 +6520,13 @@ func (s *rpcServer) Start() {
 
 	// Websocket endpoint.
 	rpcServeMux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		if !s.handlers.begin() {
+			http.Error(w, "503 Service Unavailable.",
+				http.StatusServiceUnavailable)
+			return
+		}
+		defer s.handlers.done()
+
 		if s.rejectDisallowedRPCClient(w, r.RemoteAddr) {
 			return
 		}
@@ -6372,10 +6554,17 @@ func (s *rpcServer) Start() {
 	for _, listener := range s.cfg.Listeners {
 		s.wg.Add(1)
 		go func(listener net.Listener) {
+			defer s.wg.Done()
+
 			rpcsLog.Infof("RPC server listening on %s", listener.Addr())
-			httpServer.Serve(listener)
+			err := httpServer.Serve(listener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) &&
+				!errors.Is(err, net.ErrClosed) {
+
+				rpcsLog.Errorf("RPC listener failed for %s: %v",
+					listener.Addr(), err)
+			}
 			rpcsLog.Tracef("RPC listener done for %s", listener.Addr())
-			s.wg.Done()
 		}(listener)
 	}
 
