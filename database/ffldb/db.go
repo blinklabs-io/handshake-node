@@ -1667,9 +1667,19 @@ func (tx *transaction) writePendingAndCommit() error {
 
 	// rollback is a closure that is used to rollback all writes to the
 	// block files.
-	rollback := func() {
+	rollback := func(cause error) error {
 		// Rollback any modifications made to the block files if needed.
-		tx.db.store.handleRollback(oldBlkFileNum, oldBlkOffset)
+		if err := tx.db.store.handleRollback(oldBlkFileNum, oldBlkOffset); err != nil {
+			// Continuing after an incomplete physical rollback could cause later
+			// writes to use a cursor which does not match the block files.  Fail
+			// closed until startup can rescan and reconcile the store.
+			tx.db.recoveryRequired.Store(true)
+			log.Warnf("Database requires reopen after block rollback failure: %v", err)
+			str := "block rollback failed; database must be reopened"
+			return makeDbErr(database.ErrDriverSpecific, str,
+				errors.Join(cause, err))
+		}
+		return cause
 	}
 
 	// Loop through all of the pending blocks to store and write them.
@@ -1677,8 +1687,7 @@ func (tx *transaction) writePendingAndCommit() error {
 		log.Tracef("Storing block %s", blockData.hash)
 		location, err := tx.db.store.writeBlock(blockData.bytes)
 		if err != nil {
-			rollback()
-			return err
+			return rollback(err)
 		}
 
 		// Add a record in the block index for the block.  The record
@@ -1688,16 +1697,15 @@ func (tx *transaction) writePendingAndCommit() error {
 		blockRow := serializeBlockLoc(location)
 		err = tx.blockIdxBucket.Put(blockData.hash[:], blockRow)
 		if err != nil {
-			rollback()
-			return err
+			return rollback(err)
 		}
 	}
 
 	// Update the metadata for the current write file and offset.
 	writeRow := serializeWriteRow(wc.curFileNum, wc.curOffset)
 	if err := tx.metaBucket.Put(writeLocKeyName, writeRow); err != nil {
-		rollback()
-		return convertErr("failed to store write cursor", err)
+		dbErr := convertErr("failed to store write cursor", err)
+		return rollback(dbErr)
 	}
 
 	if !pruning {
@@ -1714,8 +1722,7 @@ func (tx *transaction) writePendingAndCommit() error {
 				str := "metadata commit outcome is unknown; database must be reopened"
 				return makeDbErr(database.ErrDriverSpecific, str, err)
 			}
-			rollback()
-			return err
+			return rollback(err)
 		}
 
 		// A previous pruning commit may have retained its durable marker
@@ -1735,8 +1742,8 @@ func (tx *transaction) writePendingAndCommit() error {
 	// the current block file.  Then atomically and synchronously commit the
 	// pruning transaction, including its deletion intent, before unlinking
 	// any block file.
-	if err := tx.db.cache.flushSync(); err != nil {
-		rollback()
+	if err := tx.db.cache.flushForPrune(); err != nil {
+		rollbackErr := rollback(err)
 		var ambiguousErr *ambiguousMetadataWriteError
 		if errors.As(err, &ambiguousErr) {
 			// The cached batch contains only transactions that preceded this
@@ -1746,9 +1753,9 @@ func (tx *transaction) writePendingAndCommit() error {
 			// reconciles LevelDB with the restored block write cursor.
 			tx.db.recoveryRequired.Store(true)
 			str := "cached metadata commit outcome is unknown; database must be reopened"
-			return makeDbErr(database.ErrDriverSpecific, str, err)
+			return makeDbErr(database.ErrDriverSpecific, str, rollbackErr)
 		}
-		return err
+		return rollbackErr
 	}
 	tx.db.signalPruneStage(pruneStageBlocksSynced)
 
@@ -2215,6 +2222,10 @@ func fileExists(name string) bool {
 // initDB creates the initial buckets and values used by the package.  This is
 // mainly in a separate function for testing purposes.
 func initDB(ldb *leveldb.DB) error {
+	return initDBWithWriter(ldb)
+}
+
+func initDBWithWriter(writer levelDBBatchWriter) error {
 	// The starting block file write cursor location is file num 0, offset
 	// 0.
 	batch := new(leveldb.Batch)
@@ -2231,8 +2242,10 @@ func initDB(ldb *leveldb.DB) error {
 		blockIdxBucketID[:])
 	batch.Put(curBucketIDKeyName, blockIdxBucketID[:])
 
-	// Write everything as a single batch.
-	if err := ldb.Write(batch, nil); err != nil {
+	// Write everything as a single durable batch.  A newly-created database
+	// can be closed before any cache flush occurs, so initialization itself
+	// must satisfy the same durable-Close contract as later metadata writes.
+	if err := writeMetadataBatch(writer, batch); err != nil {
 		str := fmt.Sprintf("failed to initialize metadata database: %v",
 			err)
 		return convertErr(str, err)
@@ -2255,6 +2268,22 @@ func metadataDBOptions(create bool) *opt.Options {
 		// ambiguously durable manifest already references.
 		DisableLargeBatchTransaction: true,
 	}
+}
+
+// combineBlockStoreOpenErrors retains the block-store setup failure as the
+// primary database error while also exposing a subsequent metadata cleanup
+// failure through errors.Is/errors.As.  Returning database.Error directly is
+// intentional: callers historically use a concrete type assertion to inspect
+// its error code.
+func combineBlockStoreOpenErrors(storeErr database.Error,
+	closeErr error) database.Error {
+
+	closeDbErr := convertErr(
+		"failed to close metadata database after block store error",
+		closeErr,
+	)
+	storeErr.Err = errors.Join(storeErr.Err, closeDbErr)
+	return storeErr
 }
 
 // openDB opens the database at the provided path.  database.ErrDbDoesNotExist
@@ -2289,7 +2318,11 @@ func openDB(dbPath string, network wire.BitcoinNet, create bool) (database.DB, e
 	// write caching.
 	store, err := newBlockStore(dbPath, network)
 	if err != nil {
-		return nil, convertErr(err.Error(), err)
+		storeErr := convertErr(err.Error(), err)
+		if closeErr := ldb.Close(); closeErr != nil {
+			return nil, combineBlockStoreOpenErrors(storeErr, closeErr)
+		}
+		return nil, storeErr
 	}
 	cache := newDbCache(ldb, store, defaultCacheSize, defaultFlushSecs)
 	pdb := &db{store: store, cache: cache}

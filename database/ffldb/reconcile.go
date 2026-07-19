@@ -90,7 +90,9 @@ func reconcileDB(pdb *db, create bool) (database.DB, error) {
 		log.Debugf("Metadata claims file %d, offset %d. Block data is "+
 			"at file %d, offset %d", curFileNum, curOffset,
 			wc.curFileNum, wc.curOffset)
-		pdb.store.handleRollback(curFileNum, curOffset)
+		if err := pdb.store.handleRollback(curFileNum, curOffset); err != nil {
+			return nil, err
+		}
 		log.Infof("Database sync complete")
 	}
 

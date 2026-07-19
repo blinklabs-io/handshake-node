@@ -684,22 +684,11 @@ func (s *blockStore) syncBlocks() error {
 //  1. Transient write failures from which recovery is possible
 //  2. More permanent failures such as hard disk death and/or removal
 //
-// In either case, the write cursor will be repositioned to the old block file
-// offset regardless of any other errors that occur while attempting to undo
-// writes.
-//
-// For the first scenario, this will lead to any data which failed to be undone
-// being overwritten and thus behaves as desired as the system continues to run.
-//
-// For the second scenario, the metadata which stores the current write cursor
-// position within the block files will not have been updated yet and thus if
-// the system eventually recovers (perhaps the hard drive is reconnected), it
-// will also lead to any data which failed to be undone being overwritten and
-// thus behaves as desired.
-//
-// Therefore, any errors are simply logged at a warning level rather than being
-// returned since there is nothing more that could be done about it anyways.
-func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
+// The in-memory write cursor is repositioned to the old metadata location even
+// when physical cleanup fails.  Consequently, callers must not permit further
+// database use after an error: startup reconciliation aborts the open, while a
+// runtime rollback marks the database as requiring a reopen.
+func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) error {
 	// Grab the write cursor mutex since it is modified throughout this
 	// function.
 	wc := s.writeCursor
@@ -709,7 +698,7 @@ func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
 	// Nothing to do if the rollback point is the same as the current write
 	// cursor.
 	if wc.curFileNum == oldBlockFileNum && wc.curOffset == oldBlockOffset {
-		return
+		return nil
 	}
 
 	// Regardless of any failures that happen below, reposition the write
@@ -728,8 +717,19 @@ func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
 	if wc.curFileNum > oldBlockFileNum {
 		wc.curFile.Lock()
 		if wc.curFile.file != nil {
-			_ = wc.curFile.file.Close()
+			err := wc.curFile.file.Close()
+			// A file must not be used after Close, including when Close
+			// reports an error.  Clear the handle before propagating any
+			// failure so the cursor never exposes an unusable file.
 			wc.curFile.file = nil
+			if err != nil {
+				wc.curFile.Unlock()
+				str := fmt.Sprintf("failed to close block file %d during rollback",
+					wc.curFileNum)
+				dbErr := makeDbErr(database.ErrDriverSpecific, str, err)
+				log.Warnf("ROLLBACK: %v", dbErr)
+				return dbErr
+			}
 		}
 		wc.curFile.Unlock()
 	}
@@ -737,7 +737,7 @@ func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
 		if err := s.deleteFileFunc(wc.curFileNum); err != nil {
 			log.Warnf("ROLLBACK: Failed to delete block file "+
 				"number %d: %v", wc.curFileNum, err)
-			return
+			return err
 		}
 	}
 
@@ -748,7 +748,7 @@ func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
 		if err != nil {
 			wc.curFile.Unlock()
 			log.Warnf("ROLLBACK: %v", err)
-			return
+			return err
 		}
 		wc.curFile.file = obf
 	}
@@ -756,19 +756,23 @@ func (s *blockStore) handleRollback(oldBlockFileNum, oldBlockOffset uint32) {
 	// Truncate the to the provided rollback offset.
 	if err := wc.curFile.file.Truncate(int64(oldBlockOffset)); err != nil {
 		wc.curFile.Unlock()
-		log.Warnf("ROLLBACK: Failed to truncate file %d: %v",
-			wc.curFileNum, err)
-		return
+		str := fmt.Sprintf("failed to truncate block file %d",
+			wc.curFileNum)
+		dbErr := makeDbErr(database.ErrDriverSpecific, str, err)
+		log.Warnf("ROLLBACK: %v", dbErr)
+		return dbErr
 	}
 
 	// Sync the file to disk.
 	err := wc.curFile.file.Sync()
 	wc.curFile.Unlock()
 	if err != nil {
-		log.Warnf("ROLLBACK: Failed to sync file %d: %v",
-			wc.curFileNum, err)
-		return
+		str := fmt.Sprintf("failed to sync block file %d", wc.curFileNum)
+		dbErr := makeDbErr(database.ErrDriverSpecific, str, err)
+		log.Warnf("ROLLBACK: %v", dbErr)
+		return dbErr
 	}
+	return nil
 }
 
 func parseBlockFileNum(file string) (uint32, error) {

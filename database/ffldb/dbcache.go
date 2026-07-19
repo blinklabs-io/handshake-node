@@ -15,6 +15,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/database/internal/treap"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
@@ -40,6 +41,8 @@ const (
 	ldbBatchHeaderSize = 12
 	ldbRecordIKeySize  = 8
 )
+
+var syncWriteOptions = &opt.WriteOptions{Sync: true}
 
 // ldbCacheIter wraps a treap iterator to provide the additional functionality
 // needed to satisfy the leveldb iterator.Iterator interface.
@@ -392,14 +395,18 @@ type dbCache struct {
 	cachedKeys   *treap.Immutable
 	cachedRemove *treap.Immutable
 
-	// writeBatchSyncFunc is the synchronous LevelDB batch writer.  It is a
-	// field so white-box tests can simulate the documented case where a
-	// durable write succeeds but its final sync reports an error.
+	// writeBatchSyncFunc is the synchronous LevelDB batch writer used by
+	// pruning.  It is a separate field so white-box tests can simulate the
+	// documented case where a durable pruning write succeeds but its final
+	// sync reports an error without also poisoning later shutdown work.
 	writeBatchSyncFunc func(batch *leveldb.Batch) error
 
-	// writeBatchFunc is the normal LevelDB batch writer.  It is a field so
-	// white-box tests can simulate an error with an ambiguous commit outcome
-	// at the actual atomic writer boundary.
+	// writeBatchFunc is the normal synchronous LevelDB batch writer.  Every
+	// batch that leaves the in-memory metadata cache must be durable when the
+	// write returns so Close never has to rely on a later write to sync an
+	// older, potentially rotated write-ahead log.  It is a field so white-box
+	// tests can simulate an error with an ambiguous commit outcome at the
+	// actual atomic writer boundary.
 	writeBatchFunc func(batch *leveldb.Batch) error
 }
 
@@ -451,6 +458,19 @@ type TreapForEacher interface {
 	ForEach(func(k, v []byte) bool)
 }
 
+// levelDBBatchWriter is the portion of LevelDB used to durably write metadata
+// batches.  Keeping the option-bearing call behind this small interface makes
+// the synchronization contract directly testable without timing or crashes.
+type levelDBBatchWriter interface {
+	Write(batch *leveldb.Batch, wo *opt.WriteOptions) error
+}
+
+// writeMetadataBatch writes a metadata batch synchronously.  All ordinary,
+// pruning, initialization, and shutdown batch writes use this primitive.
+func writeMetadataBatch(writer levelDBBatchWriter, batch *leveldb.Batch) error {
+	return writer.Write(batch, syncWriteOptions)
+}
+
 // treapsToBatch returns a LevelDB batch containing all of the passed updates.
 func treapsToBatch(pendingKeys, pendingRemove TreapForEacher) *leveldb.Batch {
 	batch := new(leveldb.Batch)
@@ -465,8 +485,9 @@ func treapsToBatch(pendingKeys, pendingRemove TreapForEacher) *leveldb.Batch {
 	return batch
 }
 
-// commitTreaps atomically commits all of the passed pending add/update/remove
-// updates to the underlying database through LevelDB's write-ahead log.
+// commitTreaps atomically and synchronously commits all of the passed pending
+// add/update/remove updates to the underlying database through LevelDB's
+// write-ahead log.
 func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error {
 	if err := c.writeBatchFunc(treapsToBatch(pendingKeys, pendingRemove)); err != nil {
 		return convertErr("failed to commit metadata batch", err)
@@ -479,7 +500,8 @@ func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error 
 // It is used by pruning so metadata removals and their durable deletion intent
 // reach disk before any block files are unlinked.
 func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) error {
-	if err := c.writeBatchSyncFunc(treapsToBatch(pendingKeys, pendingRemove)); err != nil {
+	batch := treapsToBatch(pendingKeys, pendingRemove)
+	if err := c.writeBatchSyncFunc(batch); err != nil {
 		dbErr := convertErr("failed to durably commit pruning transaction", err)
 		if errors.Is(dbErr, syscall.ENOSPC) {
 			log.Errorf("%v. Cannot save any more blocks "+
@@ -492,13 +514,13 @@ func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) er
 	return nil
 }
 
-// flushWithSync flushes the database cache to persistent storage.  This
+// flushWithPruneWriter flushes the database cache to persistent storage.  This
 // involves syncing the block store and replaying all transactions that have
-// been applied to the cache to the underlying database.  When syncMetadata is
-// true, the metadata write is also synced to stable storage.
+// been applied to the cache to the underlying database.  Both writers are
+// synchronous; usePruneWriter selects the dedicated pruning fault boundary.
 //
 // This function MUST be called with the database write lock held.
-func (c *dbCache) flushWithSync(syncMetadata bool) error {
+func (c *dbCache) flushWithPruneWriter(usePruneWriter bool) error {
 	c.lastFlush = time.Now()
 
 	// Sync the current write file associated with the block store.  This is
@@ -526,7 +548,7 @@ func (c *dbCache) flushWithSync(syncMetadata bool) error {
 	// metadata flush so every earlier cached transaction is durable before
 	// it commits deletion intent and starts unlinking files.
 	var err error
-	if syncMetadata {
+	if usePruneWriter {
 		err = c.commitTreapsSync(cachedKeys, cachedRemove)
 	} else {
 		err = c.commitTreaps(cachedKeys, cachedRemove)
@@ -552,12 +574,13 @@ func (c *dbCache) flushWithSync(syncMetadata bool) error {
 
 // flush flushes cached metadata using the normal opportunistic write policy.
 func (c *dbCache) flush() error {
-	return c.flushWithSync(false)
+	return c.flushWithPruneWriter(false)
 }
 
-// flushSync flushes cached metadata and syncs it to stable storage.
-func (c *dbCache) flushSync() error {
-	return c.flushWithSync(true)
+// flushForPrune durably flushes cached metadata through the dedicated pruning
+// writer so pruning fault injection remains isolated from ordinary writes.
+func (c *dbCache) flushForPrune() error {
+	return c.flushWithPruneWriter(true)
 }
 
 // needsFlush returns whether or not the database cache needs to be flushed to
@@ -680,7 +703,9 @@ func (c *dbCache) commitTx(tx *transaction) error {
 //
 // This function MUST be called with the database write lock held.
 func (c *dbCache) Close() error {
-	// Flush any outstanding cached entries to disk.
+	// Flush any outstanding cached entries through the normal writer, which
+	// synchronizes every batch.  Earlier cache flushes used the same durable
+	// writer, so an empty cache needs no synthetic write or WAL barrier here.
 	if err := c.flush(); err != nil {
 		// Even if there is an error while flushing, attempt to close
 		// the underlying database.  The error is ignored since it would
@@ -713,10 +738,10 @@ func newDbCache(ldb *leveldb.DB, store *blockStore, maxSize uint64, flushInterva
 		cachedRemove:  treap.NewImmutable(),
 	}
 	cache.writeBatchSyncFunc = func(batch *leveldb.Batch) error {
-		return ldb.Write(batch, syncWriteOptions)
+		return writeMetadataBatch(ldb, batch)
 	}
 	cache.writeBatchFunc = func(batch *leveldb.Batch) error {
-		return ldb.Write(batch, nil)
+		return writeMetadataBatch(ldb, batch)
 	}
 	return cache
 }
