@@ -438,10 +438,18 @@ func (t *taprootSigVerifier) Verify() verifyResult {
 		opts = append(opts, WithAnnex(t.annex))
 	}
 
+	// Callers may intentionally disable shared sighash caching or observe a
+	// cache miss after eviction. Match the segwit-v0 verifier by computing
+	// the transaction midstates locally in that case.
+	hashCache := t.hashCache
+	if hashCache == nil {
+		hashCache = NewTxSigHashes(t.tx, t.prevOuts)
+	}
+
 	// Before we attempt to verify the signature, we'll need to first
 	// compute the sighash based on the input and tx information.
 	sigHash, err := calcTaprootSignatureHashRaw(
-		t.hashCache, t.hashType, t.tx, t.inputIndex, t.prevOuts,
+		hashCache, t.hashType, t.tx, t.inputIndex, t.prevOuts,
 		opts...,
 	)
 	if err != nil {

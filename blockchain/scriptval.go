@@ -200,22 +200,21 @@ func ValidateTransactionScripts(tx *hnsutil.Tx, utxoView *UtxoViewpoint,
 	// it isn't then we don't need to interact with the HashCache.
 	segwitActive := flags&txscript.ScriptVerifyWitness == txscript.ScriptVerifyWitness
 
-	// If the hashcache doesn't yet has the sighash midstate for this
-	// transaction, then we'll compute them now so we can re-use them
-	// amongst all worker validation goroutines.
-	if segwitActive && tx.MsgTx().HasWitness() &&
-		!hashCache.ContainsHashes(tx.Hash()) {
-		hashCache.AddSigHashes(tx.MsgTx(), utxoView)
-	}
-
 	var cachedHashes *txscript.TxSigHashes
 	if segwitActive && tx.MsgTx().HasWitness() {
 		// The same pointer to the transaction's sighash midstate will
 		// be re-used amongst all validation goroutines. By
 		// pre-computing the sighash here instead of during validation,
-		// we ensure the sighashes
-		// are only computed once.
-		cachedHashes, _ = hashCache.GetSigHashes(tx.Hash())
+		// we ensure the sighashes are only computed once.
+		if hashCache != nil {
+			cachedHashes = hashCache.GetOrAddSigHashes(
+				tx.MsgTx(), utxoView,
+			)
+		} else {
+			cachedHashes = txscript.NewTxSigHashes(
+				tx.MsgTx(), utxoView,
+			)
+		}
 	}
 
 	// Collect all of the transaction inputs and required information for
@@ -260,23 +259,12 @@ func checkBlockScripts(block *hnsutil.Block, utxoView *UtxoViewpoint,
 	}
 	txValItems := make([]*txValidateItem, 0, numInputs)
 	for _, tx := range block.Transactions() {
-		hash := tx.Hash()
-
-		// If the HashCache is present, and it doesn't yet contain the
-		// partial sighashes for this transaction, then we add the
-		// sighashes for the transaction. This allows us to take
-		// advantage of the potential speed savings due to the new
-		// digest algorithm (BIP0143).
-		if segwitActive && tx.HasWitness() && hashCache != nil &&
-			!hashCache.ContainsHashes(hash) {
-
-			hashCache.AddSigHashes(tx.MsgTx(), utxoView)
-		}
-
 		var cachedHashes *txscript.TxSigHashes
 		if segwitActive && tx.HasWitness() {
 			if hashCache != nil {
-				cachedHashes, _ = hashCache.GetSigHashes(hash)
+				cachedHashes = hashCache.GetOrAddSigHashes(
+					tx.MsgTx(), utxoView,
+				)
 			} else {
 				cachedHashes = txscript.NewTxSigHashes(
 					tx.MsgTx(), utxoView,
