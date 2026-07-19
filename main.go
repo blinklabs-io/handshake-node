@@ -5,16 +5,19 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	_ "net/http/pprof"
+	httppprof "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
 	"runtime/trace"
+	"time"
 
 	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
 	"github.com/blinklabs-io/handshake-node/database"
@@ -27,6 +30,10 @@ const (
 	// database type is appended to this value to form the full block
 	// database name.
 	blockDbNamePrefix = "blocks"
+
+	profileReadHeaderTimeout = 5 * time.Second
+	profileReadTimeout       = 10 * time.Second
+	profileShutdownTimeout   = 5 * time.Second
 )
 
 var (
@@ -36,6 +43,70 @@ var (
 // winServiceMain is only invoked on Windows.  It detects when handshake-node is running
 // as a service and reacts accordingly.
 var winServiceMain func() (bool, error)
+
+type profileHTTPServer struct {
+	server   *http.Server
+	listener net.Listener
+	done     chan struct{}
+}
+
+func newProfileServeMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	// Match the standard net/http/pprof registrations, including POST on
+	// the symbol endpoint used by profiling clients.
+	mux.HandleFunc("/debug/pprof/", httppprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
+	mux.Handle("/", http.RedirectHandler("/debug/pprof/",
+		http.StatusSeeOther))
+	return mux
+}
+
+func startProfileHTTPServer(port string,
+	serveError func(error)) (*profileHTTPServer, error) {
+
+	listenAddr := net.JoinHostPort("127.0.0.1", port)
+	listener, err := net.Listen("tcp4", listenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("profile server listen on %s: %w",
+			listenAddr, err)
+	}
+
+	p := &profileHTTPServer{
+		server: &http.Server{
+			Handler:           newProfileServeMux(),
+			ReadHeaderTimeout: profileReadHeaderTimeout,
+			ReadTimeout:       profileReadTimeout,
+		},
+		listener: listener,
+		done:     make(chan struct{}),
+	}
+	go func() {
+		defer close(p.done)
+		if err := p.server.Serve(listener); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) && serveError != nil {
+
+			serveError(err)
+		}
+	}()
+
+	return p, nil
+}
+
+func (p *profileHTTPServer) stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(),
+		profileShutdownTimeout)
+	defer cancel()
+
+	err := p.server.Shutdown(ctx)
+	if err != nil {
+		_ = p.server.Close()
+	}
+	<-p.done
+	return err
+}
 
 // hnsMain is the real main function for handshake-node. It is necessary to work around
 // the fact that deferred functions do not run when os.Exit() is called.  The
@@ -67,13 +138,20 @@ func hnsMain(serverChan chan<- *server) error {
 
 	// Enable http profiling server if requested.
 	if cfg.Profile != "" {
-		go func() {
-			listenAddr := net.JoinHostPort("", cfg.Profile)
-			hnsLog.Infof("Profile server listening on %s", listenAddr)
-			profileRedirect := http.RedirectHandler("/debug/pprof",
-				http.StatusSeeOther)
-			http.Handle("/", profileRedirect)
-			hnsLog.Errorf("%v", http.ListenAndServe(listenAddr, nil))
+		profileServer, err := startProfileHTTPServer(cfg.Profile,
+			func(err error) {
+				hnsLog.Errorf("Profile server stopped: %v", err)
+			})
+		if err != nil {
+			hnsLog.Errorf("Unable to start profile server: %v", err)
+			return err
+		}
+		hnsLog.Infof("Profile server listening on %s",
+			profileServer.listener.Addr())
+		defer func() {
+			if err := profileServer.stop(); err != nil {
+				hnsLog.Warnf("Profile server shutdown failed: %v", err)
+			}
 		}()
 	}
 
