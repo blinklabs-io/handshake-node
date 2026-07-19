@@ -869,6 +869,17 @@ func (sm *SyncManager) checkHeadersList(blockHash *chainhash.Hash) (
 		return false, blockchain.BFNone
 	}
 
+	// A checkpoint can only prove the validity of blocks on its ancestor path.
+	// Since IsValidHeader requires a header to be in the linear best-header
+	// view, requiring both the block and checkpoint to be in that view proves
+	// the block is an ancestor of the checkpoint.  Do not fast-add while the
+	// future checkpoint is still unknown, since a peer could otherwise end a
+	// valid-PoW header chain before the checkpoint and supply invalid block
+	// bodies that bypass full validation.
+	if !sm.chain.IsValidHeader(checkpoint.Hash) {
+		return false, blockchain.BFNone
+	}
+
 	behaviorFlags |= blockchain.BFFastAdd
 	if blockHash.IsEqual(checkpoint.Hash) {
 		isCheckpointBlock = true

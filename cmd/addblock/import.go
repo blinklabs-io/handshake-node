@@ -13,9 +13,9 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/blockchain/indexers"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -127,10 +127,9 @@ func (bi *blockImporter) processBlock(serializedBlock []byte) (bool, error) {
 		}
 	}
 
-	// Ensure the blocks follows all of the chain rules and match up to the
+	// Ensure the block follows all of the chain rules and matches up to the
 	// known checkpoints.
-	isMainChain, isOrphan, err := bi.chain.ProcessBlock(block,
-		blockchain.BFFastAdd)
+	isMainChain, isOrphan, err := bi.chain.ProcessBlock(block, blockchain.BFNone)
 	if err != nil {
 		return false, err
 	}
