@@ -55,6 +55,7 @@ const (
 	upnpHTTPTimeout           = 10 * time.Second
 	upnpDialTimeout           = 3 * time.Second
 	upnpResponseHeaderTimeout = 5 * time.Second
+	maxUPnPRedirects          = 10
 	maxUPnPResponseHeaderSize = 64 << 10
 	maxUPnPDescriptionSize    = 1 << 20
 	maxUPnPSOAPResponseSize   = 1 << 20
@@ -81,9 +82,40 @@ func newUPnPHTTPClient() *http.Client {
 	transport.TLSHandshakeTimeout = upnpResponseHeaderTimeout
 
 	return &http.Client{
-		Transport: transport,
-		Timeout:   upnpHTTPTimeout,
+		Transport:     transport,
+		Timeout:       upnpHTTPTimeout,
+		CheckRedirect: checkUPnPRedirect,
 	}
+}
+
+// checkUPnPRedirect prevents an unauthenticated UPnP endpoint from redirecting
+// a device-description fetch or replaying a SOAP request to a different host.
+// A different port on the same host is allowed because UPnP devices commonly
+// expose their description and control endpoints on separate ports.
+func checkUPnPRedirect(req *http.Request, via []*http.Request) error {
+	if req == nil || req.URL == nil || len(via) == 0 || via[0] == nil ||
+		via[0].URL == nil {
+
+		return errors.New("invalid upnp HTTP redirect")
+	}
+	if len(via) >= maxUPnPRedirects {
+		return fmt.Errorf("stopped after %d upnp HTTP redirects",
+			maxUPnPRedirects)
+	}
+	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+		return fmt.Errorf("unsupported upnp redirect scheme %q", req.URL.Scheme)
+	}
+
+	redirectHost := req.URL.Hostname()
+	originalHost := via[0].URL.Hostname()
+	if redirectHost == "" || originalHost == "" {
+		return errors.New("invalid upnp HTTP redirect host")
+	}
+	if !sameUPnPHostname(originalHost, redirectHost) {
+		return fmt.Errorf("upnp redirect host %q does not match original host %q",
+			redirectHost, originalHost)
+	}
+	return nil
 }
 
 // NAT is an interface representing a NAT traversal options for example UPNP or

@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -49,6 +51,54 @@ func TestUPnPHTTPClientIsBounded(t *testing.T) {
 	}
 	if transport.Proxy != nil {
 		t.Fatal("UPnP HTTP transport must not use an environment proxy")
+	}
+	if client.CheckRedirect == nil {
+		t.Fatal("UPnP HTTP client has no redirect policy")
+	}
+}
+
+func TestUPnPHTTPClientLimitsRedirects(t *testing.T) {
+	original, err := http.NewRequest(http.MethodGet,
+		"http://router.example/root.xml", nil)
+	if err != nil {
+		t.Fatalf("create original request: %v", err)
+	}
+	redirect, err := http.NewRequest(http.MethodGet,
+		"http://router.example/redirect.xml", nil)
+	if err != nil {
+		t.Fatalf("create redirect request: %v", err)
+	}
+	via := make([]*http.Request, maxUPnPRedirects)
+	for i := range via {
+		via[i] = original
+	}
+
+	err = checkUPnPRedirect(redirect, via)
+	if err == nil || !strings.Contains(err.Error(), "stopped after") {
+		t.Fatalf("error = %v, want redirect limit error", err)
+	}
+}
+
+func TestGetServiceURLRejectsCrossHostRedirect(t *testing.T) {
+	var targetCalled atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetCalled.Store(true)
+		_, _ = io.WriteString(w, validUPnPDescription("/control"))
+	}))
+	t.Cleanup(target.Close)
+
+	targetURL := crossHostTestURL(t, target.URL)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, targetURL+"/root.xml", http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+
+	_, err := getServiceURLWithClient(testUPnPClient(), origin.URL+"/root.xml")
+	if err == nil || !strings.Contains(err.Error(), "redirect host") {
+		t.Fatalf("error = %v, want cross-host redirect error", err)
+	}
+	if targetCalled.Load() {
+		t.Fatal("cross-host redirect target received description request")
 	}
 }
 
@@ -308,6 +358,38 @@ func TestSOAPRequestSuccess(t *testing.T) {
 	}
 }
 
+func TestSOAPRequestRejectsCrossHostRedirect(t *testing.T) {
+	for _, status := range []int{
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var targetCalled atomic.Bool
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				targetCalled.Store(true)
+				_, _ = io.WriteString(w, validSOAPResponse())
+			}))
+			t.Cleanup(target.Close)
+
+			targetURL := crossHostTestURL(t, target.URL)
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, targetURL+"/control", status)
+			}))
+			t.Cleanup(origin.Close)
+
+			_, err := soapRequestWithClient(testUPnPClient(),
+				origin.URL+"/control", "GetExternalIPAddress",
+				"<u:GetExternalIPAddress/>")
+			if err == nil || !strings.Contains(err.Error(), "redirect host") {
+				t.Fatalf("error = %v, want cross-host redirect error", err)
+			}
+			if targetCalled.Load() {
+				t.Fatal("cross-host redirect target received SOAP request")
+			}
+		})
+	}
+}
+
 func TestSOAPRequestRejectsOversizedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, strings.Repeat("x", maxUPnPSOAPResponseSize+1))
@@ -489,6 +571,26 @@ func validUPnPDescriptionWithBase(urlBase, controlURL string) string {
 
 func serverURLFromRequest(r *http.Request) string {
 	return "http://" + r.Host
+}
+
+func crossHostTestURL(t *testing.T, rawURL string) string {
+	t.Helper()
+
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	originalHost := parsed.Hostname()
+	_, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatalf("split test server host: %v", err)
+	}
+	parsed.Host = net.JoinHostPort("localhost", port)
+	if sameUPnPHostname(originalHost, parsed.Hostname()) {
+		t.Fatalf("test redirect hostname %q matches server hostname %q",
+			parsed.Hostname(), originalHost)
+	}
+	return parsed.String()
 }
 
 func validSOAPResponse() string {
