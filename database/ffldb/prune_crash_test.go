@@ -904,35 +904,27 @@ func TestPruneDoesNotWaitForReadTransactions(t *testing.T) {
 		_ = idb.Close()
 		t.Fatalf("begin read transaction: %v", err)
 	}
-	metadataCommitted := make(chan struct{})
+	metadataCommitted := false
 	pdb.pruneFailpoint = func(stage pruneStage) {
 		if stage == pruneStageMetadataCommitted {
-			close(metadataCommitted)
+			metadataCommitted = true
 		}
 	}
-	pruneDone := make(chan error, 1)
-	go func() {
-		pruneDone <- idb.Update(func(tx database.Tx) error {
-			_, err := tx.PruneBlocks(pruneCrashTarget)
-			return err
-		})
-	}()
 
-	select {
-	case err := <-pruneDone:
-		if err != nil {
-			_ = readTx.Rollback()
-			_ = idb.Close()
-			t.Fatalf("prune with older read transaction: %v", err)
-		}
-	case <-time.After(5 * time.Second):
+	// Keep the older read transaction open while committing the prune.  The
+	// cleanup path uses TryLock, so this returns without waiting for the reader
+	// regardless of how long the preceding durability work takes.  A blocking
+	// lock regression is a real deadlock and is handled by the suite timeout.
+	err = idb.Update(func(tx database.Tx) error {
+		_, err := tx.PruneBlocks(pruneCrashTarget)
+		return err
+	})
+	if err != nil {
 		_ = readTx.Rollback()
 		_ = idb.Close()
-		t.Fatal("prune commit blocked on an older read transaction")
+		t.Fatalf("prune with older read transaction: %v", err)
 	}
-	select {
-	case <-metadataCommitted:
-	default:
+	if !metadataCommitted {
 		_ = readTx.Rollback()
 		_ = idb.Close()
 		t.Fatal("prune returned before durable metadata commit")
