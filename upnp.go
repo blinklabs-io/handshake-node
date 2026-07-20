@@ -41,13 +41,82 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	upnpHTTPTimeout           = 10 * time.Second
+	upnpDialTimeout           = 3 * time.Second
+	upnpResponseHeaderTimeout = 5 * time.Second
+	maxUPnPRedirects          = 10
+	maxUPnPResponseHeaderSize = 64 << 10
+	maxUPnPDescriptionSize    = 1 << 20
+	maxUPnPSOAPResponseSize   = 1 << 20
+)
+
+var upnpHTTPClient = newUPnPHTTPClient()
+
+// newUPnPHTTPClient returns a client with bounded connection, response header,
+// and whole-request lifetimes. UPnP endpoints are on the local network, so the
+// transport deliberately does not consult environment proxy settings.
+func newUPnPHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = (&net.Dialer{
+		Timeout:   upnpDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.MaxIdleConns = 4
+	transport.MaxIdleConnsPerHost = 2
+	transport.MaxConnsPerHost = 4
+	transport.IdleConnTimeout = 30 * time.Second
+	transport.ResponseHeaderTimeout = upnpResponseHeaderTimeout
+	transport.MaxResponseHeaderBytes = maxUPnPResponseHeaderSize
+	transport.TLSHandshakeTimeout = upnpResponseHeaderTimeout
+
+	return &http.Client{
+		Transport:     transport,
+		Timeout:       upnpHTTPTimeout,
+		CheckRedirect: checkUPnPRedirect,
+	}
+}
+
+// checkUPnPRedirect prevents an unauthenticated UPnP endpoint from redirecting
+// a device-description fetch or replaying a SOAP request to a different host.
+// A different port on the same host is allowed because UPnP devices commonly
+// expose their description and control endpoints on separate ports.
+func checkUPnPRedirect(req *http.Request, via []*http.Request) error {
+	if req == nil || req.URL == nil || len(via) == 0 || via[0] == nil ||
+		via[0].URL == nil {
+
+		return errors.New("invalid upnp HTTP redirect")
+	}
+	if len(via) >= maxUPnPRedirects {
+		return fmt.Errorf("stopped after %d upnp HTTP redirects",
+			maxUPnPRedirects)
+	}
+	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+		return fmt.Errorf("unsupported upnp redirect scheme %q", req.URL.Scheme)
+	}
+
+	redirectHost := req.URL.Hostname()
+	originalHost := via[0].URL.Hostname()
+	if redirectHost == "" || originalHost == "" {
+		return errors.New("invalid upnp HTTP redirect host")
+	}
+	if !sameUPnPHostname(originalHost, redirectHost) {
+		return fmt.Errorf("upnp redirect host %q does not match original host %q",
+			redirectHost, originalHost)
+	}
+	return nil
+}
 
 // NAT is an interface representing a NAT traversal options for example UPNP or
 // NAT-PMP. It provides methods to query and manipulate this traversal to allow
@@ -190,6 +259,7 @@ type specVersion struct {
 // fields than present in the structure.
 type root struct {
 	XMLName     xml.Name `xml:"root"`
+	URLBase     string   `xml:"URLBase"`
 	SpecVersion specVersion
 	Device      device
 }
@@ -228,17 +298,30 @@ func getOurIP() (ip string, err error) {
 // getServiceURL parses the xml description at the given root url to find the
 // url for the WANIPConnection service to be used for port forwarding.
 func getServiceURL(rootURL string) (url string, err error) {
-	r, err := http.Get(rootURL)
+	return getServiceURLWithClient(upnpHTTPClient, rootURL)
+}
+
+func getServiceURLWithClient(client *http.Client, rootURL string) (url string, err error) {
+	r, err := client.Get(rootURL)
 	if err != nil {
 		return
 	}
-	defer r.Body.Close()
-	if r.StatusCode >= 400 {
-		err = errors.New(fmt.Sprint(r.StatusCode))
+	defer func() {
+		if closeErr := r.Body.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close upnp device description response: %w",
+				closeErr)
+		}
+	}()
+	if r.StatusCode < http.StatusOK || r.StatusCode >= http.StatusMultipleChoices {
+		err = fmt.Errorf("upnp device description returned HTTP status %d", r.StatusCode)
 		return
 	}
+	body, err := readLimitedUPnPBody(r.Body, maxUPnPDescriptionSize)
+	if err != nil {
+		return "", fmt.Errorf("read upnp device description: %w", err)
+	}
 	var root root
-	err = xml.NewDecoder(r.Body).Decode(&root)
+	err = xml.Unmarshal(body, &root)
 	if err != nil {
 		return
 	}
@@ -262,17 +345,88 @@ func getServiceURL(rootURL string) (url string, err error) {
 		err = errors.New("no WANIPConnection")
 		return
 	}
-	url = combineURL(rootURL, d.ControlURL)
+	descriptionURL := rootURL
+	if r.Request != nil && r.Request.URL != nil {
+		descriptionURL = r.Request.URL.String()
+	}
+	url, err = resolveUPnPServiceURL(descriptionURL, root.URLBase, d.ControlURL)
 	return
 }
 
-// combineURL appends subURL onto rootURL.
-func combineURL(rootURL, subURL string) string {
-	protocolEnd := "://"
-	protoEndIndex := strings.Index(rootURL, protocolEnd)
-	a := rootURL[protoEndIndex+len(protocolEnd):]
-	rootIndex := strings.Index(a, "/")
-	return rootURL[0:protoEndIndex+len(protocolEnd)+rootIndex] + subURL
+func readLimitedUPnPBody(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", limit)
+	}
+	return data, nil
+}
+
+// resolveUPnPServiceURL resolves a control URL according to the device
+// description while preventing an unauthenticated device response from
+// redirecting SOAP requests to a different host. UPnP devices may legitimately
+// advertise a different port for their control endpoint.
+func resolveUPnPServiceURL(descriptionURL, urlBase, controlURL string) (string, error) {
+	baseURL := descriptionURL
+	if strings.TrimSpace(urlBase) != "" {
+		baseURL = urlBase
+	}
+	resolvedURL, err := combineURL(baseURL, controlURL)
+	if err != nil {
+		return "", err
+	}
+
+	description, err := neturl.Parse(strings.TrimSpace(descriptionURL))
+	if err != nil {
+		return "", fmt.Errorf("parse upnp description URL: %w", err)
+	}
+	resolved, err := neturl.Parse(resolvedURL)
+	if err != nil {
+		return "", fmt.Errorf("parse resolved upnp control URL: %w", err)
+	}
+	if !sameUPnPHostname(description.Hostname(), resolved.Hostname()) {
+		return "", fmt.Errorf("upnp control URL host %q does not match description host %q",
+			resolved.Hostname(), description.Hostname())
+	}
+	return resolvedURL, nil
+}
+
+func sameUPnPHostname(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	aIP, bIP := net.ParseIP(a), net.ParseIP(b)
+	return aIP != nil && bIP != nil && aIP.Equal(bIP)
+}
+
+func combineURL(rootURL, subURL string) (string, error) {
+	base, err := neturl.Parse(strings.TrimSpace(rootURL))
+	if err != nil {
+		return "", fmt.Errorf("parse upnp base URL: %w", err)
+	}
+	if !base.IsAbs() || base.Host == "" ||
+		(base.Scheme != "http" && base.Scheme != "https") {
+
+		return "", fmt.Errorf("invalid upnp base URL %q", rootURL)
+	}
+
+	trimmedSubURL := strings.TrimSpace(subURL)
+	if trimmedSubURL == "" {
+		return "", errors.New("empty upnp control URL")
+	}
+	ref, err := neturl.Parse(trimmedSubURL)
+	if err != nil {
+		return "", fmt.Errorf("parse upnp control URL: %w", err)
+	}
+	resolved := base.ResolveReference(ref)
+	if resolved.Host == "" ||
+		(resolved.Scheme != "http" && resolved.Scheme != "https") {
+
+		return "", fmt.Errorf("invalid upnp control URL %q", subURL)
+	}
+	return resolved.String(), nil
 }
 
 // soapBody represents the <s:Body> element in a SOAP reply.
@@ -293,6 +447,10 @@ type soapEnvelope struct {
 // the xml replied stripped of the soap headers. in the case that the request is
 // unsuccessful the an error is returned.
 func soapRequest(url, function, message string) (replyXML []byte, err error) {
+	return soapRequestWithClient(upnpHTTPClient, url, function, message)
+}
+
+func soapRequestWithClient(client *http.Client, url, function, message string) (replyXML []byte, err error) {
 	fullMessage := "<?xml version=\"1.0\" ?>" +
 		"<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\r\n" +
 		"<s:Body>" + message + "</s:Body></s:Envelope>"
@@ -308,21 +466,26 @@ func soapRequest(url, function, message string) (replyXML []byte, err error) {
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Pragma", "no-cache")
 
-	r, err := http.DefaultClient.Do(req)
+	r, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	if r.Body != nil {
-		defer r.Body.Close()
-	}
+	defer func() {
+		if closeErr := r.Body.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close upnp SOAP response for %s: %w", function,
+				closeErr)
+		}
+	}()
 
-	if r.StatusCode >= 400 {
-		err = errors.New("Error " + strconv.Itoa(r.StatusCode) + " for " + function)
-		r = nil
-		return
+	if r.StatusCode < http.StatusOK || r.StatusCode >= http.StatusMultipleChoices {
+		return nil, errors.New("Error " + strconv.Itoa(r.StatusCode) + " for " + function)
+	}
+	body, err := readLimitedUPnPBody(r.Body, maxUPnPSOAPResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("read upnp SOAP response for %s: %w", function, err)
 	}
 	var reply soapEnvelope
-	err = xml.NewDecoder(r.Body).Decode(&reply)
+	err = xml.Unmarshal(body, &reply)
 	if err != nil {
 		return nil, err
 	}
