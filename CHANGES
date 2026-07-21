@@ -3,6 +3,34 @@ User visible changes for handshake-node
   A Handshake full node implementation written in Go
 ============================================================================
 
+Changes in 0.2.2-rc1 (release candidate)
+  - Consensus and validation hardening:
+    - Verify claim DNSSEC proofs against committed name roots. (#88)
+  - Network and security hardening:
+    - Bound peer admission and outbound memory with configurable per-IP
+      inbound, aggregate outbound queue, and P2P write timeout limits. (#90)
+    - Restrict chain mutation RPCs and bind the pprof profiling server to
+      loopback. (#91, #94)
+    - Bound the signature hash cache and harden router UPnP HTTP
+      interactions. (#93, #95)
+  - Storage durability:
+    - Recover safely from metadata commit errors. (#89)
+    - Harden ffldb durability boundaries: make metadata batches synchronous,
+      fail closed on block-file rollback errors, and surface startup
+      reconciliation failures. (#100)
+  - Graceful shutdown:
+    - Drain RPC handlers and wait for peer message handlers to stop during
+      shutdown. (#98, #99)
+  - New configuration options:
+    - Add maxinboundperip, maxoutboundqueuemib, and p2pwritetimeout to bound
+      peer admission and outbound memory. Defaults preserve existing
+      behavior. (#90)
+  - Testing and maintenance:
+    - Make the prune reader test deterministic and tie live RPC deadlines to
+      the server lifecycle. (#96, #97)
+  - Contributors (alphabetical order):
+    - Chris Gianelloni
+
 Changes in 0.2.1-rc1 (release candidate)
   - Storage and release hardening:
     - Make flat-file pruning crash safe with durable recovery metadata and
