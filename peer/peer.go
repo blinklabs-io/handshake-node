@@ -647,7 +647,9 @@ type Peer struct {
 	connected     int32
 	disconnect    int32
 
-	conn net.Conn
+	conn         net.Conn
+	lifecycleMtx sync.Mutex
+	lifecycleWg  sync.WaitGroup
 
 	// These fields are set at creation time and never modified, so they are
 	// safe to read from concurrently without a mutex.
@@ -2010,11 +2012,18 @@ func (p *Peer) inHandler() {
 
 	// The timer is stopped when a new message is received and reset after it
 	// is processed.
+	idleTimerDone := make(chan struct{})
 	idleTimer := time.AfterFunc(idleTimeout, func() {
+		defer close(idleTimerDone)
 		log.Warnf("Peer %s no answer for %s -- disconnecting", p, idleTimeout)
 		p.Disconnect()
 	})
-	defer idleTimer.Stop()
+	idleTimerArmed := true
+	defer func() {
+		if idleTimerArmed && !idleTimer.Stop() {
+			<-idleTimerDone
+		}
+	}()
 
 out:
 	for atomic.LoadInt32(&p.disconnect) == 0 {
@@ -2022,7 +2031,12 @@ out:
 		// is done.  The timer is reset below for the next iteration if
 		// needed.
 		rmsg, buf, err := p.readMessage(p.wireEncoding, false)
-		idleTimer.Stop()
+		if !idleTimer.Stop() {
+			<-idleTimerDone
+			idleTimerArmed = false
+			break out
+		}
+		idleTimerArmed = false
 		if err != nil {
 			// In order to allow regression tests with malformed messages, don't
 			// disconnect the peer when we're in regression test mode and the
@@ -2030,6 +2044,7 @@ out:
 			if p.isAllowedReadError(err) {
 				log.Errorf("Allowed test error from %s: %v", p, err)
 				idleTimer.Reset(idleTimeout)
+				idleTimerArmed = true
 				continue
 			}
 
@@ -2043,6 +2058,7 @@ out:
 				log.Debugf("Received unknown message from %s:"+
 					" %v", p, err)
 				idleTimer.Reset(idleTimeout)
+				idleTimerArmed = true
 				continue
 			}
 
@@ -2248,6 +2264,7 @@ out:
 
 		// A message was received so reset the idle timer.
 		idleTimer.Reset(idleTimeout)
+		idleTimerArmed = true
 	}
 }
 
@@ -2713,11 +2730,24 @@ func (p *Peer) Disconnect() {
 		return
 	}
 
+	p.lifecycleMtx.Lock()
+	defer p.lifecycleMtx.Unlock()
+
 	log.Tracef("Disconnecting %s", p)
 	if atomic.LoadInt32(&p.connected) != 0 {
 		p.conn.Close()
 	}
 	close(p.quit)
+}
+
+// launchGoroutine starts a peer-owned goroutine and tracks it for
+// WaitForDisconnect.
+func (p *Peer) launchGoroutine(f func()) {
+	p.lifecycleWg.Add(1)
+	go func() {
+		defer p.lifecycleWg.Done()
+		f()
+	}()
 }
 
 // readRemoteVersionMsg waits for the next message to arrive from the remote
@@ -3067,7 +3097,7 @@ func (p *Peer) start() error {
 	log.Tracef("Starting peer %s", p)
 
 	negotiateErr := make(chan error, 1)
-	go func() {
+	p.launchGoroutine(func() {
 		defer p.recoverFromPanic()
 
 		if p.inbound {
@@ -3075,7 +3105,7 @@ func (p *Peer) start() error {
 		} else {
 			negotiateErr <- p.negotiateOutboundProtocol()
 		}
-	}()
+	})
 
 	// Negotiate the protocol within the specified negotiateTimeout.
 	select {
@@ -3094,11 +3124,11 @@ func (p *Peer) start() error {
 
 	// The protocol has been negotiated successfully so start processing input
 	// and output messages.
-	go p.stallHandler()
-	go p.inHandler()
-	go p.queueHandler()
-	go p.outHandler()
-	go p.pingHandler()
+	p.launchGoroutine(p.stallHandler)
+	p.launchGoroutine(p.inHandler)
+	p.launchGoroutine(p.queueHandler)
+	p.launchGoroutine(p.outHandler)
+	p.launchGoroutine(p.pingHandler)
 
 	return nil
 }
@@ -3106,8 +3136,19 @@ func (p *Peer) start() error {
 // AssociateConnection associates the given conn to the peer.   Calling this
 // function when the peer is already connected will have no effect.
 func (p *Peer) AssociateConnection(conn net.Conn) {
+	p.lifecycleMtx.Lock()
+
+	// A connection associated after shutdown cannot be serviced.  Close it so
+	// the caller does not leak the transport.
+	if atomic.LoadInt32(&p.disconnect) != 0 {
+		p.lifecycleMtx.Unlock()
+		_ = conn.Close()
+		return
+	}
+
 	// Already connected?
 	if !atomic.CompareAndSwapInt32(&p.connected, 0, 1) {
+		p.lifecycleMtx.Unlock()
 		return
 	}
 
@@ -3123,6 +3164,7 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 		na, err := newNetAddress(p.conn.RemoteAddr(), p.services)
 		if err != nil {
 			log.Errorf("Cannot create remote net address: %v", err)
+			p.lifecycleMtx.Unlock()
 			p.Disconnect()
 			return
 		}
@@ -3134,20 +3176,31 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 		p.na = currentNa
 	}
 
-	go func() {
+	p.launchGoroutine(func() {
 		if err := p.start(); err != nil {
 			log.Debugf("Cannot start peer %v: %v", p, err)
 			p.Disconnect()
 		}
-	}()
+	})
+	p.lifecycleMtx.Unlock()
 }
 
-// WaitForDisconnect waits until the peer has completely disconnected and all
-// resources are cleaned up.  This will happen if either the local or remote
-// side has been disconnected or the peer is forcibly disconnected via
-// Disconnect.
+// WaitForDisconnect waits until the peer has disconnected and its connection
+// and protocol handler goroutines have exited.  This will happen if either the
+// local or remote side has disconnected or the peer is forcibly disconnected
+// via Disconnect.
+//
+// This method must not be called synchronously from a message listener because
+// listeners execute in the input handler that this method waits for.
 func (p *Peer) WaitForDisconnect() {
 	<-p.quit
+
+	// Synchronize with AssociateConnection so the initial lifecycle goroutine
+	// is registered before waiting.  That goroutine remains registered while
+	// start adds the negotiation and handler goroutines.
+	p.lifecycleMtx.Lock()
+	p.lifecycleWg.Wait()
+	p.lifecycleMtx.Unlock()
 }
 
 // ShouldDowngradeToV1 is retained for the old transport downgrade hook.

@@ -724,6 +724,18 @@ func TestOutboundPeer(t *testing.T) {
 	p2.Disconnect()
 }
 
+// TestAssociateConnectionInvalidRemoteAddress ensures the inbound connection
+// setup error path can disconnect without deadlocking peer lifecycle cleanup.
+func TestAssociateConnectionInvalidRemoteAddress(t *testing.T) {
+	p := peer.NewInboundPeer(&peer.Config{})
+	p.AssociateConnection(&conn{raddr: "invalid-address"})
+	p.WaitForDisconnect()
+
+	if p.Connected() {
+		t.Fatal("peer remained connected after rejecting its remote address")
+	}
+}
+
 // Tests that the node disconnects from peers with an unsupported protocol
 // version.
 func TestUnsupportedVersionPeer(t *testing.T) {

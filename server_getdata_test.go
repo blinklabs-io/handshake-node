@@ -300,6 +300,7 @@ func connectServerTestPeerWithWriteGate(t *testing.T, sp *serverPeer,
 	cleanup := func() {
 		sp.Disconnect()
 		remote.Close()
+		sp.WaitForDisconnect()
 	}
 
 	return remote, cleanup
