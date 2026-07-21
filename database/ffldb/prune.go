@@ -12,7 +12,6 @@ import (
 
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 )
 
 // prunePhysicalCleanupError marks failures to unlink block files or sync the
@@ -46,8 +45,6 @@ var (
 	pruneStateKey = bucketizedKey(metadataBucketID, []byte("ffldb-prune-state"))
 	prunedKey     = bucketizedKey(metadataBucketID, []byte("ffldb-pruned"))
 	prunedValue   = []byte{1}
-
-	syncWriteOptions = &opt.WriteOptions{Sync: true}
 )
 
 // pruneStage identifies the durability boundaries in a pruning commit.  The
