@@ -253,13 +253,13 @@ func TestPinnedHsdRelayReorgAndRecovery(t *testing.T) {
 
 	hsdRPC := &liveRPCClient{
 		url:  fmt.Sprintf("http://127.0.0.1:%d/", hsdHTTPPort),
-		http: &http.Client{Timeout: 2 * time.Second},
+		http: &http.Client{},
 	}
 	nodeRPC := &liveRPCClient{
 		url:  fmt.Sprintf("http://127.0.0.1:%d/", nodeRPCPort),
 		user: interopRPCUser,
 		pass: interopRPCPass,
-		http: &http.Client{Timeout: 2 * time.Second},
+		http: &http.Client{},
 	}
 	t.Cleanup(hsdRPC.closeIdleConnections)
 	t.Cleanup(nodeRPC.closeIdleConnections)
@@ -356,10 +356,11 @@ func waitForLiveRPC(t *testing.T, client *liveRPCClient,
 	process *liveProcess, timeout time.Duration) {
 
 	t.Helper()
-	waitForCondition(t, process, timeout, "RPC readiness", func() (bool, error) {
-		_, err := client.call(context.Background(), "getblockcount")
-		return err == nil, err
-	})
+	waitForCondition(t, process, timeout, "RPC readiness",
+		func(ctx context.Context) (bool, error) {
+			_, err := client.call(ctx, "getblockcount")
+			return err == nil, err
+		})
 }
 
 func waitForPeerCount(t *testing.T, client *liveRPCClient,
@@ -367,8 +368,9 @@ func waitForPeerCount(t *testing.T, client *liveRPCClient,
 
 	t.Helper()
 	waitForCondition(t, process, timeout,
-		fmt.Sprintf("%d connected peer(s)", want), func() (bool, error) {
-			result, err := client.call(context.Background(), "getpeerinfo")
+		fmt.Sprintf("%d connected peer(s)", want),
+		func(ctx context.Context) (bool, error) {
+			result, err := client.call(ctx, "getpeerinfo")
 			if err != nil {
 				return false, err
 			}
@@ -433,7 +435,7 @@ func callLiveRPC(t *testing.T, client *liveRPCClient, method string,
 	params ...any) json.RawMessage {
 
 	t.Helper()
-	result, err := client.call(context.Background(), method, params...)
+	result, err := client.call(t.Context(), method, params...)
 	if err != nil {
 		t.Fatalf("%s: %v", method, err)
 	}
@@ -447,9 +449,8 @@ func waitForMatchingTip(t *testing.T, client *liveRPCClient,
 	t.Helper()
 	waitForCondition(t, process, timeout,
 		fmt.Sprintf("tip %d:%s", wantHeight, wantHash),
-		func() (bool, error) {
-			heightResult, err := client.call(context.Background(),
-				"getblockcount")
+		func(ctx context.Context) (bool, error) {
+			heightResult, err := client.call(ctx, "getblockcount")
 			if err != nil {
 				return false, err
 			}
@@ -461,8 +462,7 @@ func waitForMatchingTip(t *testing.T, client *liveRPCClient,
 				return false, nil
 			}
 
-			hashResult, err := client.call(context.Background(),
-				"getblockhash", wantHeight)
+			hashResult, err := client.call(ctx, "getblockhash", wantHeight)
 			if err != nil {
 				return false, err
 			}
@@ -476,32 +476,46 @@ func waitForMatchingTip(t *testing.T, client *liveRPCClient,
 
 func waitForCondition(t *testing.T, process *liveProcess,
 	timeout time.Duration, description string,
-	condition func() (bool, error)) {
+	condition func(context.Context) (bool, error)) {
 
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+	poll := time.NewTicker(50 * time.Millisecond)
+	defer poll.Stop()
+
 	var lastErr error
-	for time.Now().Before(deadline) {
+	for {
 		if err := process.runningError(); err != nil {
 			t.Fatalf("waiting for %s: %v\n%s log:\n%s",
 				description, err, process.name, process.logs.String())
 		}
 
-		ok, err := condition()
+		ok, err := condition(ctx)
 		if err != nil {
-			lastErr = err
-		} else if ok {
-			return
+			ctxErr := ctx.Err()
+			if lastErr == nil || ctxErr == nil || !errors.Is(err, ctxErr) {
+				lastErr = err
+			}
+		} else {
+			lastErr = nil
+			if ok {
+				return
+			}
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
 
-	if lastErr != nil {
-		t.Fatalf("timed out waiting for %s: %v\n%s log:\n%s",
-			description, lastErr, process.name, process.logs.String())
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				t.Fatalf("timed out waiting for %s: %v\n%s log:\n%s",
+					description, lastErr, process.name,
+					process.logs.String())
+			}
+			t.Fatalf("timed out waiting for %s\n%s log:\n%s",
+				description, process.name, process.logs.String())
+		case <-poll.C:
+		}
 	}
-	t.Fatalf("timed out waiting for %s\n%s log:\n%s",
-		description, process.name, process.logs.String())
 }
 
 func assertNodeChainTips(t *testing.T, client *liveRPCClient,
