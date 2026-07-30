@@ -21,7 +21,9 @@ The current release is 0.2.2-rc1, a mainnet release candidate. It includes:
 - Blake2b/SHA3 Handshake proof-of-work and 236-byte block headers.
 - Handshake transaction outputs with address and covenant data.
 - Name covenant validation, Urkel-backed name state, and name proof RPCs.
-- Brontide P2P transport with plaintext fallback for compatibility work.
+- Brontide P2P transport with authenticated inbound negotiation. Discovered
+  outbound peers remain plaintext because address gossip is not a trusted
+  identity-key source.
 - Mempool, mining, `getblocktemplate`, coinbase proof handling, and a Stratum
   v1 MVP server.
 - Authenticated JSON-RPC, websocket notifications, unsigned covenant

@@ -116,7 +116,7 @@ type config struct {
 	BlockMinWeight       uint32        `long:"blockminweight" description:"Minimum block weight to be used when creating a block"`
 	BlockPrioritySize    uint32        `long:"blockprioritysize" description:"Size in bytes for high-priority/low-fee transactions when creating a block"`
 	BlocksOnly           bool          `long:"blocksonly" description:"Do not accept transactions from remote peers."`
-	BrontideTransport    bool          `long:"brontide" description:"Enable Handshake Brontide encrypted P2P transport with plaintext fallback"`
+	BrontideTransport    bool          `long:"brontide" description:"Enable Handshake Brontide encrypted P2P transport for inbound connections and explicitly keyed outbound peers; discovered outbound peers remain plaintext"`
 	BrontideKey          string        `long:"brontidekey" description:"Path to the Brontide node identity private key"`
 	ConfigFile           string        `short:"C" long:"configfile" description:"Path to configuration file"`
 	ConnectPeers         []string      `long:"connect" description:"Connect only to the specified peers at startup"`
