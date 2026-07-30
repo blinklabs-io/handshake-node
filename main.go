@@ -23,6 +23,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/limits"
 	"github.com/blinklabs-io/handshake-node/ossec"
+	"go.uber.org/automaxprocs/maxprocs"
 )
 
 const (
@@ -126,6 +127,13 @@ func hnsMain(serverChan chan<- *server) error {
 			logRotator.Close()
 		}
 	}()
+
+	// Configure max processes with our logger wrapper, toss undo func.
+	_, err = maxprocs.Set(maxprocs.Logger(hnsLog.Infof))
+	if err != nil {
+		hnsLog.Errorf("maxprocs setup failed: %v", err)
+		return err
+	}
 
 	// Get a channel that will be closed when a shutdown signal has been
 	// triggered either from an OS signal such as SIGINT (Ctrl+C) or from

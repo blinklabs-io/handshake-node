@@ -122,9 +122,22 @@ jobs:
           fi
           startup_output="$(docker run --rm \
             --platform linux/${{ matrix.arch }} \
+            -e GOMAXPROCS=2 \
             handshake-node:ci-${{ matrix.arch }} --dropaddrindex 2>&1)"
           printf '%s\n' "${startup_output}"
+          grep -Fq 'maxprocs: Honoring GOMAXPROCS="2"' \
+            <<<"${startup_output}"
           grep -q 'RPC service is disabled' <<<"${startup_output}"
+          quota_output="$(docker run --rm \
+            --platform linux/${{ matrix.arch }} \
+            --cpus=2 \
+            --entrypoint /bin/sh \
+            handshake-node:ci-${{ matrix.arch }} -ec \
+            'unset GOMAXPROCS; exec /bin/handshake-node --dropaddrindex' 2>&1)"
+          printf '%s\n' "${quota_output}"
+          grep -Fq \
+            'maxprocs: Updating GOMAXPROCS=2: determined from CPU quota' \
+            <<<"${quota_output}"
       - name: scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
         with:
