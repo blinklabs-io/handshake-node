@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -2752,6 +2753,57 @@ func TestAncestorsDescendants(t *testing.T) {
 				descendantHash)
 		}
 	}
+}
+
+// TestMempoolAncestorLimit ensures the pool accepts a dependency chain up to
+// the Handshake policy limit and rejects the next descendant.
+func TestMempoolAncestorLimit(t *testing.T) {
+	t.Parallel()
+
+	harness, outputs, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	ctx := &testContext{t, harness}
+
+	spend := outputs[0]
+	for i := 0; i < MaxMempoolAncestors; i++ {
+		tx := ctx.addSignedTx(
+			[]spendableOutput{spend}, 1, hnsutil.DooPerHNS,
+			false, false,
+		)
+		spend = txOutToSpendableOut(tx, 0)
+	}
+
+	tx, err := harness.CreateSignedTx(
+		[]spendableOutput{spend}, 1, hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("unable to create over-limit transaction: %v", err)
+	}
+
+	accepted, err := harness.txPool.ProcessTransaction(
+		tx, true, false, 0,
+	)
+	if err == nil {
+		t.Fatal("expected over-limit transaction to be rejected")
+	}
+	if accepted != nil {
+		t.Fatalf("expected no accepted transactions, got %d", len(accepted))
+	}
+	if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectNonstandard {
+
+		t.Fatalf("expected nonstandard reject code, got %v", err)
+	}
+	want := fmt.Sprintf(
+		"too many unconfirmed ancestors: %d > %d",
+		MaxMempoolAncestors+1, MaxMempoolAncestors,
+	)
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("unexpected rejection: %v", err)
+	}
+	testPoolMembership(ctx, tx, false, false)
 }
 
 // TestRBF tests the different cases required for a transaction to properly

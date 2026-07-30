@@ -53,6 +53,11 @@ const (
 	// replacement.
 	MaxReplacementEvictions = 100
 
+	// MaxMempoolAncestors is the maximum number of transactions allowed in
+	// an unconfirmed dependency chain, including the transaction being
+	// accepted. This matches the default Handshake mempool policy.
+	MaxMempoolAncestors = 50
+
 	// Transactions smaller than 65 non-witness bytes are not relayed to
 	// mitigate CVE-2017-12842.
 	MinStandardTxNonWitnessSize = 65
@@ -2563,6 +2568,9 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 		}
 		return nil, err
 	}
+	if err := mp.checkAncestorLimit(tx); err != nil {
+		return nil, err
+	}
 
 	// If the transaction has any conflicts, then we're processing a
 	// potential replacement.  Determine the full replacement set before
@@ -2654,6 +2662,46 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 	}
 
 	return result, nil
+}
+
+// checkAncestorLimit rejects transactions whose unconfirmed dependency chain
+// exceeds the Handshake mempool policy limit. The bounded iterative traversal
+// avoids recursively walking attacker-controlled transaction chains.
+//
+// This function MUST be called with the mempool lock held (for reads).
+func (mp *TxPool) checkAncestorLimit(tx *hnsutil.Tx) error {
+	ancestors := make(map[chainhash.Hash]struct{}, MaxMempoolAncestors)
+	pending := []*hnsutil.Tx{tx}
+
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		for _, txIn := range current.MsgTx().TxIn {
+			parent, ok := mp.pool[txIn.PreviousOutPoint.Hash]
+			if !ok {
+				continue
+			}
+
+			parentHash := *parent.Tx.Hash()
+			if _, seen := ancestors[parentHash]; seen {
+				continue
+			}
+			ancestors[parentHash] = struct{}{}
+
+			chainLength := len(ancestors) + 1
+			if chainLength > MaxMempoolAncestors {
+				str := fmt.Sprintf("transaction %v has too many "+
+					"unconfirmed ancestors: %d > %d", tx.Hash(),
+					chainLength, MaxMempoolAncestors)
+				return txRuleError(wire.RejectNonstandard, str)
+			}
+
+			pending = append(pending, parent.Tx)
+		}
+	}
+
+	return nil
 }
 
 // validateSegWitDeployment checks that when a transaction has witness data,
