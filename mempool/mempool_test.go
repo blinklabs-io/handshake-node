@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync"
@@ -2804,6 +2805,345 @@ func TestMempoolAncestorLimit(t *testing.T) {
 		t.Fatalf("unexpected rejection: %v", err)
 	}
 	testPoolMembership(ctx, tx, false, false)
+}
+
+func TestMempoolExpiresTransactionPackages(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	ctx := &testContext{t, harness}
+	now := time.Unix(1_700_000_000, 0)
+	harness.txPool.cfg.Now = func() time.Time { return now }
+	harness.txPool.cfg.Policy.MempoolExpiry = DefaultMempoolExpiry
+	harness.txPool.nextMempoolExpireScan =
+		now.Add(mempoolExpireScanInterval)
+
+	funding := ctx.addCoinbaseTx(2)
+	parent := ctx.addSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 0)},
+		1, hnsutil.DooPerHNS, false, false,
+	)
+	child := ctx.addSignedTx(
+		[]spendableOutput{txOutToSpendableOut(parent, 0)},
+		1, hnsutil.DooPerHNS, false, false,
+	)
+
+	now = now.Add(DefaultMempoolExpiry)
+	fresh := ctx.addSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 1)},
+		1, hnsutil.DooPerHNS, false, false,
+	)
+
+	testPoolMembership(ctx, parent, false, false)
+	testPoolMembership(ctx, child, false, false)
+	testPoolMembership(ctx, fresh, false, true)
+	if usage, limit := harness.txPool.MemoryUsage(); usage != txMemoryUsage(fresh) {
+		t.Fatalf("mempool usage after expiry = %d, want %d",
+			usage, txMemoryUsage(fresh))
+	} else if limit != DefaultMaxMempoolSize {
+		t.Fatalf("mempool limit = %d, want %d",
+			limit, DefaultMaxMempoolSize)
+	}
+	harness.txPool.RemoveTransaction(fresh, true)
+	if usage, _ := harness.txPool.MemoryUsage(); usage != 0 {
+		t.Fatalf("mempool usage after removal = %d, want 0", usage)
+	}
+}
+
+func TestMempoolEvictsLowestFeePackageAtSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	ctx := &testContext{t, harness}
+	funding := ctx.addCoinbaseTx(3)
+
+	lowFee, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 0)},
+		1, hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("create low-fee transaction: %v", err)
+	}
+	highFee, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 1)},
+		1, 2*hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("create high-fee transaction: %v", err)
+	}
+
+	if _, err := harness.txPool.ProcessTransaction(
+		lowFee, true, false, 0,
+	); err != nil {
+		t.Fatalf("process low-fee transaction: %v", err)
+	}
+	harness.txPool.mtx.Lock()
+	harness.txPool.cfg.Policy.MaxMempoolSize =
+		harness.txPool.memoryUsage + txMemoryUsage(highFee) - 1
+	maxSize := harness.txPool.cfg.Policy.MaxMempoolSize
+	harness.txPool.mtx.Unlock()
+
+	if _, err := harness.txPool.ProcessTransaction(
+		highFee, true, false, 0,
+	); err != nil {
+		t.Fatalf("process high-fee transaction: %v", err)
+	}
+
+	testPoolMembership(ctx, lowFee, false, false)
+	testPoolMembership(ctx, highFee, false, true)
+
+	rejected, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 2)},
+		1, hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("create rejected transaction: %v", err)
+	}
+	if accepted, err := harness.txPool.ProcessTransaction(
+		rejected, true, false, 0,
+	); err == nil {
+		t.Fatal("low-fee transaction was accepted into a full mempool")
+	} else if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectInsufficientFee {
+
+		t.Fatalf("full mempool reject code = %v, want insufficient fee",
+			err)
+	} else if accepted != nil {
+		t.Fatalf("full mempool accepted %d transactions", len(accepted))
+	}
+	testPoolMembership(ctx, rejected, false, false)
+	testPoolMembership(ctx, highFee, false, true)
+
+	harness.txPool.mtx.RLock()
+	usage := harness.txPool.memoryUsage
+	harness.txPool.mtx.RUnlock()
+	if target := maxSize - maxSize/10; usage > target {
+		t.Fatalf("mempool usage = %d, want at most %d", usage, target)
+	}
+}
+
+func TestMempoolEvictionProtectsHighFeeDescendantPackage(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	ctx := &testContext{t, harness}
+	funding := ctx.addCoinbaseTx(2)
+
+	parent := ctx.addSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 0)},
+		1, hnsutil.DooPerHNS, false, false,
+	)
+	child := ctx.addSignedTx(
+		[]spendableOutput{txOutToSpendableOut(parent, 0)},
+		1, 100*hnsutil.DooPerHNS, false, false,
+	)
+	mediumFee, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 1)},
+		1, 2*hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("create medium-fee transaction: %v", err)
+	}
+
+	harness.txPool.mtx.Lock()
+	harness.txPool.cfg.Policy.MaxMempoolSize =
+		harness.txPool.memoryUsage + txMemoryUsage(mediumFee) - 1
+	harness.txPool.mtx.Unlock()
+
+	if accepted, err := harness.txPool.ProcessTransaction(
+		mediumFee, true, false, 0,
+	); err == nil {
+		t.Fatal("medium-fee transaction displaced a higher-fee package")
+	} else if accepted != nil {
+		t.Fatalf("full mempool accepted %d transactions", len(accepted))
+	}
+
+	testPoolMembership(ctx, parent, false, true)
+	testPoolMembership(ctx, child, false, true)
+	testPoolMembership(ctx, mediumFee, false, false)
+}
+
+func TestCompareFeeRateAvoidsOverflow(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		feeA, feeB   int64
+		sizeA, sizeB uint64
+		want         int
+	}{
+		{
+			name:  "less",
+			feeA:  1,
+			sizeA: 2,
+			feeB:  2,
+			sizeB: 3,
+			want:  -1,
+		},
+		{
+			name:  "equal",
+			feeA:  5,
+			sizeA: 10,
+			feeB:  1,
+			sizeB: 2,
+			want:  0,
+		},
+		{
+			name:  "cross product exceeds uint64",
+			feeA:  math.MaxInt64,
+			sizeA: 2,
+			feeB:  math.MaxInt64 - 1,
+			sizeB: 3,
+			want:  1,
+		},
+		{
+			name:  "zero size is one",
+			feeA:  1,
+			sizeA: 0,
+			feeB:  1,
+			sizeB: 2,
+			want:  1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := compareFeeRate(
+				test.feeA, test.sizeA, test.feeB, test.sizeB,
+			); got != test.want {
+
+				t.Fatalf("compareFeeRate = %d, want %d",
+					got, test.want)
+			}
+		})
+	}
+}
+
+func TestMempoolDoesNotReturnEvictedOrphanPackage(t *testing.T) {
+	t.Parallel()
+
+	harness, _, err := newPoolHarness(&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("unable to create test pool: %v", err)
+	}
+	ctx := &testContext{t, harness}
+	funding := ctx.addCoinbaseTx(1)
+	parent, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(funding, 0)},
+		1, hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("create parent transaction: %v", err)
+	}
+	child, err := harness.CreateSignedTx(
+		[]spendableOutput{txOutToSpendableOut(parent, 0)},
+		1, hnsutil.DooPerHNS, false,
+	)
+	if err != nil {
+		t.Fatalf("create child transaction: %v", err)
+	}
+
+	if accepted, err := harness.txPool.ProcessTransaction(
+		child, true, false, 0,
+	); err != nil {
+		t.Fatalf("store child orphan: %v", err)
+	} else if accepted != nil {
+		t.Fatalf("accepted orphan package: %d transactions", len(accepted))
+	}
+	testPoolMembership(ctx, child, true, false)
+
+	harness.txPool.mtx.Lock()
+	harness.txPool.cfg.Policy.MaxMempoolSize =
+		txMemoryUsage(parent) + txMemoryUsage(child) - 1
+	harness.txPool.mtx.Unlock()
+	accepted, err := harness.txPool.ProcessTransaction(
+		parent, true, false, 0,
+	)
+	if err == nil {
+		t.Fatal("over-limit orphan package was accepted")
+	}
+	if accepted != nil {
+		t.Fatalf("returned %d transactions from an evicted package",
+			len(accepted))
+	}
+	if code, ok := extractRejectCode(err); !ok ||
+		code != wire.RejectInsufficientFee {
+
+		t.Fatalf("package reject code = %v, want insufficient fee", err)
+	}
+	testPoolMembership(ctx, parent, false, false)
+	testPoolMembership(ctx, child, false, false)
+}
+
+func TestMempoolSizeLimitIncludesCoinbaseProofs(t *testing.T) {
+	t.Parallel()
+
+	mp := New(&Config{})
+	addr := wire.Address{
+		Version: 0,
+		Hash:    bytes.Repeat([]byte{0x01}, 20),
+	}
+	lowFee := mining.CoinbaseProof{
+		Witness: mempoolAirdropProof(t, 0, addr, 100, 1),
+		Output:  wire.NewTxOut(99, addr, wire.Covenant{}),
+		Fee:     1,
+	}
+	highFee := mining.CoinbaseProof{
+		Witness: mempoolAirdropProof(t, 1, addr, 100, 10),
+		Output:  wire.NewTxOut(90, addr, wire.Covenant{}),
+		Fee:     10,
+	}
+
+	if _, err := mp.AddCoinbaseProof(lowFee); err != nil {
+		t.Fatalf("add low-fee proof: %v", err)
+	}
+	mp.mtx.Lock()
+	mp.cfg.Policy.MaxMempoolSize =
+		mp.memoryUsage + coinbaseProofMemoryUsage(highFee) - 1
+	mp.mtx.Unlock()
+	highStoredHash, err := mp.AddCoinbaseProof(highFee)
+	if err != nil {
+		t.Fatalf("add high-fee proof: %v", err)
+	}
+
+	lowHash := blockchain.RawProofHash(lowFee.Witness)
+	highHash := blockchain.RawProofHash(highFee.Witness)
+	if mp.HaveCoinbaseProof(&lowHash) {
+		t.Fatal("low-fee proof was not evicted")
+	}
+	if !mp.HaveCoinbaseProof(&highHash) {
+		t.Fatal("high-fee proof was evicted")
+	}
+
+	rejected := mining.CoinbaseProof{
+		Witness: mempoolAirdropProof(t, 2, addr, 100, 0),
+		Output:  wire.NewTxOut(100, addr, wire.Covenant{}),
+	}
+	if _, err := mp.AddCoinbaseProof(rejected); err == nil {
+		t.Fatal("low-fee proof was accepted into a full mempool")
+	}
+	rejectedHash := blockchain.RawProofHash(rejected.Witness)
+	if mp.HaveCoinbaseProof(&rejectedHash) {
+		t.Fatal("rejected proof remains in the mempool")
+	}
+	if !mp.HaveCoinbaseProof(&highHash) {
+		t.Fatal("rejected proof displaced the high-fee proof")
+	}
+	if !mp.RemoveCoinbaseProof(highStoredHash) {
+		t.Fatal("failed to remove high-fee proof")
+	}
+	if usage, _ := mp.MemoryUsage(); usage != 0 {
+		t.Fatalf("mempool usage after proof removal = %d, want 0", usage)
+	}
 }
 
 // TestRBF tests the different cases required for a transaction to properly

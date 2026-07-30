@@ -203,6 +203,10 @@ func renderPrometheusMetrics(s *server) string {
 		"Number of connected peers.", "gauge")
 	writeMetricHeader(&b, "handshake_mempool_transactions",
 		"Number of transactions in the mempool.", "gauge")
+	writeMetricHeader(&b, "handshake_mempool_memory_usage_bytes",
+		"Aggregate retained-memory estimate for the mempool.", "gauge")
+	writeMetricHeader(&b, "handshake_mempool_memory_limit_bytes",
+		"Configured mempool retained-memory estimate limit.", "gauge")
 	writeMetricHeader(&b, "handshake_mempool_fee_rate_doo_per_kb",
 		"Mempool fee rate summary in dollarydoos per kilobyte.", "gauge")
 	writeMetricHeader(&b, "handshake_mining_hashes_per_second",
@@ -339,6 +343,7 @@ func syncProgress(bestHeight int32, peers []*peer.StatsSnap, current bool) float
 func writeMempoolMetrics(b *strings.Builder, s *server) {
 	if s.txMemPool == nil {
 		writeSample(b, "handshake_mempool_transactions", nil, 0)
+		writeMempoolMemoryMetrics(b, 0, 0)
 		for _, stat := range []string{"min", "avg", "max"} {
 			writeSample(b, "handshake_mempool_fee_rate_doo_per_kb",
 				map[string]string{"stat": stat}, 0)
@@ -347,7 +352,9 @@ func writeMempoolMetrics(b *strings.Builder, s *server) {
 	}
 
 	descs := s.txMemPool.TxDescs()
+	usage, limit := s.txMemPool.MemoryUsage()
 	writeSample(b, "handshake_mempool_transactions", nil, float64(len(descs)))
+	writeMempoolMemoryMetrics(b, usage, limit)
 	if len(descs) == 0 {
 		for _, stat := range []string{"min", "avg", "max"} {
 			writeSample(b, "handshake_mempool_fee_rate_doo_per_kb",
@@ -375,6 +382,13 @@ func writeMempoolMetrics(b *strings.Builder, s *server) {
 		map[string]string{"stat": "avg"}, float64(sumFee)/float64(len(descs)))
 	writeSample(b, "handshake_mempool_fee_rate_doo_per_kb",
 		map[string]string{"stat": "max"}, float64(maxFee))
+}
+
+func writeMempoolMemoryMetrics(b *strings.Builder, usage, limit uint64) {
+	writeSample(b, "handshake_mempool_memory_usage_bytes", nil,
+		float64(usage))
+	writeSample(b, "handshake_mempool_memory_limit_bytes", nil,
+		float64(limit))
 }
 
 func writeP2PMessageMetrics(b *strings.Builder,

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"math/bits"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +59,18 @@ const (
 	// an unconfirmed dependency chain, including the transaction being
 	// accepted. This matches the default Handshake mempool policy.
 	MaxMempoolAncestors = 50
+
+	// DefaultMaxMempoolSize is hsd's default aggregate mempool memory
+	// estimate limit.
+	DefaultMaxMempoolSize = 100 * 1000 * 1000
+
+	// DefaultMempoolExpiry is hsd's default maximum age for an unconfirmed
+	// transaction package.
+	DefaultMempoolExpiry = 72 * time.Hour
+
+	// mempoolExpireScanInterval bounds the cost of expiry scans without
+	// relying on a background timer.
+	mempoolExpireScanInterval = 5 * time.Minute
 
 	// Transactions smaller than 65 non-witness bytes are not relayed to
 	// mitigate CVE-2017-12842.
@@ -131,6 +145,10 @@ type Config struct {
 	// FeeEstimator provides a feeEstimator. If it is not nil, the mempool
 	// records all new transactions it observes into the feeEstimator.
 	FeeEstimator *FeeEstimator
+
+	// Now supplies wall-clock time for transaction aging. It defaults to
+	// time.Now and can be replaced by tests.
+	Now func() time.Time
 }
 
 // Policy houses the policy (configuration parameters) which is used to
@@ -176,6 +194,14 @@ type Policy struct {
 	// transactions using the Replace-By-Fee (RBF) signaling policy into
 	// the mempool.
 	RejectReplacement bool
+
+	// MaxMempoolSize is the maximum aggregate memory estimate for accepted
+	// transactions, claims, and airdrops.
+	MaxMempoolSize uint64
+
+	// MempoolExpiry is the maximum age for an unconfirmed transaction
+	// package.
+	MempoolExpiry time.Duration
 }
 
 // TxDesc is a descriptor containing a transaction in the mempool along with
@@ -186,6 +212,9 @@ type TxDesc struct {
 	// StartingPriority is the priority of the transaction when it was added
 	// to the pool.
 	StartingPriority float64
+
+	memoryUsage  uint64
+	evictionSize uint64
 }
 
 // NameValidationView validates ordered Handshake name covenant transitions
@@ -199,6 +228,8 @@ type coinbaseProofEntry struct {
 	witnessHash chainhash.Hash
 	proof       mining.CoinbaseProof
 	policy      coinbaseProofPolicy
+	added       time.Time
+	memoryUsage uint64
 }
 
 type coinbaseProofKind uint8
@@ -250,6 +281,7 @@ type TxPool struct {
 	coinbaseProofsByWitness map[chainhash.Hash]int
 	coinbaseClaims          map[chainhash.Hash]chainhash.Hash
 	coinbaseAirdrops        map[uint32]chainhash.Hash
+	memoryUsage             uint64
 	pennyTotal              float64 // exponentially decaying total for penny spends.
 	lastPennyUnix           int64   // unix time of last ``penny spend''
 
@@ -257,7 +289,102 @@ type TxPool struct {
 	// scanned in order to evict orphans.  This is NOT a hard deadline as
 	// the scan will only run when an orphan is added to the pool as opposed
 	// to on an unconditional timer.
-	nextExpireScan time.Time
+	nextExpireScan        time.Time
+	nextMempoolExpireScan time.Time
+}
+
+func (mp *TxPool) now() time.Time {
+	if mp.cfg.Now != nil {
+		return mp.cfg.Now()
+	}
+	return time.Now()
+}
+
+func saturatingAddUint64(a, b uint64) uint64 {
+	if math.MaxUint64-a < b {
+		return math.MaxUint64
+	}
+	return a + b
+}
+
+func saturatingAddInt64(a, b int64) int64 {
+	if b > 0 && a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
+// txMemoryUsage returns a conservative estimate of the retained Go heap for a
+// mempool transaction. Serialized bytes account for all variable-sized data;
+// the per-object allowances account for descriptors, pointers, slice headers,
+// and map indexes.
+func txMemoryUsage(tx *hnsutil.Tx) uint64 {
+	msgTx := tx.MsgTx()
+	usage := uint64(msgTx.SerializeSize()) + 1024
+	usage = saturatingAddUint64(usage, uint64(len(msgTx.TxIn))*512)
+	usage = saturatingAddUint64(usage, uint64(len(msgTx.TxOut))*512)
+	for _, txIn := range msgTx.TxIn {
+		usage = saturatingAddUint64(
+			usage, uint64(len(txIn.Witness))*64,
+		)
+	}
+	for _, txOut := range msgTx.TxOut {
+		usage = saturatingAddUint64(
+			usage, uint64(len(txOut.Covenant.Items))*64,
+		)
+	}
+	return usage
+}
+
+func coinbaseProofMemoryUsage(proof mining.CoinbaseProof) uint64 {
+	usage := uint64(len(proof.Witness)) + 1024
+	if proof.Output == nil {
+		return usage
+	}
+	usage = saturatingAddUint64(
+		usage, uint64(proof.Output.SerializeSize()),
+	)
+	usage = saturatingAddUint64(
+		usage, uint64(len(proof.Output.Covenant.Items))*64,
+	)
+	return usage
+}
+
+func coinbaseProofEvictionSize(proof mining.CoinbaseProof) uint64 {
+	scale := uint64(blockchain.WitnessScaleFactor)
+	return max((uint64(len(proof.Witness))+scale-1)/scale, 1)
+}
+
+func (mp *TxPool) addMemoryUsage(usage uint64) {
+	mp.memoryUsage = saturatingAddUint64(mp.memoryUsage, usage)
+}
+
+func (mp *TxPool) subtractMemoryUsage(usage uint64) {
+	if usage >= mp.memoryUsage {
+		mp.memoryUsage = 0
+		return
+	}
+	mp.memoryUsage -= usage
+}
+
+// compareFeeRate compares feeA/sizeA with feeB/sizeB without overflowing.
+func compareFeeRate(feeA int64, sizeA uint64, feeB int64, sizeB uint64) int {
+	if sizeA == 0 {
+		sizeA = 1
+	}
+	if sizeB == 0 {
+		sizeB = 1
+	}
+	aHi, aLo := bits.Mul64(uint64(max(feeA, 0)), sizeB)
+	bHi, bLo := bits.Mul64(uint64(max(feeB, 0)), sizeA)
+	switch {
+	case aHi < bHi || aHi == bHi && aLo < bLo:
+		return -1
+	case aHi > bHi || aHi == bHi && aLo > bLo:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // Ensure the TxPool type implements the mining.TxSource interface.
@@ -565,6 +692,7 @@ func (mp *TxPool) removeTransaction(tx *hnsutil.Tx, removeRedeemers bool) {
 		for _, txIn := range txDesc.Tx.MsgTx().TxIn {
 			delete(mp.outpoints, txIn.PreviousOutPoint)
 		}
+		mp.subtractMemoryUsage(txDesc.memoryUsage)
 		delete(mp.pool, *txHash)
 		mp.removeNameOperationIndexes(txDesc.Tx)
 		atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
@@ -634,20 +762,24 @@ func (mp *TxPool) RemoveNameConflicts(tx *hnsutil.Tx) {
 //
 // This function MUST be called with the mempool lock held (for writes).
 func (mp *TxPool) addTransaction(utxoView *blockchain.UtxoViewpoint, tx *hnsutil.Tx, height int32, fee int64) *TxDesc {
+	now := mp.now()
 	// Add the transaction to the pool and mark the referenced outpoints
 	// as spent by the pool.
 	txD := &TxDesc{
 		TxDesc: mining.TxDesc{
 			Tx:       tx,
-			Added:    time.Now(),
+			Added:    now,
 			Height:   height,
 			Fee:      fee,
 			FeePerKB: fee * 1000 / GetTxVirtualSize(tx),
 		},
 		StartingPriority: mining.CalcPriority(tx.MsgTx(), utxoView, height),
+		memoryUsage:      txMemoryUsage(tx),
+		evictionSize:     uint64(GetTxVirtualSize(tx)),
 	}
 
 	mp.pool[*tx.Hash()] = txD
+	mp.addMemoryUsage(txD.memoryUsage)
 	for _, txIn := range tx.MsgTx().TxIn {
 		mp.outpoints[txIn.PreviousOutPoint] = tx
 	}
@@ -710,11 +842,21 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 			delete(mp.coinbaseProofsByWitness,
 				mp.coinbaseProofs[i].witnessHash)
 			mp.unindexCoinbaseProof(mp.coinbaseProofs[i])
+			mp.subtractMemoryUsage(mp.coinbaseProofs[i].memoryUsage)
 			mp.coinbaseProofs[i].proof = cloned
 			mp.coinbaseProofs[i].policy = policy
 			mp.coinbaseProofs[i].witnessHash = witnessHash
+			mp.coinbaseProofs[i].memoryUsage =
+				coinbaseProofMemoryUsage(cloned)
+			mp.addMemoryUsage(mp.coinbaseProofs[i].memoryUsage)
 			mp.coinbaseProofsByWitness[witnessHash] = i
 			mp.indexCoinbaseProof(hash, policy)
+			if mp.limitMempoolSize(nil, &hash) {
+				return chainhash.Hash{}, txRuleError(
+					wire.RejectInsufficientFee,
+					"coinbase proof evicted because the mempool is full",
+				)
+			}
 			atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 			return hash, nil
 		}
@@ -733,9 +875,18 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 		witnessHash: witnessHash,
 		proof:       cloned,
 		policy:      policy,
+		added:       mp.now(),
+		memoryUsage: coinbaseProofMemoryUsage(cloned),
 	})
+	mp.addMemoryUsage(mp.coinbaseProofs[index].memoryUsage)
 	mp.indexCoinbaseProof(hash, policy)
 	mp.coinbaseProofsByWitness[witnessHash] = index
+	if mp.limitMempoolSize(nil, &hash) {
+		return chainhash.Hash{}, txRuleError(
+			wire.RejectInsufficientFee,
+			"coinbase proof evicted because the mempool is full",
+		)
+	}
 	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 	return hash, nil
 }
@@ -762,6 +913,7 @@ func (mp *TxPool) removeCoinbaseProof(hash chainhash.Hash) bool {
 }
 
 func (mp *TxPool) removeCoinbaseProofAt(i int) {
+	mp.subtractMemoryUsage(mp.coinbaseProofs[i].memoryUsage)
 	mp.unindexCoinbaseProof(mp.coinbaseProofs[i])
 	delete(mp.coinbaseProofsByWitness, mp.coinbaseProofs[i].witnessHash)
 	copy(mp.coinbaseProofs[i:], mp.coinbaseProofs[i+1:])
@@ -1841,6 +1993,218 @@ func (mp *TxPool) txDescendants(tx *hnsutil.Tx,
 	return descendants
 }
 
+type txEvictionCandidate struct {
+	hash  chainhash.Hash
+	tx    *hnsutil.Tx
+	fee   int64
+	size  uint64
+	added time.Time
+}
+
+type proofEvictionCandidate struct {
+	hash  chainhash.Hash
+	fee   int64
+	size  uint64
+	added time.Time
+}
+
+func (mp *TxPool) hasUnconfirmedParent(tx *hnsutil.Tx) bool {
+	for _, txIn := range tx.MsgTx().TxIn {
+		if _, ok := mp.pool[txIn.PreviousOutPoint.Hash]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (mp *TxPool) txEvictionCandidate(
+	txDesc *TxDesc,
+) txEvictionCandidate {
+	fee := txDesc.Fee
+	size := txDesc.evictionSize
+	packageFee := fee
+	packageSize := size
+	for hash := range mp.txDescendants(txDesc.Tx, nil) {
+		descendant := mp.pool[hash]
+		if descendant == nil {
+			continue
+		}
+		packageFee = saturatingAddInt64(packageFee, descendant.Fee)
+		packageSize = saturatingAddUint64(
+			packageSize, descendant.evictionSize,
+		)
+	}
+
+	// Match hsd by protecting a root package when its descendants raise its
+	// cumulative fee rate above the root transaction's own rate.
+	if compareFeeRate(packageFee, packageSize, fee, size) > 0 {
+		fee = packageFee
+		size = packageSize
+	}
+
+	return txEvictionCandidate{
+		hash:  *txDesc.Tx.Hash(),
+		tx:    txDesc.Tx,
+		fee:   fee,
+		size:  size,
+		added: txDesc.Added,
+	}
+}
+
+func lessEvictionRate(
+	feeA int64,
+	sizeA uint64,
+	addedA time.Time,
+	hashA chainhash.Hash,
+	feeB int64,
+	sizeB uint64,
+	addedB time.Time,
+	hashB chainhash.Hash,
+) bool {
+	if cmp := compareFeeRate(feeA, sizeA, feeB, sizeB); cmp != 0 {
+		return cmp < 0
+	}
+	if !addedA.Equal(addedB) {
+		return addedA.Before(addedB)
+	}
+	return bytes.Compare(hashA[:], hashB[:]) < 0
+}
+
+func (mp *TxPool) addedEntryEvicted(
+	txHash, proofHash *chainhash.Hash,
+) bool {
+	if txHash != nil {
+		if _, ok := mp.pool[*txHash]; !ok {
+			return true
+		}
+	}
+	if proofHash != nil {
+		for i := range mp.coinbaseProofs {
+			if mp.coinbaseProofs[i].hash == *proofHash {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// limitMempoolSize expires old transaction packages and evicts the lowest-fee
+// packages and proofs until the aggregate memory estimate is at most 90% of
+// the configured limit. The headroom avoids repeated full-pool traversals.
+//
+// This function MUST be called with the mempool lock held (for writes).
+func (mp *TxPool) limitMempoolSize(
+	addedTxHash, addedProofHash *chainhash.Hash,
+) bool {
+	now := mp.now()
+	if !now.Before(mp.nextMempoolExpireScan) {
+		expired := make([]txEvictionCandidate, 0)
+		for _, txDesc := range mp.pool {
+			if mp.hasUnconfirmedParent(txDesc.Tx) {
+				continue
+			}
+			if now.Before(txDesc.Added.Add(mp.cfg.Policy.MempoolExpiry)) {
+				continue
+			}
+			expired = append(expired, txEvictionCandidate{
+				hash:  *txDesc.Tx.Hash(),
+				tx:    txDesc.Tx,
+				added: txDesc.Added,
+			})
+		}
+		sort.Slice(expired, func(i, j int) bool {
+			if !expired[i].added.Equal(expired[j].added) {
+				return expired[i].added.Before(expired[j].added)
+			}
+			return bytes.Compare(
+				expired[i].hash[:], expired[j].hash[:],
+			) < 0
+		})
+		for _, candidate := range expired {
+			if _, ok := mp.pool[candidate.hash]; ok {
+				log.Debugf("Removing transaction package %v from "+
+					"mempool because it expired", candidate.hash)
+				mp.removeTransaction(candidate.tx, true)
+			}
+		}
+		mp.nextMempoolExpireScan = now.Add(mempoolExpireScanInterval)
+	}
+
+	maxSize := mp.cfg.Policy.MaxMempoolSize
+	if mp.memoryUsage <= maxSize {
+		return mp.addedEntryEvicted(addedTxHash, addedProofHash)
+	}
+	target := maxSize - maxSize/10
+
+	txCandidates := make([]txEvictionCandidate, 0, len(mp.pool))
+	for _, txDesc := range mp.pool {
+		if !mp.hasUnconfirmedParent(txDesc.Tx) {
+			txCandidates = append(
+				txCandidates, mp.txEvictionCandidate(txDesc),
+			)
+		}
+	}
+	sort.Slice(txCandidates, func(i, j int) bool {
+		a, b := txCandidates[i], txCandidates[j]
+		return lessEvictionRate(
+			a.fee, a.size, a.added, a.hash,
+			b.fee, b.size, b.added, b.hash,
+		)
+	})
+	for _, candidate := range txCandidates {
+		if mp.memoryUsage <= target {
+			break
+		}
+		if _, ok := mp.pool[candidate.hash]; ok {
+			log.Debugf("Removing transaction package %v from mempool "+
+				"to enforce the memory limit", candidate.hash)
+			mp.removeTransaction(candidate.tx, true)
+		}
+	}
+
+	for _, kind := range []coinbaseProofKind{
+		coinbaseProofKindClaim,
+		coinbaseProofKindAirdrop,
+	} {
+		if mp.memoryUsage <= target {
+			break
+		}
+		proofCandidates := make([]proofEvictionCandidate, 0)
+		for _, entry := range mp.coinbaseProofs {
+			if entry.policy.kind != kind {
+				continue
+			}
+			proofCandidates = append(
+				proofCandidates,
+				proofEvictionCandidate{
+					hash:  entry.hash,
+					fee:   entry.proof.Fee,
+					size:  coinbaseProofEvictionSize(entry.proof),
+					added: entry.added,
+				},
+			)
+		}
+		sort.Slice(proofCandidates, func(i, j int) bool {
+			a, b := proofCandidates[i], proofCandidates[j]
+			return lessEvictionRate(
+				a.fee, a.size, a.added, a.hash,
+				b.fee, b.size, b.added, b.hash,
+			)
+		})
+		for _, candidate := range proofCandidates {
+			if mp.memoryUsage <= target {
+				break
+			}
+			log.Debugf("Removing coinbase proof %v from mempool to "+
+				"enforce the memory limit", candidate.hash)
+			mp.removeCoinbaseProof(candidate.hash)
+		}
+	}
+
+	return mp.addedEntryEvicted(addedTxHash, addedProofHash)
+}
+
 // txConflicts returns all of the unconfirmed transactions that would become
 // conflicts if we were to accept the given transaction into the mempool. An
 // unconfirmed conflict is known as a transaction that spends an output already
@@ -2024,7 +2388,9 @@ func (mp *TxPool) validateReplacement(tx *hnsutil.Tx,
 //
 // This function MUST be called with the mempool lock held (for writes).
 func (mp *TxPool) maybeAcceptTransaction(tx *hnsutil.Tx, isNew, rateLimit,
-	rejectDupOrphans bool) ([]*chainhash.Hash, *TxDesc, error) {
+	rejectDupOrphans, enforceSizeLimit bool) (
+	[]*chainhash.Hash, *TxDesc, error,
+) {
 
 	txHash := tx.Hash()
 
@@ -2056,6 +2422,13 @@ func (mp *TxPool) maybeAcceptTransaction(tx *hnsutil.Tx, isNew, rateLimit,
 		mp.removeTransaction(conflict, false)
 	}
 	txD := mp.addTransaction(r.utxoView, tx, r.bestHeight, int64(r.TxFee))
+	if enforceSizeLimit && mp.limitMempoolSize(txHash, nil) {
+		str := fmt.Sprintf(
+			"transaction %v evicted because the mempool is full",
+			txHash,
+		)
+		return nil, nil, txRuleError(wire.RejectInsufficientFee, str)
+	}
 
 	log.Debugf("Accepted transaction %v (pool size: %v)", txHash,
 		len(mp.pool))
@@ -2077,7 +2450,9 @@ func (mp *TxPool) maybeAcceptTransaction(tx *hnsutil.Tx, isNew, rateLimit,
 func (mp *TxPool) MaybeAcceptTransaction(tx *hnsutil.Tx, isNew, rateLimit bool) ([]*chainhash.Hash, *TxDesc, error) {
 	// Protect concurrent access.
 	mp.mtx.Lock()
-	hashes, txD, err := mp.maybeAcceptTransaction(tx, isNew, rateLimit, true)
+	hashes, txD, err := mp.maybeAcceptTransaction(
+		tx, isNew, rateLimit, true, true,
+	)
 	mp.mtx.Unlock()
 
 	return hashes, txD, err
@@ -2120,7 +2495,7 @@ func (mp *TxPool) processOrphans(acceptedTx *hnsutil.Tx) []*TxDesc {
 			// Potentially accept an orphan into the tx pool.
 			for _, tx := range orphans {
 				missing, txD, err := mp.maybeAcceptTransaction(
-					tx, true, true, false)
+					tx, true, true, false, false)
 				if err != nil {
 					// The orphan is now invalid, so there
 					// is no way any other orphans which
@@ -2204,7 +2579,7 @@ func (mp *TxPool) ProcessTransaction(tx *hnsutil.Tx, allowOrphan, rateLimit bool
 
 	// Potentially accept the transaction to the memory pool.
 	missingParents, txD, err := mp.maybeAcceptTransaction(tx, true, rateLimit,
-		true)
+		true, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2215,6 +2590,15 @@ func (mp *TxPool) ProcessTransaction(tx *hnsutil.Tx, allowOrphan, rateLimit bool
 		// are now available) and repeat for those accepted
 		// transactions until there are no more.
 		newTxs := mp.processOrphans(tx)
+		if mp.limitMempoolSize(tx.Hash(), nil) {
+			str := fmt.Sprintf(
+				"transaction %v evicted because the mempool is full",
+				tx.Hash(),
+			)
+			return nil, txRuleError(
+				wire.RejectInsufficientFee, str,
+			)
+		}
 		acceptedTxs := make([]*TxDesc, len(newTxs)+1)
 
 		// Add the parent transaction first so remote nodes
@@ -2368,6 +2752,16 @@ func (mp *TxPool) RawMempoolVerbose() map[string]*hnsjson.GetRawMempoolVerboseRe
 // This function is safe for concurrent access.
 func (mp *TxPool) LastUpdated() time.Time {
 	return time.Unix(atomic.LoadInt64(&mp.lastUpdated), 0)
+}
+
+// MemoryUsage returns the aggregate retained-memory estimate and configured
+// limit for accepted transactions, claims, and airdrops.
+//
+// This function is safe for concurrent access.
+func (mp *TxPool) MemoryUsage() (uint64, uint64) {
+	mp.mtx.RLock()
+	defer mp.mtx.RUnlock()
+	return mp.memoryUsage, mp.cfg.Policy.MaxMempoolSize
 }
 
 // MempoolAcceptResult holds the result from mempool acceptance check.
@@ -2880,12 +3274,24 @@ func (mp *TxPool) validateRelayFeeMet(tx *hnsutil.Tx, txFee, txSize int64,
 // New returns a new memory pool for validating and storing standalone
 // transactions until they are mined into a block.
 func New(cfg *Config) *TxPool {
+	poolCfg := *cfg
+	if poolCfg.Policy.MaxMempoolSize == 0 {
+		poolCfg.Policy.MaxMempoolSize = DefaultMaxMempoolSize
+	}
+	if poolCfg.Policy.MempoolExpiry <= 0 {
+		poolCfg.Policy.MempoolExpiry = DefaultMempoolExpiry
+	}
+	if poolCfg.Now == nil {
+		poolCfg.Now = time.Now
+	}
+	now := poolCfg.Now()
 	return &TxPool{
-		cfg:                     *cfg,
+		cfg:                     poolCfg,
 		pool:                    make(map[chainhash.Hash]*TxDesc),
 		orphans:                 make(map[chainhash.Hash]*orphanTx),
 		orphansByPrev:           make(map[wire.OutPoint]map[chainhash.Hash]*hnsutil.Tx),
-		nextExpireScan:          time.Now().Add(orphanExpireScanInterval),
+		nextExpireScan:          now.Add(orphanExpireScanInterval),
+		nextMempoolExpireScan:   now.Add(mempoolExpireScanInterval),
 		outpoints:               make(map[wire.OutPoint]*hnsutil.Tx),
 		nameActions:             make(map[chainhash.Hash]*hnsutil.Tx),
 		coinbaseProofsByWitness: make(map[chainhash.Hash]int),

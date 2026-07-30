@@ -111,3 +111,18 @@ func TestRuntimeMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestMempoolMemoryMetrics(t *testing.T) {
+	var b strings.Builder
+	writeMempoolMemoryMetrics(&b, 1234, 100_000_000)
+	got := b.String()
+
+	for _, want := range []string{
+		"handshake_mempool_memory_usage_bytes 1234",
+		"handshake_mempool_memory_limit_bytes 1e+08",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("mempool memory metrics missing %q:\n%s", want, got)
+		}
+	}
+}

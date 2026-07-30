@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -70,6 +71,14 @@ func TestLoadConfigWithoutFile(t *testing.T) {
 		if !cfg.BrontideTransport {
 			t.Fatal("Brontide transport is disabled")
 		}
+		if cfg.MaxMempoolSize != mempool.DefaultMaxMempoolSize {
+			t.Fatalf("max mempool size: got %d, want %d",
+				cfg.MaxMempoolSize, mempool.DefaultMaxMempoolSize)
+		}
+		if cfg.MempoolExpiry != mempool.DefaultMempoolExpiry {
+			t.Fatalf("mempool expiry: got %v, want %v",
+				cfg.MempoolExpiry, mempool.DefaultMempoolExpiry)
+		}
 		if !cfg.DisableRPC {
 			t.Fatal("RPC is enabled without credentials")
 		}
@@ -95,6 +104,50 @@ func TestLoadConfigWithoutFile(t *testing.T) {
 	if strings.Contains(strings.ToLower(string(output)), "config file") {
 		t.Fatalf("configurationless startup reported a config-file error:\n%s",
 			output)
+	}
+}
+
+func TestLoadConfigRejectsInvalidMempoolLimits(t *testing.T) {
+	const helperEnv = "HANDSHAKE_NODE_TEST_INVALID_MEMPOOL_LIMIT"
+
+	mode := os.Getenv(helperEnv)
+	if mode != "" {
+		setConfigTestDefaultPaths(os.Getenv("HOME"))
+		switch mode {
+		case "size":
+			os.Args = []string{"handshake-node", "--maxmempoolsize=0"}
+		case "expiry":
+			os.Args = []string{"handshake-node", "--mempoolexpiry=0s"}
+		default:
+			t.Fatalf("unknown helper mode %q", mode)
+		}
+
+		_, _, err := loadConfig()
+		if err == nil {
+			t.Fatalf("loadConfig accepted invalid mempool %s", mode)
+		}
+		if !strings.Contains(err.Error(), "must be greater than 0") {
+			t.Fatalf("loadConfig error = %q, want positive-limit error", err)
+		}
+		return
+	}
+
+	for _, mode := range []string{"size", "expiry"} {
+		t.Run(mode, func(t *testing.T) {
+			tempDir := t.TempDir()
+			cmd := exec.Command(
+				os.Args[0],
+				"-test.run=^TestLoadConfigRejectsInvalidMempoolLimits$",
+			)
+			cmd.Env = configTestEnvironment(
+				tempDir,
+				helperEnv+"="+mode,
+			)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("invalid mempool %s: %v\n%s",
+					mode, err, output)
+			}
+		})
 	}
 }
 
@@ -264,6 +317,8 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 		MaxProofRPS:         100,
 		MaxInboundPerIP:     8,
 		MaxOutboundQueueMiB: 128,
+		MaxMempoolSize:      100_000_000,
+		MempoolExpiry:       72 * time.Hour,
 		P2PWriteTimeout:     2 * time.Minute,
 		Prune:               1,
 		ConfigFile:          "from-file.conf",
@@ -277,6 +332,8 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 		"HANDSHAKE_NODE_MAXPROOFRPS":         "25",
 		"HANDSHAKE_NODE_MAXINBOUNDPERIP":     "12",
 		"HANDSHAKE_NODE_MAXOUTBOUNDQUEUEMIB": "256",
+		"HANDSHAKE_NODE_MAXMEMPOOLSIZE":      "50000000",
+		"HANDSHAKE_NODE_MEMPOOLEXPIRY":       "24h",
 		"HANDSHAKE_NODE_P2PWRITETIMEOUT":     "7m",
 		"HANDSHAKE_NODE_PRUNE":               "010",
 		"HANDSHAKE_NODE_CONFIGFILE":          "from-env.conf",
@@ -317,6 +374,14 @@ func TestApplyConfigEnvOverrides(t *testing.T) {
 	if cfg.MaxOutboundQueueMiB != 256 {
 		t.Fatalf("MaxOutboundQueueMiB: got %d, want %d",
 			cfg.MaxOutboundQueueMiB, 256)
+	}
+	if cfg.MaxMempoolSize != 50_000_000 {
+		t.Fatalf("MaxMempoolSize: got %d, want %d",
+			cfg.MaxMempoolSize, uint64(50_000_000))
+	}
+	if cfg.MempoolExpiry != 24*time.Hour {
+		t.Fatalf("MempoolExpiry: got %v, want %v",
+			cfg.MempoolExpiry, 24*time.Hour)
 	}
 	if cfg.P2PWriteTimeout != 7*time.Minute {
 		t.Fatalf("P2PWriteTimeout: got %v, want %v",
