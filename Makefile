@@ -92,12 +92,13 @@ install:
 	$(GOINSTALL) $(PKG)/cmd/hsdinterop
 	$(GOINSTALL) $(PKG)/cmd/hnsparity
 
-#? release-install: Install handshake-node and hnsctl release binaries, place them in $GOBIN
+#? release-install: Build handshake-node and hnsctl release binaries, place them in $GOBIN
 release-install:
-	@$(call print, "Installing handshake-node and hnsctl release binaries")
-	# Build both commands in one Go invocation so an in-tree GOBIN cannot make
+	@$(call print, "Building handshake-node and hnsctl release binaries")
+	mkdir -p "$(GO_BIN)"
+	# Build both commands in one Go invocation so an in-tree output directory cannot make
 	# the second binary appear to come from a dirty worktree.
-	env CGO_ENABLED=0 $(GOINSTALL) -trimpath -ldflags="-s -w -buildid=" $(PKG) $(PKG)/cmd/hnsctl
+	env CGO_ENABLED=0 $(GOBUILD) -trimpath -ldflags="-s -w -buildid=" -o "$(GO_BIN)/" $(PKG) $(PKG)/cmd/hnsctl
 
 # =======
 # TESTING
