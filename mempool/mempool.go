@@ -2568,6 +2568,9 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 		}
 		return nil, err
 	}
+	if err := mp.checkAncestorLimit(tx); err != nil {
+		return nil, err
+	}
 
 	// If the transaction has any conflicts, then we're processing a
 	// potential replacement.  Determine the full replacement set before
@@ -2579,9 +2582,6 @@ func (mp *TxPool) checkMempoolAcceptance(tx *hnsutil.Tx,
 		if err != nil {
 			return nil, err
 		}
-	}
-	if err := mp.checkAncestorLimit(tx); err != nil {
-		return nil, err
 	}
 	if err := mp.checkNameOperationConflicts(tx, conflicts); err != nil {
 		return nil, err

@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -2795,7 +2796,11 @@ func TestMempoolAncestorLimit(t *testing.T) {
 
 		t.Fatalf("expected nonstandard reject code, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "too many unconfirmed ancestors: 51 > 50") {
+	want := fmt.Sprintf(
+		"too many unconfirmed ancestors: %d > %d",
+		MaxMempoolAncestors+1, MaxMempoolAncestors,
+	)
+	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("unexpected rejection: %v", err)
 	}
 	testPoolMembership(ctx, tx, false, false)
