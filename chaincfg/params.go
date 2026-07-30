@@ -196,6 +196,10 @@ type Params struct {
 	// is reduced (halving interval).
 	SubsidyReductionInterval int32
 
+	// TxStart is the first block height at which regular transactions and
+	// coinbase claim or airdrop outputs are allowed.
+	TxStart uint32
+
 	// TargetTimespan is the desired amount of time that should elapse
 	// before the block difficulty requirement is examined to determine how
 	// it should be changed in order to maintain the desired block
@@ -330,6 +334,7 @@ var MainNetParams = Params{
 	BIP0066Height:            0,
 	CoinbaseMaturity:         100,
 	SubsidyReductionInterval: 170000,
+	TxStart:                  2016,
 	TargetTimespan:           time.Minute * 10 * 144, // 144 blocks (1 day)
 	TargetTimePerBlock:       time.Minute * 10,       // 10 minutes
 	RetargetAdjustmentFactor: 4,                      // 25% less, 400% more
@@ -440,6 +445,7 @@ var RegressionNetParams = Params{
 	PowLimitBits:             0x207fffff,
 	PoWNoRetargeting:         true,
 	CoinbaseMaturity:         2,
+	TxStart:                  0,
 	BIP0034Height:            0,
 	BIP0065Height:            0,
 	BIP0066Height:            0,

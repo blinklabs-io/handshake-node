@@ -333,6 +333,82 @@ func TestCheckBlockSanity(t *testing.T) {
 	}
 }
 
+func TestCheckTransactionStart(t *testing.T) {
+	const txStart = uint32(2016)
+	params := chaincfg.MainNetParams
+	params.TxStart = txStart
+
+	coinbase := wire.NewMsgTx(wire.TxVersion)
+	coinbase.AddTxOut(wire.NewTxOut(
+		0, wire.Address{}, wire.Covenant{Type: wire.CovenantNone},
+	))
+
+	blockWith := func(txs ...*wire.MsgTx) *hnsutil.Block {
+		return hnsutil.NewBlock(&wire.MsgBlock{Transactions: txs})
+	}
+	assertEarly := func(t *testing.T, block *hnsutil.Block, height int32) {
+		t.Helper()
+		err := checkTransactionStart(block, height, &params)
+		ruleErr, ok := err.(RuleError)
+		if !ok || ruleErr.ErrorCode != ErrEarlyTransactions {
+			t.Fatalf("checkTransactionStart error = %v, want ErrEarlyTransactions",
+				err)
+		}
+	}
+
+	if err := checkTransactionStart(blockWith(coinbase), int32(txStart)-1,
+		&params); err != nil {
+
+		t.Fatalf("valid pre-start coinbase: %v", err)
+	}
+
+	regularTx := wire.NewMsgTx(wire.TxVersion)
+	assertEarly(t, blockWith(coinbase, regularTx), int32(txStart)-1)
+
+	extraOutputCoinbase := coinbase.Copy()
+	extraOutputCoinbase.AddTxOut(wire.NewTxOut(
+		0, wire.Address{}, wire.Covenant{Type: wire.CovenantNone},
+	))
+	assertEarly(t, blockWith(extraOutputCoinbase), int32(txStart)-1)
+
+	claimCoinbase := coinbase.Copy()
+	claimCoinbase.TxOut[0].Covenant.Type = wire.CovenantClaim
+	assertEarly(t, blockWith(claimCoinbase), int32(txStart)-1)
+
+	for name, block := range map[string]*hnsutil.Block{
+		"regular transaction": blockWith(coinbase, regularTx),
+		"extra output":        blockWith(extraOutputCoinbase),
+		"claim output":        blockWith(claimCoinbase),
+	} {
+		t.Run("boundary/"+name, func(t *testing.T) {
+			if err := checkTransactionStart(block, int32(txStart), &params); err != nil {
+				t.Fatalf("checkTransactionStart at boundary: %v", err)
+			}
+		})
+	}
+
+	params.TxStart = 0
+	if err := checkTransactionStart(blockWith(claimCoinbase), 1, &params); err != nil {
+		t.Fatalf("disabled transaction start: %v", err)
+	}
+
+	chain, teardown, err := chainSetup("transactionstart", &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("chainSetup: %v", err)
+	}
+	defer teardown()
+
+	blockOne := loadHandshakeRawBlock(t, "block_1.raw")
+	blockOne.MsgBlock().Transactions[0].AddTxOut(wire.NewTxOut(
+		0, wire.Address{}, wire.Covenant{Type: wire.CovenantNone},
+	))
+	err = chain.checkBlockContext(blockOne, chain.bestChain.Tip(), BFFastAdd)
+	ruleErr, ok := err.(RuleError)
+	if !ok || ruleErr.ErrorCode != ErrEarlyTransactions {
+		t.Fatalf("checkBlockContext error = %v, want ErrEarlyTransactions", err)
+	}
+}
+
 // TestCheckSerializedHeight tests the CheckSerializedHeight function with
 // various serialized heights and also does negative tests to ensure errors
 // and handled properly.
