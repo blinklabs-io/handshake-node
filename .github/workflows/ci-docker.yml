@@ -51,6 +51,80 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}
             COMMIT_HASH=${{ github.sha }}
+      - name: smoke test image defaults
+        run: |
+          data_volume="handshake-node-ci-data-${GITHUB_RUN_ID}-${{ matrix.arch }}"
+          legacy_volume="handshake-node-ci-legacy-${GITHUB_RUN_ID}-${{ matrix.arch }}"
+          cleanup() {
+            docker volume rm -f "${data_volume}" "${legacy_volume}" \
+              >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            handshake-node:ci-${{ matrix.arch }} --version
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            --entrypoint /bin/sh handshake-node:ci-${{ matrix.arch }} -ec '
+              test "$(id -u)" -eq 100
+              test "$(id -g)" -eq 101
+              test "$HOME" = /home/handshake
+              test "$PWD" = /data
+              test "$(readlink /home/handshake/.handshake-node)" = /data
+              test ! -e /data/handshake-node.conf
+              touch /data/.write-test
+              rm /data/.write-test
+            '
+          docker volume create "${data_volume}" >/dev/null
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            --mount "type=volume,src=${data_volume},dst=/data" \
+            --entrypoint /bin/sh handshake-node:ci-${{ matrix.arch }} -ec '
+              test "$(id -u)" -eq 100
+              test "$(id -g)" -eq 101
+              test "$HOME" = /home/handshake
+              test "$PWD" = /data
+              test "$(readlink /home/handshake/.handshake-node)" = /data
+              test "$(stat -c "%u:%g" /data)" = 100:101
+              test ! -e /data/handshake-node.conf
+              touch /data/.write-test
+              test "$(stat -c "%u:%g" /data/.write-test)" = 100:101
+              test -e /home/handshake/.handshake-node/.write-test
+              rm /data/.write-test
+            '
+          docker volume create "${legacy_volume}" >/dev/null
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            --mount \
+              "type=volume,src=${legacy_volume},dst=/home/handshake/.handshake-node" \
+            --entrypoint /bin/sh handshake-node:ci-${{ matrix.arch }} -ec '
+              test "$(id -u)" -eq 100
+              test "$(id -g)" -eq 101
+              test "$HOME" = /home/handshake
+              test "$PWD" = /data
+              test "$(readlink /home/handshake/.handshake-node)" = /data
+              test "$(stat -c "%u:%g" /data)" = 100:101
+              test ! -e /data/handshake-node.conf
+              test ! -e /home/handshake/.handshake-node/handshake-node.conf
+              touch /data/.write-test
+              touch /home/handshake/.handshake-node/.legacy-write-test
+              test "$(stat -c "%u:%g" /data/.write-test)" = 100:101
+              test "$(stat -c "%u:%g" \
+                /home/handshake/.handshake-node/.legacy-write-test)" = 100:101
+              test -e /data/.legacy-write-test
+              rm /data/.write-test
+              rm /home/handshake/.handshake-node/.legacy-write-test
+            '
+          output="$(docker run --rm --platform linux/${{ matrix.arch }} \
+            -e HANDSHAKE_NODE_DEBUGLEVEL=show \
+            handshake-node:ci-${{ matrix.arch }} 2>&1)"
+          printf '%s\n' "${output}"
+          grep -q 'Supported subsystems' <<<"${output}"
+          if grep -Eqi 'config file|handshake-node.conf' <<<"${output}"; then
+            exit 1
+          fi
+          startup_output="$(docker run --rm \
+            --platform linux/${{ matrix.arch }} \
+            handshake-node:ci-${{ matrix.arch }} --dropaddrindex 2>&1)"
+          printf '%s\n' "${startup_output}"
+          grep -q 'RPC service is disabled' <<<"${startup_output}"
       - name: scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
         with:

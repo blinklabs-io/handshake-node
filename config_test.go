@@ -7,65 +7,15 @@ package main
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/blinklabs-io/handshake-node/wire"
 )
-
-var (
-	rpcuserRegexp = regexp.MustCompile("(?m)^rpcuser=.+$")
-	rpcpassRegexp = regexp.MustCompile("(?m)^rpcpass=.+$")
-)
-
-func TestCreateDefaultConfigFile(t *testing.T) {
-	// find out where the sample config lives
-	_, path, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatalf("Failed finding config file path")
-	}
-	sampleConfigFile := filepath.Join(filepath.Dir(path), "sample-handshake-node.conf")
-
-	// Setup a temporary directory
-	tmpDir := t.TempDir()
-	testpath := filepath.Join(tmpDir, "test.conf")
-
-	// copy config file to location of handshake-node binary
-	data, err := os.ReadFile(sampleConfigFile)
-	if err != nil {
-		t.Fatalf("Failed reading sample config file: %v", err)
-	}
-	appPath, err := filepath.Abs(filepath.Dir(os.Args[0]))
-	if err != nil {
-		t.Fatalf("Failed obtaining app path: %v", err)
-	}
-	tmpConfigFile := filepath.Join(appPath, "sample-handshake-node.conf")
-	err = os.WriteFile(tmpConfigFile, data, 0644)
-	if err != nil {
-		t.Fatalf("Failed copying sample config file: %v", err)
-	}
-
-	err = createDefaultConfigFile(testpath)
-
-	if err != nil {
-		t.Fatalf("Failed to create a default config file: %v", err)
-	}
-
-	content, err := os.ReadFile(testpath)
-	if err != nil {
-		t.Fatalf("Failed to read generated default config file: %v", err)
-	}
-
-	if !rpcuserRegexp.Match(content) {
-		t.Error("Could not find rpcuser in generated default config file.")
-	}
-
-	if !rpcpassRegexp.Match(content) {
-		t.Error("Could not find rpcpass in generated default config file.")
-	}
-}
 
 func TestDefaultRPCPorts(t *testing.T) {
 	if mainNetParams.rpcPort != "12037" {
@@ -87,6 +37,221 @@ func TestDefaultRPCPorts(t *testing.T) {
 		t.Fatalf("stratum port: got %q, want %q",
 			defaultStratumPort, "12040")
 	}
+}
+
+func TestLoadConfigWithoutFile(t *testing.T) {
+	const helperEnv = "HANDSHAKE_NODE_TEST_CONFIG_DEFAULTS"
+
+	if os.Getenv(helperEnv) == "1" {
+		os.Args = []string{"handshake-node"}
+		setConfigTestDefaultPaths(os.Getenv("HOME"))
+
+		cfg, remainingArgs, err := loadConfig()
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if len(remainingArgs) != 0 {
+			t.Fatalf("remaining arguments: got %v, want none",
+				remainingArgs)
+		}
+		if activeNetParams.Net != wire.MainNet {
+			t.Fatalf("network: got %v, want mainnet",
+				activeNetParams.Net)
+		}
+		if cfg.Prune != 0 {
+			t.Fatalf("prune: got %d, want archival mode", cfg.Prune)
+		}
+		if cfg.DisableDNSSeed {
+			t.Fatal("DNS peer discovery is disabled")
+		}
+		if cfg.DisableCheckpoints {
+			t.Fatal("built-in checkpoints are disabled")
+		}
+		if !cfg.BrontideTransport {
+			t.Fatal("Brontide transport is disabled")
+		}
+		if !cfg.DisableRPC {
+			t.Fatal("RPC is enabled without credentials")
+		}
+		wantListener := net.JoinHostPort("", mainNetParams.DefaultPort)
+		if !slices.Equal(cfg.Listeners, []string{wantListener}) {
+			t.Fatalf("listeners: got %v, want [%s]",
+				cfg.Listeners, wantListener)
+		}
+		if _, err := os.Stat(defaultConfigFile); !os.IsNotExist(err) {
+			t.Fatalf("default config stat: got %v, want not-exist",
+				err)
+		}
+		return
+	}
+
+	tempDir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLoadConfigWithoutFile$")
+	cmd.Env = configTestEnvironment(tempDir, helperEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("configurationless startup: %v\n%s", err, output)
+	}
+	if strings.Contains(strings.ToLower(string(output)), "config file") {
+		t.Fatalf("configurationless startup reported a config-file error:\n%s",
+			output)
+	}
+}
+
+func TestLoadConfigRejectsMissingExplicitFile(t *testing.T) {
+	const helperEnv = "HANDSHAKE_NODE_TEST_MISSING_CONFIG"
+
+	if os.Getenv(helperEnv) == "1" {
+		homeDir := os.Getenv("HOME")
+		setConfigTestDefaultPaths(homeDir)
+		missingPath := filepath.Join(homeDir, "missing.conf")
+		os.Args = []string{
+			"handshake-node",
+			"--configfile=" + missingPath,
+		}
+
+		_, _, err := loadConfig()
+		if !os.IsNotExist(err) {
+			t.Fatalf("loadConfig error: got %v, want not-exist", err)
+		}
+		return
+	}
+
+	tempDir := t.TempDir()
+	cmd := exec.Command(os.Args[0],
+		"-test.run=^TestLoadConfigRejectsMissingExplicitFile$")
+	cmd.Env = configTestEnvironment(tempDir, helperEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("missing explicit config: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Error loading config file:") {
+		t.Fatalf("missing explicit config did not report a clear error:\n%s",
+			output)
+	}
+}
+
+func TestLoadConfigDefaultFile(t *testing.T) {
+	const helperEnv = "HANDSHAKE_NODE_TEST_DEFAULT_CONFIG_FILE"
+
+	mode := os.Getenv(helperEnv)
+	if mode != "" {
+		setConfigTestDefaultPaths(os.Getenv("HOME"))
+		if err := os.MkdirAll(defaultHomeDir, 0700); err != nil {
+			t.Fatalf("create default home: %v", err)
+		}
+
+		var configContents string
+		switch mode {
+		case "valid":
+			configContents = "[Application Options]\nmaxpeers=17\n"
+		case "malformed":
+			configContents = "[Application Options\n"
+		default:
+			t.Fatalf("unknown helper mode %q", mode)
+		}
+		if err := os.WriteFile(
+			defaultConfigFile,
+			[]byte(configContents),
+			0600,
+		); err != nil {
+			t.Fatalf("write default config: %v", err)
+		}
+
+		os.Args = []string{"handshake-node"}
+		cfg, remainingArgs, err := loadConfig()
+		if mode == "malformed" {
+			if err == nil {
+				t.Fatal("loadConfig accepted malformed default config")
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if len(remainingArgs) != 0 {
+			t.Fatalf("remaining arguments: got %v, want none",
+				remainingArgs)
+		}
+		if cfg.MaxPeers != 17 {
+			t.Fatalf("max peers: got %d, want 17", cfg.MaxPeers)
+		}
+		return
+	}
+
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantMessage string
+	}{
+		{
+			name: "valid",
+			mode: "valid",
+		},
+		{
+			name:        "malformed",
+			mode:        "malformed",
+			wantMessage: "Error parsing config file:",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			cmd := exec.Command(
+				os.Args[0],
+				"-test.run=^TestLoadConfigDefaultFile$",
+			)
+			cmd.Env = configTestEnvironment(
+				tempDir,
+				helperEnv+"="+test.mode,
+			)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("default config %s: %v\n%s",
+					test.mode, err, output)
+			}
+			if test.wantMessage != "" &&
+				!strings.Contains(string(output), test.wantMessage) {
+
+				t.Fatalf(
+					"default config %s did not report %q:\n%s",
+					test.mode,
+					test.wantMessage,
+					output,
+				)
+			}
+		})
+	}
+}
+
+func setConfigTestDefaultPaths(homeDir string) {
+	defaultHomeDir = filepath.Join(homeDir, ".handshake-node")
+	defaultConfigFile = filepath.Join(defaultHomeDir, defaultConfigFilename)
+	defaultDataDir = filepath.Join(defaultHomeDir, defaultDataDirname)
+	defaultRPCKeyFile = filepath.Join(defaultHomeDir, "rpc.key")
+	defaultRPCCertFile = filepath.Join(defaultHomeDir, "rpc.cert")
+	defaultLogDir = filepath.Join(defaultHomeDir, defaultLogDirname)
+}
+
+func configTestEnvironment(homeDir string, extra ...string) []string {
+	env := make([]string, 0, len(os.Environ())+len(extra)+4)
+	for _, item := range os.Environ() {
+		if strings.HasPrefix(item, "HANDSHAKE_NODE_") ||
+			strings.HasPrefix(item, "HOME=") ||
+			strings.HasPrefix(item, "USERPROFILE=") ||
+			strings.HasPrefix(item, "LOCALAPPDATA=") ||
+			strings.HasPrefix(item, "APPDATA=") {
+
+			continue
+		}
+		env = append(env, item)
+	}
+	env = append(env,
+		"HOME="+homeDir,
+		"USERPROFILE="+homeDir,
+		"LOCALAPPDATA="+homeDir,
+		"APPDATA="+homeDir,
+	)
+	return append(env, extra...)
 }
 
 func TestApplyConfigEnvOverrides(t *testing.T) {

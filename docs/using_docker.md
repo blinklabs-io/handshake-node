@@ -3,7 +3,7 @@
 - [Using Docker](#using-docker)
   - [Introduction](#introduction)
   - [Docker volumes](#docker-volumes)
-  - [Known error messages when starting the handshake-node container](#known-error-messages-when-starting-the-handshake-node-container)
+  - [Configurationless mainnet defaults](#configurationless-mainnet-defaults)
   - [Examples](#examples)
     - [Preamble](#preamble)
     - [Full node without RPC port](#full-node-without-rpc-port)
@@ -29,15 +29,40 @@ docker volume rm handshake-node-data
 
 For binding a local folder to your *handshake-node* container please read the [Docker documentation](https://docs.docker.com/). The preferred way is to use a Docker managed volume.
 
-## Known error messages when starting the handshake-node container
+## Configurationless mainnet defaults
 
-We pass all needed arguments to *handshake-node* as command line parameters in our *docker-compose.yml* file. It doesn't make sense to create a *handshake-node.conf* file. This would make things too complicated. Anyhow *handshake-node* will complain with following log messages when starting. These messages can be ignored:
+The image does not require or ship a configuration file. With no arguments it
+runs an archival mainnet full node, listens for P2P connections on port 12038,
+uses DNS peer discovery and built-in checkpoints, enables Brontide, and stores
+node state in the `/data` volume.
+
+RPC remains disabled until both `HANDSHAKE_NODE_RPCUSER` and
+`HANDSHAKE_NODE_RPCPASS` are set. To reach RPC through a published container
+port, also set `HANDSHAKE_NODE_RPCLISTEN=0.0.0.0:12037`. RPC remains
+authenticated and TLS-enabled. Publish the host-side RPC port only on a trusted
+interface.
+
+Operators who need non-default settings can place
+`handshake-node.conf` at `/data/handshake-node.conf` or pass an explicit
+`--configfile` argument.
+
+The examples below use the rolling `main` image so they stay aligned with this
+documentation. Pin a release tag instead for production deployments.
+
+The process runs as non-root UID 100 and GID 101, matching other Blink Labs
+node images. Docker-managed volumes inherit the correct ownership from the
+image. For a bind mount, make the host directory writable by that identity
+before starting the container:
 
 ```bash
-Error creating a default config file: open /sample-handshake-node.conf: no such file or directory
-...
-[WRN] HNSN: open /home/handshake/.handshake-node/handshake-node.conf: no such file or directory
+sudo install -d -o 100 -g 101 /path/to/handshake-data
+# For an existing directory:
+sudo chown -R 100:101 /path/to/handshake-data
 ```
+
+Existing deployments that mount
+`/home/handshake/.handshake-node` remain compatible, but new deployments
+should mount `/data`.
 
 ## Examples
 
@@ -93,10 +118,10 @@ services:
   handshake-node:
     container_name: handshake-node
     hostname: handshake-node
-    build: https://github.com/blinklabs-io/handshake-node.git#master
+    image: blinklabs/handshake-node:main
     restart: unless-stopped
     volumes:
-      - handshake-node-data:/home/handshake/.handshake-node
+      - handshake-node-data:/data
     ports:
       - 12038:12038
 
@@ -106,7 +131,9 @@ volumes:
 
 ### Full node with RPC port
 
-To use the RPC port of *handshake-node* you need to specify a *username* and a very strong *password*. If you want to connect to the RPC port from the internet, you need to expose port 12037(RPC) as well.
+To use the RPC port of *handshake-node* you need to specify a *username* and a
+very strong *password*. This example publishes RPC only on the host loopback
+interface. Use a VPN or another trusted network path for remote access.
 
 ```yaml
 version: "2"
@@ -115,17 +142,17 @@ services:
   handshake-node:
     container_name: handshake-node
     hostname: handshake-node
-    build: https://github.com/blinklabs-io/handshake-node.git#master
+    image: blinklabs/handshake-node:main
     restart: unless-stopped
     volumes:
-      - handshake-node-data:/home/handshake/.handshake-node
+      - handshake-node-data:/data
     ports:
       - 12038:12038
-      - 12037:12037
-    command: [
-        "--rpcuser=[CHOOSE_A_USERNAME]",
-        "--rpcpass=[CREATE_A_VERY_HARD_PASSWORD]"
-    ]
+      - 127.0.0.1:12037:12037
+    environment:
+      HANDSHAKE_NODE_RPCUSER: "[CHOOSE_A_USERNAME]"
+      HANDSHAKE_NODE_RPCPASS: "[CREATE_A_VERY_HARD_PASSWORD]"
+      HANDSHAKE_NODE_RPCLISTEN: "0.0.0.0:12037"
 
 volumes:
   handshake-node-data:
@@ -143,18 +170,21 @@ services:
   handshake-node:
     container_name: handshake-node
     hostname: handshake-node
-    build: https://github.com/blinklabs-io/handshake-node.git#master
+    image: blinklabs/handshake-node:main
     restart: unless-stopped
     volumes:
-      - handshake-node-data:/home/handshake/.handshake-node
+      - handshake-node-data:/data
     ports:
       - 14038:14038
-      - 14037:14037
+      - 127.0.0.1:14037:14037
     command: [
         "--regtest",
-        "--rpcuser=[CHOOSE_A_USERNAME]",
-        "--rpcpass=[CREATE_A_VERY_HARD_PASSWORD]"
+        "--listen=:14038",
+        "--rpclisten=0.0.0.0:14037"
     ]
+    environment:
+      HANDSHAKE_NODE_RPCUSER: "[CHOOSE_A_USERNAME]"
+      HANDSHAKE_NODE_RPCPASS: "[CREATE_A_VERY_HARD_PASSWORD]"
 
 volumes:
   handshake-node-data:
