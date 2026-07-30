@@ -424,8 +424,9 @@ func TestCheckHeadersList(t *testing.T) {
 	sm, tearDown := makeMockSyncManager(t, &params)
 	defer tearDown()
 
-	// Setup SyncManager with headers processed.
-	for _, block := range blocks[:checkpointHeight] {
+	// Process headers up to, but not including, the checkpoint.  A future
+	// checkpoint that is not known yet must not authorize fast-add.
+	for _, block := range blocks[:checkpointHeight-1] {
 		isMainChain, err := sm.chain.ProcessBlockHeader(
 			&block.MsgBlock().Header, blockchain.BFNone, false)
 		if err != nil {
@@ -436,6 +437,22 @@ func TestCheckHeadersList(t *testing.T) {
 			t.Fatalf("expected block header %v to be in the main chain",
 				block.Hash())
 		}
+	}
+	sm.ibdMode = true
+	isCheckpoint, gotFlags := sm.checkHeadersList(
+		blocks[checkpointHeight-2].Hash(),
+	)
+	require.False(t, isCheckpoint)
+	require.Equal(t, blockchain.BFNone, gotFlags)
+
+	// Once the checkpoint itself is known on the same best-header path, it
+	// anchors all earlier headers on that path and fast-add is safe.
+	for _, block := range blocks[checkpointHeight-1:] {
+		isMainChain, err := sm.chain.ProcessBlockHeader(
+			&block.MsgBlock().Header, blockchain.BFNone, false)
+		require.NoError(t, err)
+		require.True(t, isMainChain,
+			"expected block header %v to be in the main chain", block.Hash())
 	}
 
 	tests := []struct {
