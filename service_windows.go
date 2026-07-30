@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/btcsuite/winsvc/eventlog"
-	"github.com/btcsuite/winsvc/mgr"
-	"github.com/btcsuite/winsvc/svc"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 const (
@@ -197,7 +197,7 @@ func startService() error {
 	}
 	defer service.Close()
 
-	err = service.Start(os.Args)
+	err = service.Start(os.Args...)
 	if err != nil {
 		return fmt.Errorf("could not start service: %v", err)
 	}

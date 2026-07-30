@@ -49,11 +49,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+          - runner: ubuntu-latest
+            os: freebsd
+            arch: amd64
+          - runner: ubuntu-latest
+            os: freebsd
+            arch: arm64
           - runner: ubuntu-latest
             os: linux
             arch: amd64
           - runner: ubuntu-24.04-arm
             os: linux
+            arch: arm64
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+          - runner: windows-latest
+            os: windows
             arch: arm64
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
@@ -66,8 +81,10 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
-      - run: git config --global --add safe.directory $PWD
+      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> \"$GITHUB_ENV\""
+        shell: bash
+      - run: git config --global --add safe.directory "$PWD"
+        shell: bash
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
         with:
           fetch-depth: 0
@@ -79,29 +96,41 @@ jobs:
             hnsutil/go.sum
             hnsutil/psbt/go.sum
       - name: Build binaries
+        shell: bash
         run: |
-          mkdir -p dist/${{ matrix.os }}-${{ matrix.arch }}
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} GOBIN=$PWD/dist/${{ matrix.os }}-${{ matrix.arch }} make release-install
+          mkdir -p "dist/${{ matrix.os }}-${{ matrix.arch }}"
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} GOBIN="$PWD/dist/${{ matrix.os }}-${{ matrix.arch }}" make release-install
       - name: Verify binary VCS metadata
+        shell: bash
         run: |
+          extension=
+          if [[ "${{ matrix.os }}" == windows ]]; then
+            extension=.exe
+          fi
           for binary in handshake-node hnsctl; do
-            metadata="$(go version -m dist/${{ matrix.os }}-${{ matrix.arch }}/${binary})"
+            metadata="$(go version -m "dist/${{ matrix.os }}-${{ matrix.arch }}/${binary}${extension}")"
             grep -Fq $'build\tvcs.revision=${{ github.sha }}' <<< "${metadata}"
             grep -Fq $'build\tvcs.modified=false' <<< "${metadata}"
           done
       - name: Create release asset
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
-          _filename=${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-          tar -C dist/${{ matrix.os }}-${{ matrix.arch }} -czf dist/${_filename} handshake-node hnsctl
+          _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          extension=
+          if [[ "${{ matrix.os }}" == windows ]]; then
+            extension=.exe
+          fi
+          tar -C "dist/${{ matrix.os }}-${{ matrix.arch }}" -czf "dist/${_filename}" "handshake-node${extension}" "hnsctl${extension}"
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
-          _filename=${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
           curl \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary @dist/${_filename} \
+            --data-binary "@dist/${_filename}" \
             "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}"
       - name: Attest release binaries
         if: startsWith(github.ref, 'refs/tags/')

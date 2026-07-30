@@ -30,6 +30,62 @@ jobs:
       - name: build
         run: make build
 
+  cross-platform-build:
+    name: build (${{ matrix.os }}/${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+          - runner: ubuntu-latest
+            os: freebsd
+            arch: amd64
+          - runner: ubuntu-latest
+            os: freebsd
+            arch: arm64
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+          - runner: windows-latest
+            os: windows
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0 https://github.com/actions/setup-go/releases/tag/v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            hnsutil/go.sum
+            hnsutil/psbt/go.sum
+      - name: build release binaries
+        shell: bash
+        run: |
+          output_dir="$PWD/dist/${{ matrix.os }}-${{ matrix.arch }}"
+          mkdir -p "${output_dir}"
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} GOBIN="${output_dir}" make release-install
+          extension=
+          if [[ "${{ matrix.os }}" == windows ]]; then
+            extension=.exe
+          fi
+          for binary in handshake-node hnsctl; do
+            test -x "${output_dir}/${binary}${extension}" || [[ "${{ matrix.os }}" == windows && -f "${output_dir}/${binary}${extension}" ]]
+            metadata="$(go version -m "${output_dir}/${binary}${extension}")"
+            grep -Fq $'build\tvcs.revision=${{ github.sha }}' <<< "${metadata}"
+            grep -Fq $'build\tvcs.modified=false' <<< "${metadata}"
+          done
+
   vulnerability:
     name: vuln
     runs-on: ubuntu-latest
