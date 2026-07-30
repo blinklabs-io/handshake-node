@@ -4,6 +4,8 @@
   - [Introduction](#introduction)
   - [Docker volumes](#docker-volumes)
   - [Configurationless mainnet defaults](#configurationless-mainnet-defaults)
+  - [Resource sizing and monitoring](#resource-sizing-and-monitoring)
+  - [Diagnosing restart loops](#diagnosing-restart-loops)
   - [Examples](#examples)
     - [Preamble](#preamble)
     - [Full node without RPC port](#full-node-without-rpc-port)
@@ -63,6 +65,70 @@ sudo chown -R 100:101 /path/to/handshake-data
 Existing deployments that mount
 `/home/handshake/.handshake-node` remain compatible, but new deployments
 should mount `/data`.
+
+## Resource sizing and monitoring
+
+Allocate four CPUs, 4 GiB of memory, and SSD-backed storage for initial mainnet
+sync. The defaults include a 250 MiB UTXO cache, a 100 MiB database cache, and
+up to 128 MiB of aggregate P2P queues. The block index, mempool, Go runtime,
+database, and transient validation allocations require additional memory.
+`GOMAXPROCS` or the container CPU limit controls CPU concurrency; it does not
+limit memory.
+
+Docker Compose can enforce the intended limits explicitly:
+
+```yaml
+services:
+  handshake-node:
+    cpus: 4.0
+    mem_limit: 4g
+```
+
+Use `docker stats handshake-node` to observe total container CPU and resident
+memory. For Go runtime detail, enable the Prometheus endpoint and scrape
+`/metrics`. Keep the published metrics port on the host loopback unless it is
+protected by a trusted network:
+
+```yaml
+services:
+  handshake-node:
+    ports:
+      - 127.0.0.1:12039:12039
+    environment:
+      HANDSHAKE_NODE_METRICSLISTEN: "0.0.0.0:12039"
+      HANDSHAKE_NODE_METRICSALLOWPUBLIC: "true"
+```
+
+The `handshake_go_*` metrics report Go heap, stack, runtime memory, goroutines,
+GC cycles, `GOMAXPROCS`, and the Go soft memory limit. Container resident
+memory also includes non-Go allocations and file-backed mappings, so alert on
+the container metric rather than treating Go heap as total memory.
+
+## Diagnosing restart loops
+
+The examples use `restart: unless-stopped`, which can hide the exit that caused
+a restart. Inspect the container state, Docker events, logs, and guest kernel
+before deleting or replacing the data volume:
+
+```bash
+docker inspect handshake-node \
+  --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}} restarts={{.RestartCount}}'
+docker inspect handshake-node \
+  --format 'memory={{.HostConfig.Memory}} swap={{.HostConfig.MemorySwap}} cpus={{.HostConfig.NanoCpus}}'
+docker logs --tail 300 handshake-node
+docker events --since 30m --filter container=handshake-node
+dmesg -T | grep -Ei 'oom|out of memory|killed process'
+```
+
+An OOM indication or exit code 137 means the process was killed for memory
+pressure. Exit code 1 indicates a node error that should also appear in the
+logs, 139 indicates a segmentation fault, and 143 indicates an external
+`SIGTERM`. A restart followed by `Detected unclean shutdown` without a node
+fatal or shutdown log usually indicates an external hard kill.
+
+If the host becomes unresponsive while container CPU remains within its quota,
+check storage latency and I/O wait with `vmstat 1` and `iostat -xz 1`. Initial
+sync periodically performs synchronous UTXO and database flushes.
 
 ## Examples
 

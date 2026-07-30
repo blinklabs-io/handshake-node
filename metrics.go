@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -215,6 +217,29 @@ func renderPrometheusMetrics(s *server) string {
 		"Last block processing duration in seconds.", "gauge")
 	writeMetricHeader(&b, "handshake_block_validation_max_seconds",
 		"Maximum observed block processing duration in seconds.", "gauge")
+	writeMetricHeader(&b, "handshake_go_heap_alloc_bytes",
+		"Bytes of allocated Go heap objects.", "gauge")
+	writeMetricHeader(&b, "handshake_go_heap_inuse_bytes",
+		"Bytes in Go heap spans currently in use.", "gauge")
+	writeMetricHeader(&b, "handshake_go_heap_sys_bytes",
+		"Bytes of Go heap memory obtained from the operating system.", "gauge")
+	writeMetricHeader(&b, "handshake_go_stack_inuse_bytes",
+		"Bytes in Go stack spans currently in use.", "gauge")
+	writeMetricHeader(&b, "handshake_go_sys_bytes",
+		"Total bytes of memory obtained by the Go runtime.", "gauge")
+	writeMetricHeader(&b, "handshake_go_goroutines",
+		"Number of goroutines that currently exist.", "gauge")
+	writeMetricHeader(&b, "handshake_go_gc_cycles_total",
+		"Completed Go garbage collection cycles.", "counter")
+	writeMetricHeader(&b, "handshake_go_gomaxprocs",
+		"Current Go CPU concurrency limit.", "gauge")
+	writeMetricHeader(&b, "handshake_go_memory_limit_bytes",
+		"Current Go runtime soft memory limit.", "gauge")
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	writeRuntimeMetrics(&b, memStats, runtime.NumGoroutine(),
+		runtime.GOMAXPROCS(0), debug.SetMemoryLimit(-1))
 
 	if s == nil {
 		return b.String()
@@ -251,6 +276,26 @@ func renderPrometheusMetrics(s *server) string {
 	}
 
 	return b.String()
+}
+
+func writeRuntimeMetrics(b *strings.Builder, memStats runtime.MemStats,
+	goroutines, gomaxprocs int, memoryLimit int64) {
+
+	writeSample(b, "handshake_go_heap_alloc_bytes", nil,
+		float64(memStats.HeapAlloc))
+	writeSample(b, "handshake_go_heap_inuse_bytes", nil,
+		float64(memStats.HeapInuse))
+	writeSample(b, "handshake_go_heap_sys_bytes", nil,
+		float64(memStats.HeapSys))
+	writeSample(b, "handshake_go_stack_inuse_bytes", nil,
+		float64(memStats.StackInuse))
+	writeSample(b, "handshake_go_sys_bytes", nil, float64(memStats.Sys))
+	writeSample(b, "handshake_go_goroutines", nil, float64(goroutines))
+	writeSample(b, "handshake_go_gc_cycles_total", nil,
+		float64(memStats.NumGC))
+	writeSample(b, "handshake_go_gomaxprocs", nil, float64(gomaxprocs))
+	writeSample(b, "handshake_go_memory_limit_bytes", nil,
+		float64(memoryLimit))
 }
 
 func (s *server) connectedPeerStats() []*peer.StatsSnap {
