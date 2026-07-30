@@ -5,6 +5,7 @@
 package main
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -77,5 +78,36 @@ func TestBlockValidationMetricsUseSummaryAndGauges(t *testing.T) {
 	}
 	if strings.Contains(got, "handshake_block_validation_seconds{") {
 		t.Fatalf("summary metric includes non-quantile labels:\n%s", got)
+	}
+}
+
+func TestRuntimeMetrics(t *testing.T) {
+	memStats := runtime.MemStats{
+		HeapAlloc:  11,
+		HeapInuse:  12,
+		HeapSys:    13,
+		StackInuse: 14,
+		Sys:        15,
+		NumGC:      16,
+	}
+
+	var b strings.Builder
+	writeRuntimeMetrics(&b, memStats, 17, 4, 2*1024*1024*1024)
+	got := b.String()
+
+	for _, want := range []string{
+		"handshake_go_heap_alloc_bytes 11",
+		"handshake_go_heap_inuse_bytes 12",
+		"handshake_go_heap_sys_bytes 13",
+		"handshake_go_stack_inuse_bytes 14",
+		"handshake_go_sys_bytes 15",
+		"handshake_go_gc_cycles_total 16",
+		"handshake_go_goroutines 17",
+		"handshake_go_gomaxprocs 4",
+		"handshake_go_memory_limit_bytes 2.147483648e+09",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("runtime metrics output missing %q:\n%s", want, got)
+		}
 	}
 }
