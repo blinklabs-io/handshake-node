@@ -953,11 +953,13 @@ func (b *BlockChain) checkBlockContext(block *hnsutil.Block, prevNode *blockNode
 		return err
 	}
 
+	blockHeight := prevNode.height + 1
+	if err := checkTransactionStart(block, blockHeight, b.chainParams); err != nil {
+		return err
+	}
+
 	fastAdd := flags&BFFastAdd == BFFastAdd
 	if !fastAdd {
-		// The height of this block is one more than the referenced
-		// previous block.
-		blockHeight := prevNode.height + 1
 		blockTime := CalcPastMedianTime(prevNode)
 
 		// Ensure all transactions in the block are finalized.
@@ -980,6 +982,33 @@ func (b *BlockChain) checkBlockContext(block *hnsutil.Block, prevNode *blockNode
 			return err
 		}
 
+	}
+
+	return nil
+}
+
+// checkTransactionStart enforces Handshake's launch delay for transactions.
+// Before TxStart, a block may only contain a coinbase with one ordinary
+// covenant-free output.  This matches hsd's no-tx-allowed-yet consensus rule.
+func checkTransactionStart(block *hnsutil.Block, blockHeight int32,
+	params *chaincfg.Params) error {
+
+	if blockHeight < 0 || uint32(blockHeight) >= params.TxStart {
+		return nil
+	}
+
+	msgBlock := block.MsgBlock()
+	if len(msgBlock.Transactions) != 1 {
+		return ruleError(ErrEarlyTransactions,
+			"regular transactions are not allowed before the transaction start height")
+	}
+
+	coinbase := msgBlock.Transactions[0]
+	if len(coinbase.TxOut) != 1 ||
+		coinbase.TxOut[0].Covenant.Type != wire.CovenantNone {
+
+		return ruleError(ErrEarlyTransactions,
+			"coinbase claim and airdrop outputs are not allowed before the transaction start height")
 	}
 
 	return nil

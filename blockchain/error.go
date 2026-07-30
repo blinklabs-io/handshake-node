@@ -234,6 +234,11 @@ const (
 	// ErrInvalidCovenant indicates a transaction covenant is malformed or
 	// violates Handshake covenant state transition rules.
 	ErrInvalidCovenant
+
+	// ErrEarlyTransactions indicates a block contains regular transactions
+	// or coinbase claim or airdrop outputs before the network transaction
+	// start height.
+	ErrEarlyTransactions
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -284,6 +289,7 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrKnownInvalidBlock:         "ErrKnownInvalidBlock",
 	ErrBadNameRoot:               "ErrBadNameRoot",
 	ErrInvalidCovenant:           "ErrInvalidCovenant",
+	ErrEarlyTransactions:         "ErrEarlyTransactions",
 }
 
 // String returns the ErrorCode as a human-readable name.

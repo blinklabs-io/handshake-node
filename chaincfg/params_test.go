@@ -68,6 +68,17 @@ func TestMainNetCheckpointsMatchHsdV8(t *testing.T) {
 	}
 }
 
+func TestTransactionStartMatchesHsd(t *testing.T) {
+	if MainNetParams.TxStart != 2016 {
+		t.Fatalf("mainnet transaction start: got %d, want 2016",
+			MainNetParams.TxStart)
+	}
+	if RegressionNetParams.TxStart != 0 {
+		t.Fatalf("regtest transaction start: got %d, want 0",
+			RegressionNetParams.TxStart)
+	}
+}
+
 // TestInvalidHashStr ensures newHashFromStr only accepts full, valid hashes.
 func TestInvalidHashStr(t *testing.T) {
 	tests := []string{
