@@ -117,7 +117,7 @@ func createTxInMempool(t *testing.T, r *rpctest.Harness) *wire.MsgTx {
 
 	// Create a new transaction with a lock-time past the current known
 	// MTP.
-	tx := wire.NewMsgTx(1)
+	tx := wire.NewMsgTx(wire.TxVersion)
 	tx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: *testOutput,
 	})

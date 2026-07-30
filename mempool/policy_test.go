@@ -342,7 +342,7 @@ func TestDust(t *testing.T) {
 func TestCheckTransactionStandard(t *testing.T) {
 	// maxTxVersion is the max transaction version the test Policy
 	// accepts.
-	const maxTxVersion = 1
+	const maxTxVersion = wire.TxVersion
 
 	// nulldataAddr constructs a native Handshake nulldata address.
 	nulldataAddr := func(data []byte) wire.Address {
@@ -379,7 +379,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Typical witness pubkey hash transaction",
 			tx: wire.MsgTx{
-				Version:  1,
+				Version:  maxTxVersion,
 				TxIn:     []*wire.TxIn{&dummyTxIn},
 				TxOut:    []*wire.TxOut{&dummyTxOut},
 				LockTime: 0,
@@ -402,7 +402,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Transaction is not finalized",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn: []*wire.TxIn{{
 					PreviousOutPoint: dummyPrevOut,
 					Sequence:         0,
@@ -418,7 +418,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Transaction size is too large",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value: 0,
@@ -439,7 +439,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Valid but non standard public key script",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:   100000000,
@@ -454,7 +454,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Unknown covenant type",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:   100000000,
@@ -472,7 +472,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "More than one nulldata output",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:   0,
@@ -490,7 +490,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Dust output",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:   0,
@@ -505,7 +505,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "One nulldata output with 0 amount (standard)",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:   0,
@@ -519,7 +519,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Nulldata ignores unknown covenant",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:   0,
@@ -536,7 +536,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		{
 			name: "Zero-value OPEN covenant is standard",
 			tx: wire.MsgTx{
-				Version: 1,
+				Version: maxTxVersion,
 				TxIn:    []*wire.TxIn{&dummyTxIn},
 				TxOut: []*wire.TxOut{{
 					Value:    0,
@@ -554,7 +554,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 	for _, test := range tests {
 		// Ensure standardness is as expected.
 		err := CheckTransactionStandard(hnsutil.NewTx(&test.tx),
-			test.height, pastMedianTime, DefaultMinRelayTxFee, 1)
+			test.height, pastMedianTime, DefaultMinRelayTxFee, maxTxVersion)
 		if err == nil && test.isStandard {
 			// Test passes since function returned standard for a
 			// transaction which is intended to be standard.
