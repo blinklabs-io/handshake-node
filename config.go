@@ -5,12 +5,8 @@
 package main
 
 import (
-	"bufio"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -68,7 +64,6 @@ const (
 	defaultUtxoCacheMaxSizeMiB   = 250
 	defaultMaxInboundPerIP       = 8
 	defaultMaxOutboundQueueMiB   = 128
-	sampleConfigFilename         = "sample-handshake-node.conf"
 	defaultTxIndex               = false
 	defaultAddrIndex             = false
 	pruneMinSize                 = 1536
@@ -691,28 +686,27 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// Load additional config from file.
-	var configFileError error
 	parser := newConfigParser(&cfg, &serviceOpts, flags.Default)
 	if !preCfg.RegressionTest ||
 		preCfg.ConfigFile != defaultConfigFile {
 
-		if _, err := os.Stat(preCfg.ConfigFile); os.IsNotExist(err) {
-			err := createDefaultConfigFile(preCfg.ConfigFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating a "+
-					"default config file: %v\n", err)
-			}
-		}
-
+		// A configuration file is optional. The built-in defaults run a
+		// mainnet full node with RPC disabled until credentials are
+		// explicitly provided.
 		err := flags.NewIniParser(parser).ParseFile(preCfg.ConfigFile)
-		if err != nil {
-			if _, ok := err.(*os.PathError); !ok {
+		if err != nil && (!os.IsNotExist(err) ||
+			preCfg.ConfigFile != defaultConfigFile) {
+
+			var pathErr *os.PathError
+			if errors.As(err, &pathErr) {
+				fmt.Fprintf(os.Stderr, "Error loading config "+
+					"file: %v\n", err)
+			} else {
 				fmt.Fprintf(os.Stderr, "Error parsing config "+
 					"file: %v\n", err)
-				fmt.Fprintln(os.Stderr, usageMessage)
-				return nil, nil, err
 			}
-			configFileError = err
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
 		}
 	}
 
@@ -1432,81 +1426,7 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	// Warn about missing config file only after all other configuration is
-	// done.  This prevents the warning on help messages and invalid
-	// options.  Note this should go directly before the return.
-	if configFileError != nil {
-		hnsLog.Warnf("%v", configFileError)
-	}
-
 	return &cfg, remainingArgs, nil
-}
-
-// createDefaultConfig copies the file sample-handshake-node.conf to the given destination path,
-// and populates it with some randomly generated RPC username and password.
-func createDefaultConfigFile(destinationPath string) error {
-	// Create the destination directory if it does not exists
-	err := os.MkdirAll(filepath.Dir(destinationPath), 0700)
-	if err != nil {
-		return err
-	}
-
-	// We assume sample config file path is same as binary
-	path, err := filepath.Abs(filepath.Dir(os.Args[0]))
-	if err != nil {
-		return err
-	}
-	sampleConfigPath := filepath.Join(path, sampleConfigFilename)
-
-	// We generate a random user and password
-	randomBytes := make([]byte, 20)
-	_, err = rand.Read(randomBytes)
-	if err != nil {
-		return err
-	}
-	generatedRPCUser := base64.StdEncoding.EncodeToString(randomBytes)
-
-	_, err = rand.Read(randomBytes)
-	if err != nil {
-		return err
-	}
-	generatedRPCPass := base64.StdEncoding.EncodeToString(randomBytes)
-
-	src, err := os.Open(sampleConfigPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	dest, err := os.OpenFile(destinationPath,
-		os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	defer dest.Close()
-
-	// We copy every line from the sample config file to the destination,
-	// only replacing the two lines for rpcuser and rpcpass
-	reader := bufio.NewReader(src)
-	for err != io.EOF {
-		var line string
-		line, err = reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return err
-		}
-
-		if strings.Contains(line, "rpcuser=") {
-			line = "rpcuser=" + generatedRPCUser + "\n"
-		} else if strings.Contains(line, "rpcpass=") {
-			line = "rpcpass=" + generatedRPCPass + "\n"
-		}
-
-		if _, err := dest.WriteString(line); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // hnsDial connects to the address on the named network using the appropriate

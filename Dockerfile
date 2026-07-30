@@ -15,15 +15,18 @@ LABEL org.opencontainers.image.title="handshake-node" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT_HASH}"
 
-RUN addgroup -S handshake && \
-    adduser -S -G handshake -h /home/handshake handshake && \
-    mkdir -p /home/handshake/.handshake-node && \
-    chown -R handshake:handshake /home/handshake
+RUN addgroup -S -g 101 handshake && \
+    adduser -S -u 100 -G handshake -h /home/handshake handshake && \
+    mkdir -p /data && \
+    ln -s /data /home/handshake/.handshake-node && \
+    chown handshake:handshake /data
 
 COPY --from=build /out/handshake-node /out/hnsctl /bin/
 
-USER handshake
-VOLUME ["/home/handshake/.handshake-node"]
+ENV HOME=/home/handshake
+WORKDIR /data
+USER 100:101
+VOLUME ["/data"]
 
 EXPOSE 12038 12037
 
