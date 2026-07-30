@@ -2637,6 +2637,40 @@ func TestHeadersAnnouncementUpdatesPeerAndRequestsBlock(t *testing.T) {
 	require.Contains(t, sm.peerStates[p].requestedBlocks, *announcedHash)
 }
 
+func TestIBDHeadersFromOtherPeerUseSyncPeerForBlocks(t *testing.T) {
+	t.Parallel()
+
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	const numBlocks = 11
+	blocks := generateTestBlocks(t, &params, numBlocks)
+	syncPeer := newSyncCandidate(t, sm, numBlocks)
+	announcingPeer := newSyncCandidate(t, sm, numBlocks)
+	sm.syncPeer = syncPeer
+	sm.ibdMode = true
+
+	headers := &wire.HnsMsgHeaders{}
+	for _, block := range blocks {
+		headers.Headers = append(headers.Headers, &block.MsgBlock().Header)
+	}
+	sm.handleHeadersMsg(&headersMsg{
+		headers: headers,
+		peer:    announcingPeer,
+	})
+
+	require.Len(t, sm.requestedBlocks, numBlocks)
+	require.Len(t, sm.peerStates[syncPeer].requestedBlocks, numBlocks)
+	require.Empty(t, sm.peerStates[announcingPeer].requestedBlocks)
+	for _, block := range blocks {
+		require.Contains(t, sm.peerStates[syncPeer].requestedBlocks,
+			*block.Hash())
+	}
+}
+
 func TestHandleTxMsgNoMempool(t *testing.T) {
 	t.Parallel()
 

@@ -1295,9 +1295,17 @@ func (sm *SyncManager) handleHeadersMsg(hmsg *headersMsg) {
 	log.Infof("downloaded headers to %v(%v) from peer %v "+
 		"-- now fetching blocks",
 		bestHeaderHash, bestHeaderHeight, hmsg.peer.String())
-	if err := sm.fetchHeaderBlocks(peer); err != nil {
-		retry := func() error { return sm.fetchHeaderBlocks(peer) }
-		sm.failActiveQueuedRequest(peer, "header block", err, retry)
+	blockPeer := peer
+	if sm.ibdMode {
+		// Header announcements can arrive from every connected peer while
+		// initial sync is active.  Keep block downloads on the selected sync
+		// peer so blocks arrive in one bounded, ordered pipeline instead of
+		// filling a separate pipeline for every announcing peer.
+		blockPeer = sm.syncPeer
+	}
+	if err := sm.fetchHeaderBlocks(blockPeer); err != nil {
+		retry := func() error { return sm.fetchHeaderBlocks(blockPeer) }
+		sm.failActiveQueuedRequest(blockPeer, "header block", err, retry)
 	}
 }
 
