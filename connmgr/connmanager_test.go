@@ -47,6 +47,17 @@ type closeTrackingConn struct {
 	closeOnce sync.Once
 }
 
+type pipeCloseTrackingConn struct {
+	net.Conn
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+type blockingCloseListener struct {
+	closeStarted chan struct{}
+	releaseClose chan struct{}
+}
+
 func newCloseTrackingConn(remotePort int) *closeTrackingConn {
 	return &closeTrackingConn{
 		mockConn: mockConn{
@@ -64,6 +75,29 @@ func newCloseTrackingConn(remotePort int) *closeTrackingConn {
 func (c *closeTrackingConn) Close() error {
 	c.closeOnce.Do(func() { close(c.closed) })
 	return nil
+}
+
+func (c *pipeCloseTrackingConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		err = c.Conn.Close()
+		close(c.closed)
+	})
+	return err
+}
+
+func (l *blockingCloseListener) Accept() (net.Conn, error) {
+	return nil, errors.New("listener is not accepting connections")
+}
+
+func (l *blockingCloseListener) Close() error {
+	close(l.closeStarted)
+	<-l.releaseClose
+	return nil
+}
+
+func (l *blockingCloseListener) Addr() net.Addr {
+	return &net.TCPAddr{}
 }
 
 // LocalAddr returns the local address for the connection.
@@ -205,6 +239,171 @@ func TestConnectMode(t *testing.T) {
 	cmgr.Stop()
 }
 
+func TestConnectClosesSuccessfulDialAfterStop(t *testing.T) {
+	local, remote := net.Pipe()
+	t.Cleanup(func() { _ = remote.Close() })
+
+	conn := &pipeCloseTrackingConn{
+		Conn:   local,
+		closed: make(chan struct{}),
+	}
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+
+	cmgr, err := New(&Config{
+		TargetOutbound: 1,
+		Dial: func(net.Addr) (net.Conn, error) {
+			close(dialStarted)
+			<-releaseDial
+			return conn, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cmgr.Start()
+
+	connectDone := make(chan struct{})
+	go func() {
+		defer close(connectDone)
+		cmgr.Connect(&ConnReq{Addr: &net.TCPAddr{
+			IP:   net.ParseIP("192.0.2.1"),
+			Port: 12038,
+		}})
+	}()
+
+	<-dialStarted
+	cmgr.Stop()
+	cmgr.Wait()
+	close(releaseDial)
+	<-connectDone
+
+	select {
+	case <-conn.closed:
+	default:
+		t.Fatal("successful dial was not closed after shutdown")
+	}
+
+	var buf [1]byte
+	if _, err := remote.Read(buf[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("remote read error: got %v, want EOF", err)
+	}
+}
+
+func TestConnectHandlesNilDialAfterStop(t *testing.T) {
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+
+	cmgr, err := New(&Config{
+		TargetOutbound: 1,
+		Dial: func(net.Addr) (net.Conn, error) {
+			close(dialStarted)
+			<-releaseDial
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cmgr.Start()
+
+	connectDone := make(chan struct{})
+	go func() {
+		defer close(connectDone)
+		cmgr.Connect(&ConnReq{Addr: &net.TCPAddr{
+			IP:   net.ParseIP("192.0.2.1"),
+			Port: 12038,
+		}})
+	}()
+
+	<-dialStarted
+	cmgr.Stop()
+	cmgr.Wait()
+	close(releaseDial)
+	<-connectDone
+}
+
+func TestConnectClosesSuccessfulDialDuringStop(t *testing.T) {
+	local, remote := net.Pipe()
+	conn := &pipeCloseTrackingConn{
+		Conn:   local,
+		closed: make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		_ = conn.Close()
+		_ = remote.Close()
+	})
+
+	listener := &blockingCloseListener{
+		closeStarted: make(chan struct{}),
+		releaseClose: make(chan struct{}),
+	}
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+	connected := make(chan struct{})
+
+	cmgr, err := New(&Config{
+		TargetOutbound: 1,
+		Listeners:      []net.Listener{listener},
+		Dial: func(net.Addr) (net.Conn, error) {
+			close(dialStarted)
+			<-releaseDial
+			return conn, nil
+		},
+		OnConnection: func(*ConnReq, net.Conn) {
+			close(connected)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cmgr.Start()
+
+	connectDone := make(chan struct{})
+	go func() {
+		defer close(connectDone)
+		cmgr.Connect(&ConnReq{Addr: &net.TCPAddr{
+			IP:   net.ParseIP("192.0.2.1"),
+			Port: 12038,
+		}})
+	}()
+
+	<-dialStarted
+	stopDone := make(chan struct{})
+	go func() {
+		defer close(stopDone)
+		cmgr.Stop()
+	}()
+	<-listener.closeStarted
+	defer func() {
+		close(listener.releaseClose)
+		<-stopDone
+		cmgr.Wait()
+	}()
+
+	// Stop has set cm.stop, but the blocked listener keeps cm.quit open.
+	// Releasing the dial therefore forces Connect to hand the connection to
+	// connHandler, which must reject it because shutdown is in progress.
+	close(releaseDial)
+	select {
+	case <-conn.closed:
+	case <-connected:
+		t.Fatal("connection was published after shutdown began")
+	}
+	<-connectDone
+
+	select {
+	case <-connected:
+		t.Fatal("connection callback ran after shutdown began")
+	default:
+	}
+
+	var buf [1]byte
+	if _, err := remote.Read(buf[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("remote read error: got %v, want EOF", err)
+	}
+}
+
 // TestTargetOutbound tests the target number of outbound connections.
 //
 // We wait until all connections are established, then test they there are the
@@ -247,17 +446,34 @@ func TestTargetOutbound(t *testing.T) {
 // We make a permanent connection request using Connect, disconnect it using
 // Disconnect and we wait for it to be connected back.
 func TestRetryPermanent(t *testing.T) {
+	type disconnectionEvent struct {
+		req   *ConnReq
+		state ConnState
+	}
+
 	connected := make(chan *ConnReq)
-	disconnected := make(chan *ConnReq)
+	disconnected := make(chan disconnectionEvent)
+	retryDialStarted := make(chan struct{})
+	releaseRetryDial := make(chan struct{})
+	var dialCount uint32
 	cmgr, err := New(&Config{
 		RetryDuration:  time.Millisecond,
 		TargetOutbound: 1,
-		Dial:           mockDialer,
+		Dial: func(addr net.Addr) (net.Conn, error) {
+			if atomic.AddUint32(&dialCount, 1) == 2 {
+				close(retryDialStarted)
+				<-releaseRetryDial
+			}
+			return mockDialer(addr)
+		},
 		OnConnection: func(c *ConnReq, conn net.Conn) {
 			connected <- c
 		},
 		OnDisconnection: func(c *ConnReq) {
-			disconnected <- c
+			disconnected <- disconnectionEvent{
+				req:   c,
+				state: c.State(),
+			}
 		},
 	})
 	if err != nil {
@@ -286,18 +502,21 @@ func TestRetryPermanent(t *testing.T) {
 	}
 
 	cmgr.Disconnect(cr.ID())
-	gotConnReq = <-disconnected
+	gotDisconnect := <-disconnected
+	gotConnReq = gotDisconnect.req
 	wantID = cr.ID()
 	gotID = gotConnReq.ID()
 	if gotID != wantID {
 		t.Fatalf("retry: %v - want ID %v, got ID %v", cr.Addr, wantID, gotID)
 	}
-	gotState = cr.State()
+	<-retryDialStarted
+	gotState = gotDisconnect.state
 	wantState = ConnPending
 	if gotState != wantState {
 		t.Fatalf("retry: %v - want state %v, got state %v", cr.Addr, wantState, gotState)
 	}
 
+	close(releaseRetryDial)
 	gotConnReq = <-connected
 	wantID = cr.ID()
 	gotID = gotConnReq.ID()
@@ -311,13 +530,14 @@ func TestRetryPermanent(t *testing.T) {
 	}
 
 	cmgr.Remove(cr.ID())
-	gotConnReq = <-disconnected
+	gotDisconnect = <-disconnected
+	gotConnReq = gotDisconnect.req
 	wantID = cr.ID()
 	gotID = gotConnReq.ID()
 	if gotID != wantID {
 		t.Fatalf("retry: %v - want ID %v, got ID %v", cr.Addr, wantID, gotID)
 	}
-	gotState = cr.State()
+	gotState = gotDisconnect.state
 	wantState = ConnDisconnected
 	if gotState != wantState {
 		t.Fatalf("retry: %v - want state %v, got state %v", cr.Addr, wantState, gotState)

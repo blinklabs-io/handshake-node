@@ -280,6 +280,16 @@ out:
 			case handleConnected:
 				connReq := msg.c
 
+				// A dial can complete after Stop has begun but before the
+				// quit channel is closed.  Do not publish a connection
+				// accepted during that shutdown window.
+				if atomic.LoadInt32(&cm.stop) != 0 {
+					if msg.conn != nil {
+						_ = msg.conn.Close()
+					}
+					continue
+				}
+
 				if _, ok := pending[connReq.id]; !ok {
 					if msg.conn != nil {
 						msg.conn.Close()
@@ -322,9 +332,7 @@ out:
 					continue
 				}
 
-				// An existing connection was located, mark as
-				// disconnected and execute disconnection
-				// callback.
+				// An existing connection was located, remove and close it.
 				log.Debugf("Disconnected from %v", connReq)
 				delete(conns, msg.id)
 
@@ -332,31 +340,26 @@ out:
 					connReq.conn.Close()
 				}
 
-				if cm.cfg.OnDisconnection != nil {
-					go cm.cfg.OnDisconnection(connReq)
-				}
-
-				// All internal state has been cleaned up, if
-				// this connection is being removed, we will
-				// make no further attempts with this request.
-				if !msg.retry {
-					connReq.updateState(ConnDisconnected)
-					continue
-				}
-
-				// Otherwise, we will attempt a reconnection if
-				// we do not have enough peers, or if this is a
-				// persistent peer. The connection request is
-				// re added to the pending map, so that
-				// subsequent processing of connections and
-				// failures do not ignore the request.
-				if uint32(len(conns)) < cm.cfg.TargetOutbound ||
-					connReq.Permanent {
-
+				// Retry if requested and needed to maintain the target, or
+				// unconditionally for a permanent connection.  Update the
+				// externally visible state before invoking the callback.
+				shouldRetry := msg.retry &&
+					(uint32(len(conns)) < cm.cfg.TargetOutbound ||
+						connReq.Permanent)
+				if shouldRetry {
 					connReq.updateState(ConnPending)
 					log.Debugf("Reconnecting to %v",
 						connReq)
 					pending[msg.id] = connReq
+				} else {
+					connReq.updateState(ConnDisconnected)
+				}
+
+				if cm.cfg.OnDisconnection != nil {
+					go cm.cfg.OnDisconnection(connReq)
+				}
+
+				if shouldRetry {
 					cm.handleFailedConn(connReq, msg.triggerReconnect)
 				}
 
@@ -481,6 +484,9 @@ func (cm *ConnManager) Connect(c *ConnReq) {
 	select {
 	case cm.requests <- handleConnected{c, conn}:
 	case <-cm.quit:
+		if conn != nil {
+			_ = conn.Close()
+		}
 	}
 }
 

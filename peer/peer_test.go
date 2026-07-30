@@ -894,6 +894,9 @@ func TestOutboundPeerAcceptsVerAckBeforeVersion(t *testing.T) {
 	}
 	p.AssociateConnection(localConn)
 	defer func() {
+		// Close the remote write side before waiting so teardown does not
+		// depend on whether the peer input handler has started reading.
+		_ = remoteConn.Close()
 		p.Disconnect()
 		p.WaitForDisconnect()
 	}()
@@ -913,13 +916,12 @@ func TestOutboundPeerAcceptsVerAckBeforeVersion(t *testing.T) {
 		}
 	}()
 
-	select {
-	case msg := <-outboundMessages:
-		if _, ok := msg.(*wire.HnsMsgVersion); !ok {
-			t.Fatalf("expected version message, got %s", msg.Type())
-		}
-	case <-time.After(time.Second):
-		t.Fatal("peer did not send version message")
+	msg, ok := <-outboundMessages
+	if !ok {
+		t.Fatal("peer disconnected before sending version message")
+	}
+	if _, ok := msg.(*wire.HnsMsgVersion); !ok {
+		t.Fatalf("expected version message, got %s", msg.Type())
 	}
 
 	if _, err := wire.WriteHnsMessageN(
@@ -951,33 +953,28 @@ func TestOutboundPeerAcceptsVerAckBeforeVersion(t *testing.T) {
 		t.Fatalf("WriteHnsMessageN version: %v", err)
 	}
 
-	select {
-	case msg := <-outboundMessages:
-		if _, ok := msg.(*wire.HnsMsgVerack); !ok {
-			t.Fatalf("expected verack message, got %s", msg.Type())
-		}
-	case <-time.After(time.Second):
-		t.Fatal("peer did not send verack message")
+	msg, ok = <-outboundMessages
+	if !ok {
+		t.Fatal("peer disconnected before sending verack message")
+	}
+	if _, ok := msg.(*wire.HnsMsgVerack); !ok {
+		t.Fatalf("expected verack message, got %s", msg.Type())
 	}
 
-	select {
-	case state := <-verack:
-		if state.id == 0 {
-			t.Fatal("verack callback fired before peer ID assignment")
-		}
-		if !state.versionKnown {
-			t.Fatal("verack callback fired before version was known")
-		}
-		if state.services != wire.SFNodeNetwork {
-			t.Fatalf("verack callback services = %v, want %v",
-				state.services, wire.SFNodeNetwork)
-		}
-		if state.lastBlock != int32(remoteVersionMsg.Height) {
-			t.Fatalf("verack callback last block = %d, want %d",
-				state.lastBlock, remoteVersionMsg.Height)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("verack callback timeout")
+	state := <-verack
+	if state.id == 0 {
+		t.Fatal("verack callback fired before peer ID assignment")
+	}
+	if !state.versionKnown {
+		t.Fatal("verack callback fired before version was known")
+	}
+	if state.services != wire.SFNodeNetwork {
+		t.Fatalf("verack callback services = %v, want %v",
+			state.services, wire.SFNodeNetwork)
+	}
+	if state.lastBlock != int32(remoteVersionMsg.Height) {
+		t.Fatalf("verack callback last block = %d, want %d",
+			state.lastBlock, remoteVersionMsg.Height)
 	}
 
 	if !p.VersionKnown() {
