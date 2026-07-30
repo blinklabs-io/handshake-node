@@ -9,12 +9,247 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btcd/btcec/v2"
 )
+
+func TestMaxStandardTxSigOpsCost(t *testing.T) {
+	const want = 16000
+	if MaxStandardTxSigOpsCost != want {
+		t.Fatalf("MaxStandardTxSigOpsCost = %d, want %d",
+			MaxStandardTxSigOpsCost, want)
+	}
+}
+
+func TestCheckInputsStandardWitnessPolicy(t *testing.T) {
+	t.Parallel()
+
+	pubKey := bytes.Repeat([]byte{0x02}, standardCompressedKeySize)
+	pubKeyScript, err := txscript.NewScriptBuilder().
+		AddData(pubKey).
+		AddOp(txscript.OP_CHECKSIG).
+		Script()
+	if err != nil {
+		t.Fatalf("create pubkey script: %v", err)
+	}
+	pubKeyHashScript, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_DUP).
+		AddOp(txscript.OP_BLAKE160).
+		AddData(make([]byte, 20)).
+		AddOp(txscript.OP_EQUALVERIFY).
+		AddOp(txscript.OP_CHECKSIG).
+		Script()
+	if err != nil {
+		t.Fatalf("create pubkey-hash script: %v", err)
+	}
+	multisigScript, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_1).
+		AddData(pubKey).
+		AddOp(txscript.OP_1).
+		AddOp(txscript.OP_CHECKMULTISIG).
+		Script()
+	if err != nil {
+		t.Fatalf("create multisig script: %v", err)
+	}
+
+	signature := make([]byte, standardSignatureSize)
+	genericScript := []byte{txscript.OP_TRUE}
+	maxStack := make(wire.TxWitness, maxStandardP2WSHStackItems)
+	for i := range maxStack {
+		maxStack[i] = make([]byte, maxStandardP2WSHItemSize)
+	}
+
+	tests := []struct {
+		name        string
+		version     uint8
+		programSize int
+		witness     wire.TxWitness
+		wantErr     bool
+	}{
+		{
+			name:        "pubkey hash",
+			programSize: 20,
+			witness:     wire.TxWitness{signature, pubKey},
+		},
+		{
+			name:        "pubkey hash wrong item count",
+			programSize: 20,
+			witness:     wire.TxWitness{signature},
+			wantErr:     true,
+		},
+		{
+			name:        "pubkey hash wrong signature size",
+			programSize: 20,
+			witness: wire.TxWitness{
+				make([]byte, standardSignatureSize-1),
+				pubKey,
+			},
+			wantErr: true,
+		},
+		{
+			name:        "pubkey hash uncompressed key",
+			programSize: 20,
+			witness: wire.TxWitness{
+				signature,
+				make([]byte, 65),
+			},
+			wantErr: true,
+		},
+		{
+			name:        "script hash max generic stack",
+			programSize: 32,
+			witness:     append(maxStack, genericScript),
+		},
+		{
+			name:        "script hash too many stack items",
+			programSize: 32,
+			witness: append(
+				append(wire.TxWitness{}, maxStack...),
+				[]byte{}, genericScript,
+			),
+			wantErr: true,
+		},
+		{
+			name:        "script hash oversized stack item",
+			programSize: 32,
+			witness: wire.TxWitness{
+				make([]byte, maxStandardP2WSHItemSize+1),
+				genericScript,
+			},
+			wantErr: true,
+		},
+		{
+			name:        "script hash oversized script",
+			programSize: 32,
+			witness: wire.TxWitness{
+				make([]byte, maxStandardP2WSHScriptSize+1),
+			},
+			wantErr: true,
+		},
+		{
+			name:        "script hash pubkey",
+			programSize: 32,
+			witness:     wire.TxWitness{signature, pubKeyScript},
+		},
+		{
+			name:        "script hash pubkey wrong signature size",
+			programSize: 32,
+			witness: wire.TxWitness{
+				make([]byte, standardSignatureSize-1),
+				pubKeyScript,
+			},
+			wantErr: true,
+		},
+		{
+			name:        "script hash pubkey hash",
+			programSize: 32,
+			witness: wire.TxWitness{
+				signature, pubKey, pubKeyHashScript,
+			},
+		},
+		{
+			name:        "script hash pubkey hash wrong item count",
+			programSize: 32,
+			witness:     wire.TxWitness{signature, pubKeyHashScript},
+			wantErr:     true,
+		},
+		{
+			name:        "script hash multisig",
+			programSize: 32,
+			witness: wire.TxWitness{
+				{}, signature, multisigScript,
+			},
+		},
+		{
+			name:        "script hash multisig missing dummy",
+			programSize: 32,
+			witness:     wire.TxWitness{signature, multisigScript},
+			wantErr:     true,
+		},
+		{
+			name:        "script hash multisig wrong signature size",
+			programSize: 32,
+			witness: wire.TxWitness{
+				{}, make([]byte, standardSignatureSize-1),
+				multisigScript,
+			},
+			wantErr: true,
+		},
+		{
+			name:        "unknown witness max stack",
+			version:     1,
+			programSize: 20,
+			witness:     maxStack,
+		},
+		{
+			name:        "unknown witness too many stack items",
+			version:     1,
+			programSize: 20,
+			witness: append(
+				append(wire.TxWitness{}, maxStack...),
+				[]byte{},
+			),
+			wantErr: true,
+		},
+		{
+			name:        "unknown witness oversized stack item",
+			version:     1,
+			programSize: 20,
+			witness: wire.TxWitness{
+				make([]byte, maxStandardP2WSHItemSize+1),
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			originMsg := wire.NewMsgTx(wire.TxVersion)
+			originMsg.AddTxOut(wire.NewTxOut(
+				1,
+				wire.Address{
+					Version: test.version,
+					Hash:    make([]byte, test.programSize),
+				},
+				wire.Covenant{},
+			))
+			origin := hnsutil.NewTx(originMsg)
+
+			view := blockchain.NewUtxoViewpoint()
+			view.AddTxOut(origin, 0, 1)
+
+			spendMsg := wire.NewMsgTx(wire.TxVersion)
+			spendMsg.AddTxIn(&wire.TxIn{
+				PreviousOutPoint: wire.OutPoint{
+					Hash:  *origin.Hash(),
+					Index: 0,
+				},
+				Witness: test.witness,
+			})
+
+			err := checkInputsStandard(hnsutil.NewTx(spendMsg), view)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected non-standard witness rejection")
+				}
+				if code, ok := extractRejectCode(err); !ok ||
+					code != wire.RejectNonstandard {
+
+					t.Fatalf("reject code = %v, %v; want %v",
+						code, ok, wire.RejectNonstandard)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("standard witness rejected: %v", err)
+			}
+		})
+	}
+}
 
 // TestCalcMinRequiredTxRelayFee tests the calcMinRequiredTxRelayFee API.
 func TestCalcMinRequiredTxRelayFee(t *testing.T) {

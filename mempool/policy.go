@@ -15,9 +15,23 @@ import (
 )
 
 const (
+	// MaxStandardTxSigOpsCost is the maximum signature operation cost for a
+	// standard transaction. Handshake limits a transaction to one fifth of
+	// the block sigop budget.
+	MaxStandardTxSigOpsCost = blockchain.MaxBlockSigOpsCost / 5
+
 	// maxStandardP2SHSigOps is the maximum number of signature operations
 	// that are considered standard in a pay-to-script-hash script.
 	maxStandardP2SHSigOps = 15
+
+	// Handshake witness policy limits. These are stricter than the
+	// corresponding consensus limits to prevent oversized, malleable witness
+	// stacks from being relayed.
+	maxStandardP2WSHStackItems = 100
+	maxStandardP2WSHItemSize   = 80
+	maxStandardP2WSHScriptSize = 3600
+	standardSignatureSize      = 65
+	standardCompressedKeySize  = 33
 
 	// maxStandardTxCost is the max weight permitted by any transaction
 	// according to the current default policy.
@@ -112,6 +126,30 @@ func checkInputsStandard(tx *hnsutil.Tx, utxoView *blockchain.UtxoViewpoint) err
 		entry := utxoView.LookupEntry(txIn.PreviousOutPoint)
 		originPkScript := entry.PkScript()
 		switch txscript.GetScriptClass(originPkScript) {
+		case txscript.WitnessV0PubKeyHashTy:
+			witness := txIn.Witness
+			if len(witness) == 0 {
+				continue
+			}
+			if len(witness) != 2 ||
+				len(witness[0]) != standardSignatureSize ||
+				len(witness[1]) != standardCompressedKeySize {
+
+				str := fmt.Sprintf("transaction input #%d has a "+
+					"non-standard pubkey-hash witness", i)
+				return txRuleError(wire.RejectNonstandard, str)
+			}
+
+		case txscript.WitnessV0ScriptHashTy:
+			if err := checkP2WSHWitnessStandard(i, txIn.Witness); err != nil {
+				return err
+			}
+
+		case txscript.WitnessUnknownTy:
+			if err := checkGenericWitnessStandard(i, txIn.Witness); err != nil {
+				return err
+			}
+
 		case txscript.ScriptHashTy:
 			// Handshake inputs have no SignatureScript; pass nil.
 			numSigOps := txscript.GetPreciseSigOpCount(
@@ -128,6 +166,99 @@ func checkInputsStandard(tx *hnsutil.Tx, utxoView *blockchain.UtxoViewpoint) err
 			str := fmt.Sprintf("transaction input #%d has a "+
 				"non-standard script form", i)
 			return txRuleError(wire.RejectNonstandard, str)
+		}
+	}
+
+	return nil
+}
+
+// checkGenericWitnessStandard enforces Handshake's relay limits for witness
+// versions without a more specific standard stack shape.
+func checkGenericWitnessStandard(inputIndex int, witness wire.TxWitness) error {
+	if len(witness) > maxStandardP2WSHStackItems {
+		str := fmt.Sprintf("transaction input #%d has %d witness "+
+			"stack items which exceeds the allowed max of %d",
+			inputIndex, len(witness), maxStandardP2WSHStackItems)
+		return txRuleError(wire.RejectNonstandard, str)
+	}
+	for _, item := range witness {
+		if len(item) > maxStandardP2WSHItemSize {
+			str := fmt.Sprintf("transaction input #%d has a witness "+
+				"item of %d bytes which exceeds the allowed max of %d",
+				inputIndex, len(item), maxStandardP2WSHItemSize)
+			return txRuleError(wire.RejectNonstandard, str)
+		}
+	}
+	return nil
+}
+
+// checkP2WSHWitnessStandard enforces Handshake's relay limits and canonical
+// stack shapes for a native script-hash witness.
+func checkP2WSHWitnessStandard(inputIndex int, witness wire.TxWitness) error {
+	if len(witness) == 0 {
+		return nil
+	}
+
+	stack := witness[:len(witness)-1]
+	if len(stack) > maxStandardP2WSHStackItems {
+		str := fmt.Sprintf("transaction input #%d has %d witness "+
+			"stack items which exceeds the allowed max of %d",
+			inputIndex, len(stack), maxStandardP2WSHStackItems)
+		return txRuleError(wire.RejectNonstandard, str)
+	}
+	for _, item := range stack {
+		if len(item) > maxStandardP2WSHItemSize {
+			str := fmt.Sprintf("transaction input #%d has a witness "+
+				"item of %d bytes which exceeds the allowed max of %d",
+				inputIndex, len(item), maxStandardP2WSHItemSize)
+			return txRuleError(wire.RejectNonstandard, str)
+		}
+	}
+
+	witnessScript := witness[len(witness)-1]
+	if len(witnessScript) > maxStandardP2WSHScriptSize {
+		str := fmt.Sprintf("transaction input #%d has a witness script "+
+			"of %d bytes which exceeds the allowed max of %d",
+			inputIndex, len(witnessScript), maxStandardP2WSHScriptSize)
+		return txRuleError(wire.RejectNonstandard, str)
+	}
+
+	switch txscript.GetScriptClass(witnessScript) {
+	case txscript.PubKeyTy:
+		if len(stack) != 1 || len(stack[0]) != standardSignatureSize {
+			str := fmt.Sprintf("transaction input #%d has a "+
+				"non-standard pubkey witness", inputIndex)
+			return txRuleError(wire.RejectNonstandard, str)
+		}
+
+	case txscript.PubKeyHashTy:
+		if len(stack) != 2 ||
+			len(stack[0]) != standardSignatureSize ||
+			len(stack[1]) != standardCompressedKeySize {
+
+			str := fmt.Sprintf("transaction input #%d has a "+
+				"non-standard pubkey-hash witness", inputIndex)
+			return txRuleError(wire.RejectNonstandard, str)
+		}
+
+	case txscript.MultiSigTy:
+		_, requiredSigs, err := txscript.CalcMultiSigStats(witnessScript)
+		if err != nil {
+			return txRuleError(wire.RejectNonstandard,
+				fmt.Sprintf("transaction input #%d has an invalid "+
+					"multisig witness script: %v", inputIndex, err))
+		}
+		if len(stack) != requiredSigs+1 || len(stack[0]) != 0 {
+			str := fmt.Sprintf("transaction input #%d has a "+
+				"non-standard multisig witness", inputIndex)
+			return txRuleError(wire.RejectNonstandard, str)
+		}
+		for _, signature := range stack[1:] {
+			if len(signature) != standardSignatureSize {
+				str := fmt.Sprintf("transaction input #%d has a "+
+					"non-standard multisig signature", inputIndex)
+				return txRuleError(wire.RejectNonstandard, str)
+			}
 		}
 	}
 
