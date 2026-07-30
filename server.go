@@ -1302,20 +1302,13 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.HnsMsgAddr) {
 			return
 		}
 
-		// Set the timestamp to 5 days ago if it's more than 24 hours
+		// Set the timestamp to 5 days ago if it's more than 10 minutes
 		// in the future so this address is one of the first to be
 		// removed when space is needed.
-		now := time.Now()
-		timestamp := hnsTimeToTime(na.Time)
-		if timestamp.After(now.Add(time.Minute * 10)) {
-			timestamp = now.Add(-1 * time.Hour * 24 * 5)
+		currentNa := netAddressFromAddrGossip(&na, time.Now())
+		if currentNa == nil {
+			continue
 		}
-
-		// Add address to known addresses for this peer. This is
-		// converted to NetAddressV2 since that's what the address
-		// manager uses.
-		currentNa := na.NetAddressV2()
-		currentNa.Timestamp = timestamp
 		addrs = append(addrs, currentNa)
 		sp.addKnownAddresses([]*wire.NetAddressV2{currentNa})
 	}
@@ -1326,6 +1319,27 @@ func (sp *serverPeer) OnAddr(_ *peer.Peer, msg *wire.HnsMsgAddr) {
 	// XXX bitcoind gives a 2 hour time penalty here, do we want to do the
 	// same?
 	sp.server.addrManager.AddAddresses(addrs, sp.NA())
+}
+
+// netAddressFromAddrGossip converts an unkeyed advertised address for the
+// address manager.  Brontide identity keys in addr messages are not
+// authenticated and accepting them would let any peer replace the key for a
+// known endpoint.  hsd applies the same trust boundary and ignores keyed
+// addresses learned through addr gossip.
+func netAddressFromAddrGossip(na *wire.HnsNetAddress,
+	now time.Time) *wire.NetAddressV2 {
+
+	if na.Key != [wire.HnsBrontideKeySize]byte{} {
+		return nil
+	}
+
+	currentNa := na.NetAddressV2()
+	timestamp := hnsTimeToTime(na.Time)
+	if timestamp.After(now.Add(time.Minute * 10)) {
+		timestamp = now.Add(-1 * time.Hour * 24 * 5)
+	}
+	currentNa.Timestamp = timestamp
+	return currentNa
 }
 
 // OnRead is invoked when a peer receives a message and it is used to update the
@@ -2178,30 +2192,56 @@ func withBrontideKey(addr net.Addr, key []byte) net.Addr {
 }
 
 func (s *server) dialPeer(addr net.Addr) (net.Conn, error) {
+	var remoteKey []byte
+	if keyAddr, ok := addr.(brontideKeyAddr); ok {
+		remoteKey = keyAddr.BrontideKey()
+		if len(remoteKey) != 0 && len(remoteKey) != brontide.PublicKeySize {
+			return nil, fmt.Errorf(
+				"brontide outbound peer %s has a %d-byte identity key",
+				addr, len(remoteKey),
+			)
+		}
+	}
+
+	if len(remoteKey) == 0 {
+		return hnsDial(addr)
+	}
+
+	if !cfg.BrontideTransport {
+		return nil, fmt.Errorf(
+			"brontide outbound peer %s cannot be dialed while Brontide is disabled",
+			addr,
+		)
+	}
+	if s.brontideIdentity == nil {
+		return nil, fmt.Errorf(
+			"brontide outbound peer %s cannot be dialed without a local identity",
+			addr,
+		)
+	}
+
 	conn, err := hnsDial(addr)
 	if err != nil {
 		return nil, err
 	}
-	if !cfg.BrontideTransport || s.brontideIdentity == nil {
-		return conn, nil
-	}
-
-	keyAddr, ok := addr.(brontideKeyAddr)
-	if !ok || len(keyAddr.BrontideKey()) != brontide.PublicKeySize {
-		return conn, nil
-	}
 
 	econn, err := brontide.ClientHandshake(
-		conn, s.brontideIdentity, keyAddr.BrontideKey(),
+		conn, s.brontideIdentity, remoteKey,
 	)
 	if err == nil {
 		return econn, nil
 	}
 
-	_ = conn.Close()
-	peerLog.Debugf("Brontide outbound handshake to %s failed, "+
-		"falling back to plaintext: %v", addr, err)
-	return hnsDial(addr)
+	handshakeErr := fmt.Errorf(
+		"brontide outbound handshake to %s: %w", addr, err,
+	)
+	if closeErr := conn.Close(); closeErr != nil {
+		return nil, errors.Join(
+			handshakeErr,
+			fmt.Errorf("close failed Brontide connection: %w", closeErr),
+		)
+	}
+	return nil, handshakeErr
 }
 
 func (s *server) wrapInboundConn(conn net.Conn) (net.Conn, bool, error) {

@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/handshake-node/brontide"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
@@ -103,6 +105,177 @@ func TestWithBrontideKey(t *testing.T) {
 	key[0] ^= 0xff
 	if bytes.Equal(keyed.BrontideKey(), key) {
 		t.Fatal("wrapped address retained mutable key storage")
+	}
+}
+
+func TestDialPeerBrontideFailureDoesNotFallback(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() {
+		cfg = oldCfg
+	})
+
+	localPriv, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey local: %v", err)
+	}
+	remotePriv, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey remote: %v", err)
+	}
+
+	dialCount := 0
+	remoteDone := make(chan error, 2)
+	cfg = &config{
+		BrontideTransport: true,
+		dial: func(_, _ string, _ time.Duration) (net.Conn, error) {
+			dialCount++
+			local, remote := net.Pipe()
+			go func() {
+				defer func() {
+					_ = remote.Close()
+				}()
+				actOne := make([]byte, brontide.ActOneSize)
+				_, err := io.ReadFull(remote, actOne)
+				remoteDone <- err
+			}()
+			return local, nil
+		},
+	}
+
+	s := &server{brontideIdentity: localPriv}
+	addr := withBrontideKey(
+		&net.TCPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 12038},
+		remotePriv.PubKey().SerializeCompressed(),
+	)
+	conn, err := s.dialPeer(addr)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("failed Brontide handshake fell back to plaintext")
+	}
+	if !strings.Contains(err.Error(), "brontide outbound handshake") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dialCount != 1 {
+		t.Fatalf("dial count: got %d, want 1", dialCount)
+	}
+	for range dialCount {
+		if err := <-remoteDone; err != nil {
+			t.Fatalf("remote read: %v", err)
+		}
+	}
+}
+
+func TestDialPeerRejectsUnusableBrontideKeyBeforeDial(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() {
+		cfg = oldCfg
+	})
+
+	identity, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	remote, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey remote: %v", err)
+	}
+	tcpAddr := &net.TCPAddr{
+		IP:   net.IPv4(203, 0, 113, 10),
+		Port: 12038,
+	}
+	validKeyAddr := withBrontideKey(
+		tcpAddr, remote.PubKey().SerializeCompressed(),
+	)
+
+	tests := []struct {
+		name     string
+		enabled  bool
+		identity bool
+		addr     net.Addr
+	}{
+		{
+			name:     "transport disabled",
+			identity: true,
+			addr:     validKeyAddr,
+		},
+		{
+			name:    "identity unavailable",
+			enabled: true,
+			addr:    validKeyAddr,
+		},
+		{
+			name:     "malformed remote key",
+			enabled:  true,
+			identity: true,
+			addr: brontideAddr{
+				Addr: tcpAddr,
+				key:  []byte{1},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dialed := false
+			cfg = &config{
+				BrontideTransport: test.enabled,
+				dial: func(_, _ string, _ time.Duration) (net.Conn, error) {
+					dialed = true
+					return nil, io.EOF
+				},
+			}
+			s := &server{}
+			if test.identity {
+				s.brontideIdentity = identity
+			}
+
+			conn, err := s.dialPeer(test.addr)
+			if conn != nil {
+				_ = conn.Close()
+				t.Fatal("rejected keyed peer returned a connection")
+			}
+			if err == nil {
+				t.Fatal("unusable Brontide key was accepted")
+			}
+			if dialed {
+				t.Fatal("unusable Brontide key reached the network dialer")
+			}
+		})
+	}
+}
+
+func TestNetAddressFromAddrGossipRejectsBrontideKey(t *testing.T) {
+	now := time.Unix(2_000_000, 0)
+	advertised := wire.HnsNetAddress{
+		Time:     uint64(now.Add(-time.Hour).Unix()),
+		Services: uint64(wire.SFNodeNetwork),
+		Host:     net.IPv4(203, 0, 113, 10),
+		Port:     12038,
+	}
+
+	got := netAddressFromAddrGossip(&advertised, now)
+	if got == nil {
+		t.Fatal("unkeyed address was rejected")
+	}
+	if !got.Timestamp.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("timestamp: got %v, want %v",
+			got.Timestamp, now.Add(-time.Hour))
+	}
+
+	remotePriv, err := brontide.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	copy(advertised.Key[:], remotePriv.PubKey().SerializeCompressed())
+	if got := netAddressFromAddrGossip(&advertised, now); got != nil {
+		t.Fatalf("keyed gossip address was accepted: %v", got)
+	}
+
+	advertised.Key = [wire.HnsBrontideKeySize]byte{0x04}
+	if got := netAddressFromAddrGossip(&advertised, now); got != nil {
+		t.Fatalf("malformed keyed gossip address was accepted: %v", got)
 	}
 }
 

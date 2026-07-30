@@ -6,8 +6,11 @@ package addrmgr
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -126,9 +129,6 @@ func TestAddrManagerSerialization(t *testing.T) {
 	expectedAddrs := make(map[string]*wire.NetAddressV2, numAddrs)
 	for i := 0; i < numAddrs; i++ {
 		addr := routableRandAddr(t)
-		if i%2 == 0 {
-			addr.SetBrontideKey(testBrontideKey(byte(i + 1)))
-		}
 		expectedAddrs[NetAddressKey(addr)] = addr
 		addrMgr.AddAddress(addr, routableRandAddr(t))
 	}
@@ -148,29 +148,78 @@ func TestAddrManagerSerialization(t *testing.T) {
 	assertAddrs(t, addrMgr, expectedAddrs)
 }
 
-func TestAddrManagerUpdatesBrontideKeyForKnownAddress(t *testing.T) {
+func TestAddrManagerDiscardsUntrustedBrontideKeys(t *testing.T) {
 	t.Parallel()
 
-	addrMgr := New(t.TempDir(), nil)
+	tempDir := t.TempDir()
+	addrMgr := New(tempDir, nil)
 	addr := routableRandAddr(t)
 	addr.Timestamp = time.Now()
 	srcAddr := routableRandAddr(t)
+	key := testBrontideKey(0x21)
+	addr.SetBrontideKey(key)
 	addrMgr.AddAddress(addr, srcAddr)
+
+	got := addrMgr.find(addr).NetAddress()
+	if gotKey := got.BrontideKey(); gotKey != nil {
+		t.Fatalf("new address retained untrusted brontide key %x", gotKey)
+	}
+	if !bytes.Equal(addr.BrontideKey(), key) {
+		t.Fatal("adding address mutated caller's brontide key")
+	}
 
 	update := *addr
 	update.Timestamp = addr.Timestamp.Add(-time.Hour)
-	wantKey := testBrontideKey(0x42)
-	update.SetBrontideKey(wantKey)
+	update.SetBrontideKey(testBrontideKey(0x42))
 	addrMgr.AddAddress(&update, srcAddr)
 
-	got := addrMgr.find(addr).NetAddress()
-	if !bytes.Equal(got.BrontideKey(), wantKey) {
-		t.Fatalf("brontide key: got %x, want %x",
-			got.BrontideKey(), wantKey)
+	got = addrMgr.find(addr).NetAddress()
+	if gotKey := got.BrontideKey(); gotKey != nil {
+		t.Fatalf("known address retained replacement brontide key %x", gotKey)
 	}
 	if !got.Timestamp.Equal(addr.Timestamp) {
 		t.Fatalf("timestamp: got %v, want %v",
 			got.Timestamp, addr.Timestamp)
+	}
+
+	addrMgr.savePeers()
+	encoded, err := os.ReadFile(addrMgr.peersFile)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var saved serializedAddrManager
+	if err := json.Unmarshal(encoded, &saved); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(saved.Addresses) != 1 {
+		t.Fatalf("saved address count: got %d, want 1", len(saved.Addresses))
+	}
+	if saved.Addresses[0].BrontideKey != "" {
+		t.Fatalf("saved untrusted brontide key %q",
+			saved.Addresses[0].BrontideKey)
+	}
+
+	// Simulate a version 2 peers file created before identity keys were
+	// removed from the unauthenticated address cache.  The legacy field must
+	// be accepted for compatibility but not restored.
+	saved.Addresses[0].BrontideKey = fmt.Sprintf("%x", key)
+	encoded, err = json.Marshal(&saved)
+	if err != nil {
+		t.Fatalf("Marshal legacy peers: %v", err)
+	}
+	if err := os.WriteFile(addrMgr.peersFile, encoded, 0o600); err != nil {
+		t.Fatalf("WriteFile legacy peers: %v", err)
+	}
+
+	reloaded := New(tempDir, nil)
+	reloaded.loadPeers()
+	reloadedAddr := reloaded.find(addr)
+	if reloadedAddr == nil {
+		t.Fatal("legacy peers file did not restore address")
+	}
+	got = reloadedAddr.NetAddress()
+	if gotKey := got.BrontideKey(); gotKey != nil {
+		t.Fatalf("restored legacy brontide key %x", gotKey)
 	}
 }
 
