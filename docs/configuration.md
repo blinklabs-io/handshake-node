@@ -25,6 +25,13 @@ HANDSHAKE_NODE_RPCLISTEN=127.0.0.1:12037 \
 handshake-node
 ```
 
+## Regression test database lifecycle
+
+`--regtest` resets its block database on startup by default. Add
+`--regtestpersist` when a test must restart against the same database, such as
+shutdown recovery or index rebuild testing. `--regtestpersist` is rejected
+unless `--regtest` is also enabled.
+
 ## Peer server listen interface
 
 handshake-node allows you to bind to specific interfaces which enables you to setup

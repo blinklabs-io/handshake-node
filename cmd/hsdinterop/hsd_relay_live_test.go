@@ -235,6 +235,7 @@ func TestPinnedHsdRelayReorgAndRecovery(t *testing.T) {
 	nodeCommand := func() *exec.Cmd {
 		args := []string{
 			"--regtest",
+			"--regtestpersist",
 			"--datadir=" + nodeDataDir,
 			"--logdir=" + nodeLogDir,
 			fmt.Sprintf("--rpclisten=127.0.0.1:%d", nodeRPCPort),

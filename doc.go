@@ -116,6 +116,8 @@ Application Options:
 	    --proxypass=            Password for proxy server
 	    --proxyuser=            Username for proxy server
 	    --regtest               Use the regression test network
+	    --regtestpersist        Preserve the regression test database across
+	                            restarts (requires --regtest)
 	    --rejectnonstd          Reject non-standard transactions regardless of
 	                            the default settings for the active network.
 	    --relaynonstd           Relay non-standard transactions regardless of the

@@ -184,6 +184,31 @@ func TestLoadConfigRejectsMissingExplicitFile(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsRegtestPersistWithoutRegtest(t *testing.T) {
+	const helperEnv = "HANDSHAKE_NODE_TEST_REGTEST_PERSIST"
+
+	if os.Getenv(helperEnv) == "1" {
+		setConfigTestDefaultPaths(os.Getenv("HOME"))
+		os.Args = []string{"handshake-node", "--regtestpersist"}
+
+		_, _, err := loadConfig()
+		if err == nil ||
+			!strings.Contains(err.Error(), "--regtestpersist requires --regtest") {
+
+			t.Fatalf("loadConfig error: got %v, want regtest requirement", err)
+		}
+		return
+	}
+
+	tempDir := t.TempDir()
+	cmd := exec.Command(os.Args[0],
+		"-test.run=^TestLoadConfigRejectsRegtestPersistWithoutRegtest$")
+	cmd.Env = configTestEnvironment(tempDir, helperEnv+"=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("regtest persistence validation: %v\n%s", err, output)
+	}
+}
+
 func TestLoadConfigDefaultFile(t *testing.T) {
 	const helperEnv = "HANDSHAKE_NODE_TEST_DEFAULT_CONFIG_FILE"
 

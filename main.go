@@ -375,11 +375,12 @@ func hnsMain(serverChan chan<- *server) error {
 	return nil
 }
 
-// removeRegressionDB removes the existing regression test database if running
-// in regression test mode and it already exists.
+// removeRegressionDB removes the existing regression test database when
+// automatic reset behavior is active.
 func removeRegressionDB(dbPath string) error {
-	// Don't do anything if not in regression test mode.
-	if !cfg.RegressionTest {
+	// Don't do anything outside regression test mode or when the operator
+	// explicitly requested a persistent regression test database.
+	if !cfg.RegressionTest || cfg.PersistRegtest {
 		return nil
 	}
 
@@ -470,9 +471,12 @@ func loadBlockDB() (database.DB, error) {
 	// The database name is based on the database type.
 	dbPath := blockDbPath(cfg.DbType)
 
-	// The regression test is special in that it needs a clean database for
-	// each run, so remove it now if it already exists.
-	removeRegressionDB(dbPath)
+	// The regression test defaults to a clean database for each run unless
+	// the operator explicitly requested persistence for restart and recovery
+	// testing.
+	if err := removeRegressionDB(dbPath); err != nil {
+		return nil, err
+	}
 
 	hnsLog.Infof("Loading block database from '%s'", dbPath)
 	db, err := database.Open(cfg.DbType, dbPath, activeNetParams.Net)
