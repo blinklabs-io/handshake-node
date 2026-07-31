@@ -706,6 +706,76 @@ func TestPruneAmbiguousMetadataCommit(t *testing.T) {
 	}
 }
 
+func TestPruneBatchConstructionErrorRollsBack(t *testing.T) {
+	dbPath, idb, blocks, _, pendingFiles := setupPrunableDB(t)
+	if err := idb.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+	idb, err := openDB(dbPath, blockDataNet, false)
+	if err != nil {
+		t.Fatalf("reopen fixture database: %v", err)
+	}
+	pdb := idb.(*db)
+	pdb.store.maxBlockFileSize = pruneCrashBlockFileSize
+
+	continuation := makePruneContinuationBlock(t, blocks[len(blocks)-1], 3050)
+	injectedErr := errors.New("injected batch construction error")
+	originalBuildBatch := pdb.cache.buildBatchFunc
+	pdb.cache.buildBatchFunc = func(TreapForEacher, TreapForEacher) (
+		*leveldb.Batch, error) {
+
+		return nil, injectedErr
+	}
+	originalWriteBatchSync := pdb.cache.writeBatchSyncFunc
+	writerCalled := false
+	pdb.cache.writeBatchSyncFunc = func(batch *leveldb.Batch) error {
+		writerCalled = true
+		return originalWriteBatchSync(batch)
+	}
+
+	err = idb.Update(func(tx database.Tx) error {
+		if err := tx.StoreBlock(continuation); err != nil {
+			return err
+		}
+		_, err := tx.PruneBlocks(pruneCrashTarget)
+		return err
+	})
+	if !errors.Is(err, injectedErr) {
+		_ = idb.Close()
+		t.Fatalf("expected batch construction error, got %v", err)
+	}
+	if writerCalled {
+		_ = idb.Close()
+		t.Fatal("metadata writer ran after batch construction failed")
+	}
+	if pdb.recoveryRequired.Load() {
+		_ = idb.Close()
+		t.Fatal("pre-write batch failure incorrectly required recovery")
+	}
+	requireBlockMissing(t, idb, continuation.Hash())
+	for _, fileNum := range pendingFiles {
+		if _, err := os.Stat(blockFilePath(dbPath, fileNum)); err != nil {
+			_ = idb.Close()
+			t.Fatalf("batch construction failure deleted file %d: %v",
+				fileNum, err)
+		}
+	}
+
+	pdb.cache.buildBatchFunc = originalBuildBatch
+	pdb.cache.writeBatchSyncFunc = originalWriteBatchSync
+	if err := idb.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+	reopened, err := openDB(dbPath, blockDataNet, false)
+	if err != nil {
+		t.Fatalf("reopen after batch construction failure: %v", err)
+	}
+	requireBlockMissing(t, reopened, continuation.Hash())
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("close reopened database: %v", err)
+	}
+}
+
 func TestPruneAmbiguousCachedMetadataFlush(t *testing.T) {
 	dbPath, idb, blocks, deletedHashes, pendingFiles := setupPrunableDB(t)
 	if err := idb.Close(); err != nil {

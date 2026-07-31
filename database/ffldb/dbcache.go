@@ -400,6 +400,12 @@ type dbCache struct {
 	// tests can simulate an error with an ambiguous commit outcome at the
 	// actual atomic writer boundary.
 	writeBatchFunc func(batch *leveldb.Batch) error
+
+	// buildBatchFunc constructs the atomic metadata batch before either
+	// writer is called.  It is a field so white-box tests can distinguish
+	// safe pre-write failures from ambiguous writer failures.
+	buildBatchFunc func(pendingKeys, pendingRemove TreapForEacher) (
+		*leveldb.Batch, error)
 }
 
 // ambiguousMetadataWriteError identifies a metadata write that returned an
@@ -415,6 +421,20 @@ func (e *ambiguousMetadataWriteError) Error() string {
 }
 
 func (e *ambiguousMetadataWriteError) Unwrap() error {
+	return e.err
+}
+
+// metadataBatchConstructionError identifies a failure that occurred before a
+// LevelDB batch write was attempted.
+type metadataBatchConstructionError struct {
+	err error
+}
+
+func (e *metadataBatchConstructionError) Error() string {
+	return e.err.Error()
+}
+
+func (e *metadataBatchConstructionError) Unwrap() error {
 	return e.err
 }
 
@@ -538,9 +558,9 @@ func treapsToBatch(pendingKeys, pendingRemove TreapForEacher) (*leveldb.Batch, e
 // add/update/remove updates to the underlying database through LevelDB's
 // write-ahead log.
 func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error {
-	batch, err := treapsToBatch(pendingKeys, pendingRemove)
+	batch, err := c.buildBatchFunc(pendingKeys, pendingRemove)
 	if err != nil {
-		return err
+		return &metadataBatchConstructionError{err: err}
 	}
 	if err := c.writeBatchFunc(batch); err != nil {
 		return convertErr("failed to commit metadata batch", err)
@@ -553,9 +573,9 @@ func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error 
 // It is used by pruning so metadata removals and their durable deletion intent
 // reach disk before any block files are unlinked.
 func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) error {
-	batch, err := treapsToBatch(pendingKeys, pendingRemove)
+	batch, err := c.buildBatchFunc(pendingKeys, pendingRemove)
 	if err != nil {
-		return err
+		return &metadataBatchConstructionError{err: err}
 	}
 	if err := c.writeBatchSyncFunc(batch); err != nil {
 		dbErr := convertErr("failed to durably commit pruning transaction", err)
@@ -610,6 +630,10 @@ func (c *dbCache) flushWithPruneWriter(usePruneWriter bool) error {
 		err = c.commitTreaps(cachedKeys, cachedRemove)
 	}
 	if err != nil {
+		var constructionErr *metadataBatchConstructionError
+		if errors.As(err, &constructionErr) {
+			return err
+		}
 		if errors.Is(err, syscall.ENOSPC) {
 			log.Errorf("%v. Cannot save any more blocks "+
 				"due to the disk being full "+
@@ -697,6 +721,10 @@ func (c *dbCache) commitTx(tx *transaction) error {
 		// Perform all LevelDB updates using an atomic write-ahead-log batch.
 		err := c.commitTreaps(tx.pendingKeys, tx.pendingRemove)
 		if err != nil {
+			var constructionErr *metadataBatchConstructionError
+			if errors.As(err, &constructionErr) {
+				return err
+			}
 			if errors.Is(err, syscall.ENOSPC) {
 				log.Errorf("%v. Cannot save any more blocks "+
 					"due to the disk being full "+
@@ -785,13 +813,14 @@ func (c *dbCache) Close() error {
 // since the last flush.
 func newDbCache(ldb *leveldb.DB, store *blockStore, maxSize uint64, flushIntervalSecs uint32) *dbCache {
 	cache := &dbCache{
-		ldb:           ldb,
-		store:         store,
-		maxSize:       maxSize,
-		flushInterval: time.Second * time.Duration(flushIntervalSecs),
-		lastFlush:     time.Now(),
-		cachedKeys:    treap.NewImmutable(),
-		cachedRemove:  treap.NewImmutable(),
+		ldb:            ldb,
+		store:          store,
+		maxSize:        maxSize,
+		flushInterval:  time.Second * time.Duration(flushIntervalSecs),
+		lastFlush:      time.Now(),
+		cachedKeys:     treap.NewImmutable(),
+		cachedRemove:   treap.NewImmutable(),
+		buildBatchFunc: treapsToBatch,
 	}
 	cache.writeBatchSyncFunc = func(batch *leveldb.Batch) error {
 		return writeMetadataBatch(ldb, batch)
