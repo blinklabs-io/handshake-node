@@ -135,6 +135,8 @@ type config struct {
 	Listeners            []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces on the default port for the active network)"`
 	LogDir               string        `long:"logdir" description:"Directory to log output."`
 	MaxOrphanTxs         int           `long:"maxorphantx" description:"Max number of orphan transactions to keep in memory"`
+	MaxMempoolSize       uint64        `long:"maxmempoolsize" description:"Maximum aggregate mempool memory estimate in bytes"`
+	MempoolExpiry        time.Duration `long:"mempoolexpiry" description:"Maximum age for unconfirmed transaction packages. Valid time units are {s, m, h}"`
 	MaxInboundPerIP      int           `long:"maxinboundperip" description:"Maximum inbound connections from one source IP, including handshakes (0 disables the per-IP limit)"`
 	MaxOutboundQueueMiB  uint          `long:"maxoutboundqueuemib" description:"Maximum aggregate P2P response, output queue, and transport workspace for all peers in MiB (not total process memory)"`
 	MaxPeers             int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
@@ -639,6 +641,8 @@ func loadConfig() (*config, []string, error) {
 		BlockMaxWeight:       defaultBlockMaxWeight,
 		BlockPrioritySize:    mempool.DefaultBlockPrioritySize,
 		MaxOrphanTxs:         defaultMaxOrphanTransactions,
+		MaxMempoolSize:       mempool.DefaultMaxMempoolSize,
+		MempoolExpiry:        mempool.DefaultMempoolExpiry,
 		SigCacheMaxSize:      defaultSigCacheMaxSize,
 		UtxoCacheMaxSizeMiB:  defaultUtxoCacheMaxSizeMiB,
 		Generate:             defaultGenerate,
@@ -1049,6 +1053,24 @@ func loadConfig() (*config, []string, error) {
 		str := "%s: The maxorphantx option may not be less than 0 " +
 			"-- parsed [%d]"
 		err := fmt.Errorf(str, funcName, cfg.MaxOrphanTxs)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if cfg.MaxMempoolSize == 0 {
+		err := fmt.Errorf(
+			"%s: The maxmempoolsize option must be greater than 0",
+			funcName,
+		)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if cfg.MempoolExpiry <= 0 {
+		err := fmt.Errorf(
+			"%s: The mempoolexpiry option must be greater than 0",
+			funcName,
+		)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err

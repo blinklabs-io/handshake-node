@@ -70,8 +70,9 @@ should mount `/data`.
 
 Allocate four CPUs, 4 GiB of memory, and SSD-backed storage for initial mainnet
 sync. The defaults include a 250 MiB UTXO cache, a 100 MiB database cache, and
-up to 128 MiB of aggregate P2P queues. The block index, mempool, Go runtime,
-database, and transient validation allocations require additional memory.
+up to 128 MiB of aggregate P2P queues. The mempool has a separate 100,000,000
+byte retained-memory estimate limit. The block index, Go runtime, database, and
+transient validation allocations require additional memory.
 `GOMAXPROCS` or the container CPU limit controls CPU concurrency; it does not
 limit memory.
 
@@ -100,9 +101,12 @@ services:
 ```
 
 The `handshake_go_*` metrics report Go heap, stack, runtime memory, goroutines,
-GC cycles, `GOMAXPROCS`, and the Go soft memory limit. Container resident
-memory also includes non-Go allocations and file-backed mappings, so alert on
-the container metric rather than treating Go heap as total memory.
+GC cycles, `GOMAXPROCS`, and the Go soft memory limit.
+`handshake_mempool_memory_usage_bytes` and
+`handshake_mempool_memory_limit_bytes` report the mempool's retained-memory
+estimate and configured bound. Container resident memory also includes non-Go
+allocations and file-backed mappings, so alert on the container metric rather
+than treating Go heap or the mempool estimate as total memory.
 
 ## Diagnosing restart loops
 
