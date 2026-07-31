@@ -3,6 +3,47 @@ User visible changes for handshake-node
   A Handshake full node implementation written in Go
 ============================================================================
 
+Changes in 0.3.0-rc1 (release candidate)
+  - Consensus and validation hardening:
+    - Enable checkpoint fast-add only after the configured checkpoint header
+      is known in the valid best-header chain, and require full consensus
+      validation for addblock imports. (#103)
+    - Enforce the mainnet transaction-start height and propagate signature
+      operation lookup failures instead of accepting incomplete counts.
+      (#107, #109)
+  - Mempool policy and resource bounds:
+    - Match hsd policy for transaction versions, unconfirmed ancestor chains,
+      witness standardness, and signature operation costs. (#110, #111, #112)
+    - Bound retained mempool memory, expire transaction packages, and evict
+      low-fee packages while accounting for claims and airdrops. (#115)
+  - Network transport and synchronization:
+    - Close successful outbound dials when shutdown wins before connection
+      handoff or before the connection manager can accept them. (#102)
+    - Fail closed when Brontide is required and a peer cannot be authenticated.
+      (#106)
+    - Keep initial block download on the selected synchronization peer to avoid
+      duplicate block pipelines, orphan churn, and excess CPU and I/O. (#113)
+  - Containers, builds, and observability:
+    - Run archival mainnet from built-in defaults when no config file is
+      present, use /data as the non-root container volume, and retain the
+      legacy home-directory mount path. (#104)
+    - Honor container CPU quotas automatically and publish release builds for
+      supported Darwin, FreeBSD, Linux, and Windows architectures. (#105, #108)
+    - Export Go runtime, process resident-memory, configured cache, P2P queue,
+      and mempool memory metrics, and document resource sizing and restart-loop
+      diagnosis. (#114, #115)
+  - New configuration options:
+    - Add maxmempoolsize and mempoolexpiry to bound retained mempool memory and
+      transaction lifetime. (#115)
+  - Migration and operator notes:
+    - New container deployments should mount persistent storage at /data.
+      Existing mounts at /home/handshake/.handshake-node remain compatible.
+      Bind mounts must be writable by UID 100 and GID 101.
+    - The container starts a mainnet P2P node without a config file. RPC
+      remains disabled until credentials are explicitly configured.
+  - Contributors (alphabetical order):
+    - Chris Gianelloni
+
 Changes in 0.2.2-rc1 (release candidate)
   - Consensus and validation hardening:
     - Verify claim DNSSEC proofs against committed name roots. (#88)
