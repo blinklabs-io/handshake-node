@@ -9,9 +9,9 @@ import (
 	"fmt"
 
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -596,18 +596,25 @@ func dropIndex(db database.DB, idxKey []byte, idxName string, interrupt <-chan s
 	subBucketClosure = func(dbTx database.Tx,
 		subBucket []byte, tlBucket [][]byte) error {
 		// Get full bucket name and append to subBuckets for later
-		// deletion.
-		var bucketName [][]byte
-		if (tlBucket == nil) || (len(tlBucket) == 0) {
-			bucketName = append(bucketName, subBucket)
-		} else {
-			bucketName = append(tlBucket, subBucket)
-		}
+		// deletion.  Bucket keys are only valid for the lifetime of the
+		// transaction, so retain copies for the later write transactions.
+		bucketName := make([][]byte, len(tlBucket)+1)
+		copy(bucketName, tlBucket)
+		bucketName[len(tlBucket)] = bytes.Clone(subBucket)
 		subBuckets = append(subBuckets, bucketName)
 		// Recurse sub-buckets to append to subBuckets slice.
 		bucket := dbTx.Metadata()
 		for _, subBucketName := range bucketName {
 			bucket = bucket.Bucket(subBucketName)
+			if bucket == nil {
+				return database.Error{
+					ErrorCode: database.ErrCorruption,
+					Description: fmt.Sprintf(
+						"missing bucket %q while dropping %s",
+						subBucketName, idxName,
+					),
+				}
+			}
 		}
 		return bucket.ForEachBucket(func(k []byte) error {
 			return subBucketClosure(dbTx, k, bucketName)
@@ -619,7 +626,7 @@ func dropIndex(db database.DB, idxKey []byte, idxName string, interrupt <-chan s
 		return subBucketClosure(dbTx, idxKey, nil)
 	})
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// Iterate through each sub-bucket in reverse, deepest-first, deleting
