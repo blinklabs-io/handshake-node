@@ -6,70 +6,55 @@ package txscript
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
 var (
 	// manyInputsBenchTx is a transaction that contains a lot of inputs which is
 	// useful for benchmarking signature hash calculation.
-	manyInputsBenchTx wire.MsgTx
+	manyInputsBenchTx = makeManyInputsBenchTx(1000)
 
-	// manyInputsBenchTxLoaded indicates whether the benchmark fixture was
-	// successfully deserialized. The fixture is a Bitcoin-format transaction
-	// that may fail to load under the Handshake wire format.
-	manyInputsBenchTxLoaded bool
-
-	// A mock previous output script to use in the signing benchmark.
-	prevOutScript = hexToBytes("a914f5916158e3e2c4551c1796708db8367207ed13bb87")
+	// A native version-0 pubkey-hash witness program to use in the signing
+	// benchmark.
+	prevOutScript = hexToBytes(
+		"0014f5916158e3e2c4551c1796708db8367207ed13bb",
+	)
 )
 
-func init() {
-	// tx 620f57c92cf05a7f7e7f7d28255d5f7089437bc48e34dcfebf7751d08b7fb8f5
-	txHex, err := os.ReadFile("data/many_inputs_tx.hex")
-	if err != nil {
-		return // benchmark fixture not available
+func makeManyInputsBenchTx(inputCount int) wire.MsgTx {
+	tx := wire.NewMsgTx(wire.TxVersion)
+	for i := range inputCount {
+		var hash chainhash.Hash
+		binary.LittleEndian.PutUint64(hash[:], uint64(i))
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&hash, uint32(i)),
+			wire.MaxTxInSequenceNum,
+			nil,
+		))
 	}
-
-	txBytes := hexToBytes(string(txHex))
-	err = manyInputsBenchTx.Deserialize(bytes.NewReader(txBytes))
-	if err != nil {
-		return // Bitcoin-format tx cannot be deserialized as Handshake
-	}
-	manyInputsBenchTxLoaded = true
-}
-
-// BenchmarkCalcSigHash benchmarks how long it takes to calculate the signature
-// hashes for all inputs of a transaction with many inputs.
-func BenchmarkCalcSigHash(b *testing.B) {
-	if !manyInputsBenchTxLoaded {
-		b.Skip("Skipping: benchmark fixture uses Bitcoin-format tx")
-	}
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < len(manyInputsBenchTx.TxIn); j++ {
-			_, err := CalcSignatureHash(prevOutScript, SigHashAll,
-				&manyInputsBenchTx, j)
-			if err != nil {
-				b.Fatalf("failed to calc signature hash: %v", err)
-			}
-		}
-	}
+	tx.AddTxOut(wire.NewTxOut(
+		1,
+		wire.Address{
+			Version: 0,
+			Hash:    bytes.Repeat([]byte{0x01}, 20),
+		},
+		wire.Covenant{},
+	))
+	return *tx
 }
 
 // BenchmarkCalcWitnessSigHash benchmarks how long it takes to calculate the
 // witness signature hashes for all inputs of a transaction with many inputs.
 func BenchmarkCalcWitnessSigHash(b *testing.B) {
-	if !manyInputsBenchTxLoaded {
-		b.Skip("Skipping: benchmark fixture uses Bitcoin-format tx")
-	}
 	prevOutAddr, err := AddressFromWitnessProgram(prevOutScript)
 	if err != nil {
-		b.Skipf("AddressFromWitnessProgram: %v", err)
+		b.Fatalf("AddressFromWitnessProgram: %v", err)
 	}
 	prevOutFetcher := NewCannedPrevOutputFetcher(prevOutAddr, 5)
 	sigHashes := NewTxSigHashes(&manyInputsBenchTx, prevOutFetcher)
