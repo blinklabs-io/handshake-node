@@ -1760,6 +1760,11 @@ func (tx *transaction) writePendingAndCommit() error {
 	tx.db.signalPruneStage(pruneStageBlocksSynced)
 
 	if err := tx.db.cache.commitTreapsSync(tx.pendingKeys, tx.pendingRemove); err != nil {
+		var constructionErr *metadataBatchConstructionError
+		if errors.As(err, &constructionErr) {
+			return rollback(err)
+		}
+
 		// A synchronous storage error does not prove the atomic LevelDB
 		// batch was rejected.  It might have reached stable storage before
 		// the final sync reported an error.  Rolling back block files here

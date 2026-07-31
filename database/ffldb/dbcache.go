@@ -6,7 +6,9 @@ package ffldb
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
@@ -28,18 +30,8 @@ const (
 	// not been exceeded.
 	defaultFlushSecs = 300 // 5 minutes
 
-	// ldbBatchHeaderSize is the size of a leveldb batch header which
-	// includes the sequence header and record counter.
-	//
-	// ldbRecordIKeySize is the size of the ikey used internally by leveldb
-	// when appending a record to a batch.
-	//
-	// These are used to help preallocate space needed for a batch in one
-	// allocation instead of letting leveldb itself constantly grow it.
-	// This results in far less pressure on the GC and consequently helps
-	// prevent the GC from allocating a lot of extra unneeded space.
-	ldbBatchHeaderSize = 12
-	ldbRecordIKeySize  = 8
+	ldbBatchRecordDelete byte = 0
+	ldbBatchRecordValue  byte = 1
 )
 
 var syncWriteOptions = &opt.WriteOptions{Sync: true}
@@ -408,6 +400,12 @@ type dbCache struct {
 	// tests can simulate an error with an ambiguous commit outcome at the
 	// actual atomic writer boundary.
 	writeBatchFunc func(batch *leveldb.Batch) error
+
+	// buildBatchFunc constructs the atomic metadata batch before either
+	// writer is called.  It is a field so white-box tests can distinguish
+	// safe pre-write failures from ambiguous writer failures.
+	buildBatchFunc func(pendingKeys, pendingRemove TreapForEacher) (
+		*leveldb.Batch, error)
 }
 
 // ambiguousMetadataWriteError identifies a metadata write that returned an
@@ -423,6 +421,20 @@ func (e *ambiguousMetadataWriteError) Error() string {
 }
 
 func (e *ambiguousMetadataWriteError) Unwrap() error {
+	return e.err
+}
+
+// metadataBatchConstructionError identifies a failure that occurred before a
+// LevelDB batch write was attempted.
+type metadataBatchConstructionError struct {
+	err error
+}
+
+func (e *metadataBatchConstructionError) Error() string {
+	return e.err.Error()
+}
+
+func (e *metadataBatchConstructionError) Unwrap() error {
 	return e.err
 }
 
@@ -471,25 +483,86 @@ func writeMetadataBatch(writer levelDBBatchWriter, batch *leveldb.Batch) error {
 	return writer.Write(batch, syncWriteOptions)
 }
 
+// batchRecordSize returns the encoded size of a LevelDB batch record.
+func batchRecordSize(key, value []byte, hasValue bool) int {
+	var scratch [binary.MaxVarintLen64]byte
+	size := 1 + binary.PutUvarint(scratch[:], uint64(len(key))) + len(key)
+	if hasValue {
+		size += binary.PutUvarint(scratch[:], uint64(len(value))) + len(value)
+	}
+	return size
+}
+
+// appendBatchRecord appends a record in the format accepted by Batch.Load.
+func appendBatchRecord(dst []byte, typ byte, key, value []byte) []byte {
+	dst = append(dst, typ)
+	dst = binary.AppendUvarint(dst, uint64(len(key)))
+	dst = append(dst, key...)
+	if typ == ldbBatchRecordValue {
+		dst = binary.AppendUvarint(dst, uint64(len(value)))
+		dst = append(dst, value...)
+	}
+	return dst
+}
+
 // treapsToBatch returns a LevelDB batch containing all of the passed updates.
-func treapsToBatch(pendingKeys, pendingRemove TreapForEacher) *leveldb.Batch {
-	batch := new(leveldb.Batch)
+//
+// Batch.Put and Batch.Delete grow their shared byte buffer incrementally.
+// Replaying hundreds of thousands of cached records that way leaves multiple
+// large backing arrays live until the next GC and can briefly consume several
+// gigabytes. Calculate the exact encoded size first and load the finished
+// buffer so the atomic batch requires one data allocation.
+func treapsToBatch(pendingKeys, pendingRemove TreapForEacher) (*leveldb.Batch, error) {
+	const maxInt = int(^uint(0) >> 1)
+
+	encodedSize := 0
+	sizeOK := true
+	addSize := func(size int) bool {
+		if size > maxInt-encodedSize {
+			sizeOK = false
+			return false
+		}
+		encodedSize += size
+		return true
+	}
 	pendingKeys.ForEach(func(k, v []byte) bool {
-		batch.Put(k, v)
+		return addSize(batchRecordSize(k, v, true))
+	})
+	if sizeOK {
+		pendingRemove.ForEach(func(k, _ []byte) bool {
+			return addSize(batchRecordSize(k, nil, false))
+		})
+	}
+	if !sizeOK {
+		return nil, fmt.Errorf("metadata batch exceeds maximum size")
+	}
+
+	encoded := make([]byte, 0, encodedSize)
+	pendingKeys.ForEach(func(k, v []byte) bool {
+		encoded = appendBatchRecord(encoded, ldbBatchRecordValue, k, v)
 		return true
 	})
-	pendingRemove.ForEach(func(k, v []byte) bool {
-		batch.Delete(k)
+	pendingRemove.ForEach(func(k, _ []byte) bool {
+		encoded = appendBatchRecord(encoded, ldbBatchRecordDelete, k, nil)
 		return true
 	})
-	return batch
+
+	batch := new(leveldb.Batch)
+	if err := batch.Load(encoded); err != nil {
+		return nil, fmt.Errorf("load metadata batch: %w", err)
+	}
+	return batch, nil
 }
 
 // commitTreaps atomically and synchronously commits all of the passed pending
 // add/update/remove updates to the underlying database through LevelDB's
 // write-ahead log.
 func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error {
-	if err := c.writeBatchFunc(treapsToBatch(pendingKeys, pendingRemove)); err != nil {
+	batch, err := c.buildBatchFunc(pendingKeys, pendingRemove)
+	if err != nil {
+		return &metadataBatchConstructionError{err: err}
+	}
+	if err := c.writeBatchFunc(batch); err != nil {
 		return convertErr("failed to commit metadata batch", err)
 	}
 	return nil
@@ -500,7 +573,10 @@ func (c *dbCache) commitTreaps(pendingKeys, pendingRemove TreapForEacher) error 
 // It is used by pruning so metadata removals and their durable deletion intent
 // reach disk before any block files are unlinked.
 func (c *dbCache) commitTreapsSync(pendingKeys, pendingRemove TreapForEacher) error {
-	batch := treapsToBatch(pendingKeys, pendingRemove)
+	batch, err := c.buildBatchFunc(pendingKeys, pendingRemove)
+	if err != nil {
+		return &metadataBatchConstructionError{err: err}
+	}
 	if err := c.writeBatchSyncFunc(batch); err != nil {
 		dbErr := convertErr("failed to durably commit pruning transaction", err)
 		if errors.Is(dbErr, syscall.ENOSPC) {
@@ -554,6 +630,10 @@ func (c *dbCache) flushWithPruneWriter(usePruneWriter bool) error {
 		err = c.commitTreaps(cachedKeys, cachedRemove)
 	}
 	if err != nil {
+		var constructionErr *metadataBatchConstructionError
+		if errors.As(err, &constructionErr) {
+			return err
+		}
 		if errors.Is(err, syscall.ENOSPC) {
 			log.Errorf("%v. Cannot save any more blocks "+
 				"due to the disk being full "+
@@ -641,6 +721,10 @@ func (c *dbCache) commitTx(tx *transaction) error {
 		// Perform all LevelDB updates using an atomic write-ahead-log batch.
 		err := c.commitTreaps(tx.pendingKeys, tx.pendingRemove)
 		if err != nil {
+			var constructionErr *metadataBatchConstructionError
+			if errors.As(err, &constructionErr) {
+				return err
+			}
 			if errors.Is(err, syscall.ENOSPC) {
 				log.Errorf("%v. Cannot save any more blocks "+
 					"due to the disk being full "+
@@ -729,13 +813,14 @@ func (c *dbCache) Close() error {
 // since the last flush.
 func newDbCache(ldb *leveldb.DB, store *blockStore, maxSize uint64, flushIntervalSecs uint32) *dbCache {
 	cache := &dbCache{
-		ldb:           ldb,
-		store:         store,
-		maxSize:       maxSize,
-		flushInterval: time.Second * time.Duration(flushIntervalSecs),
-		lastFlush:     time.Now(),
-		cachedKeys:    treap.NewImmutable(),
-		cachedRemove:  treap.NewImmutable(),
+		ldb:            ldb,
+		store:          store,
+		maxSize:        maxSize,
+		flushInterval:  time.Second * time.Duration(flushIntervalSecs),
+		lastFlush:      time.Now(),
+		cachedKeys:     treap.NewImmutable(),
+		cachedRemove:   treap.NewImmutable(),
+		buildBatchFunc: treapsToBatch,
 	}
 	cache.writeBatchSyncFunc = func(batch *leveldb.Batch) error {
 		return writeMetadataBatch(ldb, batch)
