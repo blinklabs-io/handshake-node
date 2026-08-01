@@ -37,18 +37,24 @@ func applyHsdInteropDatabaseOverrides(db database.DB) error {
 	return nil
 }
 
-func hsdInteropPruneTarget(pruneMiB uint64) (uint64, error) {
+func hsdInteropPruneTarget(db database.DB, pruneMiB uint64) (uint64, error) {
 	if pruneMiB == 0 {
 		return 0, nil
 	}
+	target := pruneMiB * 1024 * 1024
+
+	// The test override is specified in raw bytes, while pruneMiB is MiB.
 	value := strings.TrimSpace(os.Getenv(hsdInteropPruneTargetEnv))
-	if value == "" {
-		return pruneMiB * 1024 * 1024, nil
+	if value != "" {
+		override, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || override == 0 {
+			return 0, fmt.Errorf("%s must be a positive uint64 byte count: %q",
+				hsdInteropPruneTargetEnv, value)
+		}
+		target = override
 	}
-	target, err := strconv.ParseUint(value, 10, 64)
-	if err != nil || target == 0 {
-		return 0, fmt.Errorf("%s must be a positive uint64: %q",
-			hsdInteropPruneTargetEnv, value)
+	if err := ffldb.TstValidatePruneTarget(db, target); err != nil {
+		return 0, fmt.Errorf("%s: %w", hsdInteropPruneTargetEnv, err)
 	}
 	return target, nil
 }

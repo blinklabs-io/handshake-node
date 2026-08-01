@@ -3147,7 +3147,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	if cfg.Prune != 0 {
 		hnsLog.Infof("Prune set to %d MiB", cfg.Prune)
 	}
-	pruneTarget, err := hsdInteropPruneTarget(cfg.Prune)
+	pruneTarget, err := hsdInteropPruneTarget(db, cfg.Prune)
 	if err != nil {
 		return nil, err
 	}

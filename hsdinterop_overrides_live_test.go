@@ -6,9 +6,30 @@
 
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/database"
+	_ "github.com/blinklabs-io/handshake-node/database/ffldb"
+)
 
 func TestHsdInteropPruneTarget(t *testing.T) {
+	db, err := database.Create(
+		"ffldb",
+		filepath.Join(t.TempDir(), "blocks"),
+		chaincfg.MainNetParams.Net,
+	)
+	if err != nil {
+		t.Fatalf("database.Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
+
 	tests := []struct {
 		name     string
 		pruneMiB uint64
@@ -18,8 +39,8 @@ func TestHsdInteropPruneTarget(t *testing.T) {
 	}{
 		{
 			name:     "default calculation",
-			pruneMiB: 2,
-			want:     2 * 1024 * 1024,
+			pruneMiB: 1536,
+			want:     1536 * 1024 * 1024,
 		},
 		{
 			name:     "disabled pruning ignores override",
@@ -29,8 +50,14 @@ func TestHsdInteropPruneTarget(t *testing.T) {
 		{
 			name:     "test override",
 			pruneMiB: 1536,
-			value:    "8192",
-			want:     8192,
+			value:    "536870912",
+			want:     536870912,
+		},
+		{
+			name:     "override below block file size",
+			pruneMiB: 1536,
+			value:    "536870911",
+			wantErr:  true,
 		},
 		{
 			name:     "zero override",
@@ -49,7 +76,7 @@ func TestHsdInteropPruneTarget(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv(hsdInteropPruneTargetEnv, test.value)
-			got, err := hsdInteropPruneTarget(test.pruneMiB)
+			got, err := hsdInteropPruneTarget(db, test.pruneMiB)
 			if test.wantErr {
 				if err == nil {
 					t.Fatalf("hsdInteropPruneTarget returned nil error")
@@ -70,5 +97,30 @@ func TestApplyHsdInteropDatabaseOverridesValidation(t *testing.T) {
 	t.Setenv(hsdInteropMaxBlockFileSizeEnv, "invalid")
 	if err := applyHsdInteropDatabaseOverrides(nil); err == nil {
 		t.Fatal("invalid max block file size returned nil error")
+	}
+}
+
+func TestHsdInteropPruneTargetUsesActiveRolloverSize(t *testing.T) {
+	db, err := database.Create(
+		"ffldb",
+		filepath.Join(t.TempDir(), "blocks"),
+		chaincfg.MainNetParams.Net,
+	)
+	if err != nil {
+		t.Fatalf("database.Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
+
+	t.Setenv(hsdInteropMaxBlockFileSizeEnv, "1073741824")
+	if err := applyHsdInteropDatabaseOverrides(db); err != nil {
+		t.Fatalf("applyHsdInteropDatabaseOverrides: %v", err)
+	}
+	t.Setenv(hsdInteropPruneTargetEnv, "536870912")
+	if _, err := hsdInteropPruneTarget(db, 1536); err == nil {
+		t.Fatal("prune target below active rollover size returned nil error")
 	}
 }
