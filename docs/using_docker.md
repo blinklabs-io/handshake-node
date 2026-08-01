@@ -71,7 +71,7 @@ should mount `/data`.
 Allocate four CPUs, 8 GiB of memory, and SSD-backed storage for initial mainnet
 sync. Eight GiB is the supported container memory limit, not a Go heap target:
 the defaults include a 250 MiB UTXO cache, a 100 MiB database cache, and up to
-128 MiB of aggregate P2P queues. The mempool has a separate 100,000,000 byte
+128 MiB of aggregate P2P queues. The mempool has a separate 100,000,000-byte
 retained-memory estimate limit. The block index, Go runtime, database, file
 cache, and transient validation allocations share the remaining container
 memory.
