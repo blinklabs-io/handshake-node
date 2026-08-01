@@ -112,7 +112,6 @@ unit:
 	@$(call print, "Running unit tests.")
 	$(GOTEST_DEV) ./... -test.timeout=20m
 	cd hnsutil && $(GOTEST_DEV) ./... -test.timeout=20m
-	cd hnsutil/psbt && $(GOTEST_DEV) ./... -test.timeout=20m
 
 #? unit-cover: Run unit coverage tests
 unit-cover:
@@ -120,14 +119,12 @@ unit-cover:
 	$(GOTEST) $(COVER_FLAGS) ./...
 
 	cd hnsutil && $(GOTEST) $(COVER_FLAGS) ./...
-	cd hnsutil/psbt && $(GOTEST) $(COVER_FLAGS) ./...
 
 #? unit-race: Run unit race tests
 unit-race:
 	@$(call print, "Running unit race tests.")
 	env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 	cd hnsutil && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
-	cd hnsutil/psbt && env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(GOTEST) -race -test.timeout=20m ./...
 
 #? integration: Run the bounded tagged RPC integration suite
 integration:
@@ -139,7 +136,6 @@ vuln: $(VULNCHECK_BIN)
 	@$(call print, "Checking for reachable known vulnerabilities.")
 	$(VULNCHECK_BIN) ./...
 	cd hnsutil && $(VULNCHECK_BIN) ./...
-	cd hnsutil/psbt && $(VULNCHECK_BIN) ./...
 
 #? hsd-interop: Run live protocol tests against pinned hsd (requires HSD_DIR)
 hsd-interop:
@@ -171,7 +167,7 @@ lint: $(LINT_BIN)
 #? clean: Clean source
 clean:
 	@$(call print, "Cleaning source.$(NC)")
-	rm -f coverage.txt hnsutil/coverage.txt hnsutil/psbt/coverage.txt
+	rm -f coverage.txt hnsutil/coverage.txt
 
 #? tidy-module: Run 'go mod tidy' for all modules
 tidy-module:

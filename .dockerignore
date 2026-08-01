@@ -5,7 +5,6 @@
 
 coverage.txt
 hnsutil/coverage.txt
-hnsutil/psbt/coverage.txt
 
 dist
 *.test

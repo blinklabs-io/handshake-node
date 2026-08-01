@@ -94,7 +94,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: Build binaries
         shell: bash
         run: |

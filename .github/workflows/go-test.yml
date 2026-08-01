@@ -26,7 +26,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: build
         run: make build
 
@@ -68,7 +67,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: build release binaries
         shell: bash
         run: |
@@ -99,7 +97,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: vulnerability scan
         run: make vuln
 
@@ -114,7 +111,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: test
         run: make unit-cover
       - name: Send top-level coverage
@@ -150,7 +146,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: test
         run: make unit-race
 
@@ -168,7 +163,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             hnsutil/go.sum
-            hnsutil/psbt/go.sum
       - name: tagged integration tests
         run: make integration
 
