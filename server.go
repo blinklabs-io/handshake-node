@@ -231,7 +231,6 @@ type server struct {
 	brontideIdentity     *btcec.PrivateKey
 	brontideStaticKey    [brontide.PublicKeySize]byte
 	modifyRebroadcastInv chan interface{}
-	p2pDowngrader        *peer.P2PDowngrader
 	newPeers             chan *serverPeer
 	donePeers            chan *serverPeer
 	banPeers             chan *serverPeer
@@ -487,13 +486,6 @@ func looksLikePlaintextHnsVersionHeader(prefix []byte, hnsnet wire.BitcoinNet) b
 		return false
 	}
 	return wire.HnsMsgType(prefix[4]) == wire.HnsMsgTypeVersion
-}
-
-// ShouldReconnectV1 is invoked when we need to determine if we are going to
-// reconnect to an outbound peer. This will return true if we attempted to
-// connect to the peer using the v2 transport, and need to fall back to v1.
-func (sp *serverPeer) ShouldReconnectV1() bool {
-	return sp.ShouldDowngradeToV1()
 }
 
 // OnVersion is invoked when a peer receives a version message
@@ -1833,14 +1825,6 @@ func (s *server) handleDonePeerMsg(state *peerState, sp *serverPeer) {
 		case sp.persistent:
 			s.connManager.Disconnect(sp.connReq.ID())
 
-		// If this isn't a persistent peer, but we failed a v2
-		// handshake, then we'll disconnect, but trigger a reconnect so
-		// we can use v1 instead.
-		case sp.ShouldReconnectV1():
-			s.connManager.Disconnect(
-				sp.connReq.ID(), connmgr.WithTriggerReconnect(),
-			)
-
 		default:
 			s.connManager.Remove(sp.connReq.ID())
 			go s.connManager.NewConnReq()
@@ -2162,7 +2146,6 @@ func newPeerConfig(sp *serverPeer) *peer.Config {
 		WriteTimeout:        cfg.P2PWriteTimeout,
 		OutboundQueueBudget: sp.server.outboundQueueBudget,
 		DisableStallHandler: cfg.DisableStallHandler,
-		UsingV2Conn:         cfg.V2Transport,
 	}
 }
 
@@ -2383,18 +2366,7 @@ func (s *server) outboundPeerConnected(c *connmgr.ConnReq, conn net.Conn) {
 	peerAddr := c.Addr.String()
 	sp := newServerPeer(s, c.Permanent)
 
-	peerCfg := newPeerConfig(sp)
-
-	// Check with the P2PDowngrader if this connection attempt should be
-	// forced to v1.
-	if s.p2pDowngrader.ShouldDowngrade(peerAddr) {
-		srvrLog.Infof("Forcing V1 connection to %s as requested by "+
-			"P2P downgrader.", peerAddr)
-
-		peerCfg.UsingV2Conn = false
-	}
-
-	p, err := peer.NewOutboundPeer(peerCfg, peerAddr)
+	p, err := peer.NewOutboundPeer(newPeerConfig(sp), peerAddr)
 	if err != nil {
 		srvrLog.Debugf("Cannot create outbound peer %s: %v",
 			c.Addr, err)
@@ -2425,16 +2397,6 @@ func (s *server) peerDoneHandler(sp *serverPeer) {
 		s.releaseInboundIP(sp.inboundIP)
 		<-s.inboundSlots
 		sp.inboundSlotHeld = false
-	}
-
-	// If this is an outbound peer and the shouldDowngradeToV1 bool is set
-	// on the underlying Peer, trigger a reconnect using the OG v1
-	// connection scheme.
-	if !sp.Inbound() && sp.ShouldDowngradeToV1() {
-		srvrLog.Infof("Peer %s indicated v2->v1 downgrade. "+
-			"Marking for next attempt as v1.", sp.Addr())
-
-		s.p2pDowngrader.MarkForDowngrade(sp.Addr())
 	}
 
 	// This is sent to a buffered channel, so it may not execute immediately.
@@ -3340,8 +3302,6 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		return nil, err
 	}
 	s.connManager = cmgr
-
-	s.p2pDowngrader = peer.NewP2PDowngrader(uint(targetOutbound) + 1)
 
 	// Start up persistent peers.
 	permanentPeers := cfg.ConnectPeers
