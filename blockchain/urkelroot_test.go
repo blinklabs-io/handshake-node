@@ -32,20 +32,20 @@ func TestUrkelRootTreeDifferential(t *testing.T) {
 	keys := make([]chainhash.Hash, keyCount)
 	order := make([]int, keyCount)
 	state := uint64(0x9e3779b97f4a7c15)
+	next := func() uint64 {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		return state
+	}
 	for i := range keys {
 		for j := range keys[i] {
-			state ^= state << 13
-			state ^= state >> 7
-			state ^= state << 17
-			keys[i][j] = byte(state)
+			keys[i][j] = byte(next())
 		}
 		order[i] = i
 	}
 	for i := len(order) - 1; i > 0; i-- {
-		state ^= state << 13
-		state ^= state >> 7
-		state ^= state << 17
-		j := int(state % uint64(i+1))
+		j := int(next() % uint64(i+1))
 		order[i], order[j] = order[j], order[i]
 	}
 

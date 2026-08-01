@@ -57,7 +57,7 @@ func (s *urkelRootStore[T]) set(index int, value T) {
 	s.chunks[index>>urkelRootChunkBits][index&urkelRootChunkMask] = value
 }
 
-func (s *urkelRootStore[T]) append(value T) int {
+func (s *urkelRootStore[T]) append(value T) {
 	index := s.count
 	chunkIndex := index >> urkelRootChunkBits
 	if chunkIndex == len(s.chunks) {
@@ -65,7 +65,6 @@ func (s *urkelRootStore[T]) append(value T) int {
 	}
 	s.set(index, value)
 	s.count++
-	return index
 }
 
 func (s *urkelRootStore[T]) reset() {
@@ -90,11 +89,10 @@ func (r urkelRootRef) index() int {
 }
 
 func makeUrkelRootRef(index int, leaf bool) (urkelRootRef, error) {
-	oneBased := uint64(index) + 1
-	if oneBased == 0 || oneBased > uint64(urkelRootIndexMask) {
+	if index < 0 || uint64(index) >= uint64(urkelRootIndexMask) {
 		return 0, fmt.Errorf("compact Urkel node index %d exceeds limit", index)
 	}
-	ref := urkelRootRef(oneBased)
+	ref := urkelRootRef(index + 1)
 	if leaf {
 		ref |= urkelRootLeafFlag
 	}
