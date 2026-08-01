@@ -41,7 +41,10 @@ func hsdInteropPruneTarget(db database.DB, pruneMiB uint64) (uint64, error) {
 	if pruneMiB == 0 {
 		return 0, nil
 	}
-	target := pruneMiB * 1024 * 1024
+	target, err := pruneMiBToBytes(pruneMiB)
+	if err != nil {
+		return 0, err
+	}
 
 	// The test override is specified in raw bytes, while pruneMiB is MiB.
 	value := strings.TrimSpace(os.Getenv(hsdInteropPruneTargetEnv))

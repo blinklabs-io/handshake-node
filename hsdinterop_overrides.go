@@ -13,5 +13,5 @@ func applyHsdInteropDatabaseOverrides(database.DB) error {
 }
 
 func hsdInteropPruneTarget(_ database.DB, pruneMiB uint64) (uint64, error) {
-	return pruneMiB * 1024 * 1024, nil
+	return pruneMiBToBytes(pruneMiB)
 }

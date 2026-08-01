@@ -144,7 +144,7 @@ vuln: $(VULNCHECK_BIN)
 #? hsd-interop: Run live protocol tests against pinned hsd (requires HSD_DIR)
 hsd-interop:
 	@$(call print, "Running live hsd interoperability protocol tests.")
-	$(GOTEST) -tags=hsdinterop . -count=1
+	$(GOTEST) -tags=hsdinterop . -run 'TestHsdInterop|TestApplyHsdInterop' -count=1
 	env HSD_DIR="$(HSD_DIR)" $(GOTEST) -tags=hsdinterop ./cmd/hsdinterop -count=1 -test.timeout=2m
 
 #? hnsparity: Build the manual mainnet parity runner
