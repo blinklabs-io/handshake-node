@@ -259,9 +259,9 @@ func connectSyncTestPeerWithConfig(t *testing.T, params *chaincfg.Params,
 
 	_, err = wire.WriteHnsMessageN(remote, remoteVersion, params.Net)
 	require.NoError(t, err)
-	require.IsType(t, &wire.HnsMsgVersion{},
-		readSyncTestPeerMessage(t, remote, params))
 	require.IsType(t, &wire.HnsMsgVerack{},
+		readSyncTestPeerMessage(t, remote, params))
+	require.IsType(t, &wire.HnsMsgVersion{},
 		readSyncTestPeerMessage(t, remote, params))
 	_, err = wire.WriteHnsMessageN(remote, &wire.HnsMsgVerack{},
 		params.Net)
@@ -375,9 +375,9 @@ func connectDrainingSyncTestPeer(t *testing.T, params *chaincfg.Params,
 	version.SetNonce(uint64(height) + 1)
 	_, err := wire.WriteHnsMessageN(remote, version, params.Net)
 	require.NoError(t, err)
-	require.IsType(t, &wire.HnsMsgVersion{},
-		readSyncTestPeerMessage(t, remote, params))
 	require.IsType(t, &wire.HnsMsgVerack{},
+		readSyncTestPeerMessage(t, remote, params))
+	require.IsType(t, &wire.HnsMsgVersion{},
 		readSyncTestPeerMessage(t, remote, params))
 	_, err = wire.WriteHnsMessageN(remote, &wire.HnsMsgVerack{}, params.Net)
 	require.NoError(t, err)

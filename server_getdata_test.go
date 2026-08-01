@@ -276,13 +276,13 @@ func connectServerTestPeerWithWriteGate(t *testing.T, sp *serverPeer,
 		t.Fatalf("write remote version: %v", err)
 	}
 
-	if _, ok := readServerTestPeerMessage(t, remote).(*wire.HnsMsgVersion); !ok {
-		remote.Close()
-		t.Fatal("expected local version during peer negotiation")
-	}
 	if _, ok := readServerTestPeerMessage(t, remote).(*wire.HnsMsgVerack); !ok {
-		remote.Close()
+		_ = remote.Close()
 		t.Fatal("expected local verack during peer negotiation")
+	}
+	if _, ok := readServerTestPeerMessage(t, remote).(*wire.HnsMsgVersion); !ok {
+		_ = remote.Close()
+		t.Fatal("expected local version during peer negotiation")
 	}
 	if _, err := wire.WriteHnsMessageN(remote, &wire.HnsMsgVerack{},
 		chaincfg.RegressionNetParams.Net); err != nil {
