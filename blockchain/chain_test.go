@@ -1338,8 +1338,6 @@ func TestIsAncestor(t *testing.T) {
 	}
 }
 
-// randomSelect selects random amount of random elements from a slice and returns a
-// new slice.  The selected elements are removed.
 func TestInvalidateBlockUpdatesBestHeader(t *testing.T) {
 	chain := newFakeChain(&chaincfg.MainNetParams)
 	chain.bestHeader = newChainView(chain.bestChain.Genesis())
