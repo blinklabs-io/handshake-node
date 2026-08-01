@@ -16,8 +16,6 @@
     Provides a common base for creating and managing network peers.
   * [blockchain](https://github.com/blinklabs-io/handshake-node/tree/master/blockchain) -
     Implements block handling and chain selection rules
-  * [blockchain/fullblocktests](https://github.com/blinklabs-io/handshake-node/tree/master/blockchain/fullblocktests) -
-    Provides a set of block tests for testing the consensus validation rules
   * [txscript](https://github.com/blinklabs-io/handshake-node/tree/master/txscript) -
     Implements the transaction scripting language
   * [btcec](https://github.com/btcsuite/btcd/tree/master/btcec) - Implements
