@@ -3023,12 +3023,19 @@ func (p *Peer) readRemoteVersionAllowingEarlyVerAck() error {
 // returned:
 //
 //  1. Remote peer sends their version.
-//  2. We send our version.
-//  3. We skip Bitcoin sendaddrv2 negotiation; Handshake has no sendaddrv2.
-//  4. We send our verack.
+//  2. We send our verack.
+//  3. We send our version.
+//  4. We skip Bitcoin sendaddrv2 negotiation; Handshake has no sendaddrv2.
 //  5. Wait until verack is received, skipping unknown Handshake packet types.
 func (p *Peer) negotiateInboundProtocol() error {
 	if err := p.readRemoteVersionMsg(false); err != nil {
+		return err
+	}
+
+	// Handshake initiators wait for verack before accepting our version.
+	// A version-first response is valid in Bitcoin, but breaks strict
+	// Handshake clients such as hsd and cDNSd.
+	if err := p.writeMessage(&wire.HnsMsgVerack{}); err != nil {
 		return err
 	}
 
@@ -3042,11 +3049,6 @@ func (p *Peer) negotiateInboundProtocol() error {
 	p.flagsMtx.Unlock()
 
 	if err := p.writeSendAddrV2Msg(protoVersion); err != nil {
-		return err
-	}
-
-	err := p.writeMessage(&wire.HnsMsgVerack{})
-	if err != nil {
 		return err
 	}
 
