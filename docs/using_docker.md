@@ -68,11 +68,13 @@ should mount `/data`.
 
 ## Resource sizing and monitoring
 
-Allocate four CPUs, 4 GiB of memory, and SSD-backed storage for initial mainnet
-sync. The defaults include a 250 MiB UTXO cache, a 100 MiB database cache, and
-up to 128 MiB of aggregate P2P queues. The mempool has a separate 100,000,000
-byte retained-memory estimate limit. The block index, Go runtime, database, and
-transient validation allocations require additional memory.
+Allocate four CPUs, 8 GiB of memory, and SSD-backed storage for initial mainnet
+sync. Eight GiB is the supported container memory limit, not a Go heap target:
+the defaults include a 250 MiB UTXO cache, a 100 MiB database cache, and up to
+128 MiB of aggregate P2P queues. The mempool has a separate 100,000,000 byte
+retained-memory estimate limit. The block index, Go runtime, database, file
+cache, and transient validation allocations share the remaining container
+memory.
 `GOMAXPROCS` or the container CPU limit controls CPU concurrency; it does not
 limit memory.
 
@@ -82,8 +84,12 @@ Docker Compose can enforce the intended limits explicitly:
 services:
   handshake-node:
     cpus: 4.0
-    mem_limit: 4g
+    mem_limit: 8g
+    memswap_limit: 8g
 ```
+
+Setting the memory and memory-plus-swap limits to the same value prevents the
+node from exceeding the 8 GiB budget through swap.
 
 Use `docker stats handshake-node` to observe total container CPU and resident
 memory. For Go runtime detail, enable the Prometheus endpoint and scrape

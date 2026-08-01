@@ -37,7 +37,7 @@ type nameUndoEntry struct {
 }
 
 type nameRootCache struct {
-	rootNode  urkelNode
+	rootTree  urkelRootTree
 	rootDirty bool
 }
 
@@ -48,7 +48,9 @@ func newNameRootCache(dbTx database.Tx) (*nameRootCache, error) {
 	}
 
 	cache := &nameRootCache{}
-	cache.rootNode = buildUrkelRootTree(leaves)
+	if err := cache.rootTree.rebuild(leaves); err != nil {
+		return nil, err
+	}
 	return cache, nil
 }
 
@@ -64,7 +66,9 @@ func (c *nameRootCache) applyView(view *nameBlockView) error {
 		if err != nil {
 			return err
 		}
-		c.put(nameHash, serialized)
+		if err := c.put(nameHash, serialized); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -80,16 +84,18 @@ func (c *nameRootCache) applyUndo(entries []nameUndoEntry) error {
 		if err != nil {
 			return err
 		}
-		c.put(entry.nameHash, serialized)
+		if err := c.put(entry.nameHash, serialized); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (c *nameRootCache) put(nameHash chainhash.Hash, serialized []byte) {
+func (c *nameRootCache) put(nameHash chainhash.Hash, serialized []byte) error {
 	if c.rootDirty {
-		return
+		return nil
 	}
-	c.rootNode = insertUrkelRoot(c.rootNode, nameHash, serialized, 0)
+	return c.rootTree.put(nameHash, serialized)
 }
 
 func (c *nameRootCache) rebuildRoot(dbTx database.Tx) error {
@@ -97,7 +103,9 @@ func (c *nameRootCache) rebuildRoot(dbTx database.Tx) error {
 	if err != nil {
 		return err
 	}
-	c.rootNode = buildUrkelRootTree(leaves)
+	if err := c.rootTree.rebuild(leaves); err != nil {
+		return err
+	}
 	c.rootDirty = false
 	return nil
 }
@@ -112,10 +120,7 @@ func (c *nameRootCache) root(dbTx database.Tx) (chainhash.Hash, error) {
 			return chainhash.Hash{}, err
 		}
 	}
-	if c.rootNode == nil {
-		return chainhash.Hash{}, nil
-	}
-	return c.rootNode.hash(), nil
+	return c.rootTree.rootHash(), nil
 }
 
 func dbFetchNameRoot(dbTx database.Tx) (chainhash.Hash, error) {
