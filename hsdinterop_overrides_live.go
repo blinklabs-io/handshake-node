@@ -45,6 +45,7 @@ func hsdInteropPruneTarget(db database.DB, pruneMiB uint64) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	targetSource := "--prune"
 
 	// The test override is specified in raw bytes, while pruneMiB is MiB.
 	value := strings.TrimSpace(os.Getenv(hsdInteropPruneTargetEnv))
@@ -55,9 +56,10 @@ func hsdInteropPruneTarget(db database.DB, pruneMiB uint64) (uint64, error) {
 				hsdInteropPruneTargetEnv, value)
 		}
 		target = override
+		targetSource = hsdInteropPruneTargetEnv
 	}
 	if err := ffldb.TstValidatePruneTarget(db, target); err != nil {
-		return 0, fmt.Errorf("%s: %w", hsdInteropPruneTargetEnv, err)
+		return 0, fmt.Errorf("%s: %w", targetSource, err)
 	}
 	return target, nil
 }

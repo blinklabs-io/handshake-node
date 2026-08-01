@@ -8,6 +8,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg"
@@ -120,7 +121,24 @@ func TestHsdInteropPruneTargetUsesActiveRolloverSize(t *testing.T) {
 		t.Fatalf("applyHsdInteropDatabaseOverrides: %v", err)
 	}
 	t.Setenv(hsdInteropPruneTargetEnv, "536870912")
-	if _, err := hsdInteropPruneTarget(db, 1536); err == nil {
+	_, err = hsdInteropPruneTarget(db, 1536)
+	if err == nil {
 		t.Fatal("prune target below active rollover size returned nil error")
+	}
+	if !strings.Contains(err.Error(), hsdInteropPruneTargetEnv+":") {
+		t.Fatalf("override validation error = %q, want %s source",
+			err, hsdInteropPruneTargetEnv)
+	}
+
+	t.Setenv(hsdInteropPruneTargetEnv, "")
+	_, err = hsdInteropPruneTarget(db, 512)
+	if err == nil {
+		t.Fatal("--prune target below active rollover size returned nil error")
+	}
+	if !strings.Contains(err.Error(), "--prune:") {
+		t.Fatalf("default validation error = %q, want --prune source", err)
+	}
+	if strings.Contains(err.Error(), hsdInteropPruneTargetEnv) {
+		t.Fatalf("default validation error blames unset override: %q", err)
 	}
 }
