@@ -9,7 +9,6 @@ package integration
 
 import (
 	"bytes"
-	"errors"
 	"runtime"
 	"testing"
 
@@ -112,18 +111,6 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	return key, utxo, selfAddrScript, nil
 }
 
-func p2wpkhScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
-	if !txscript.IsPayToWitnessPubKeyHash(pkScript) {
-		return nil, errors.New("expected P2WPKH witness program")
-	}
-
-	addr, err := hnsutil.NewAddressPubKeyHash(pkScript[2:], net)
-	if err != nil {
-		return nil, err
-	}
-	return txscript.PayToAddrScript(addr)
-}
-
 func p2wpkhWitnessSignature(tx *wire.MsgTx, idx int, amount hnsutil.Amount,
 	pkScript []byte, key *btcec.PrivateKey, net *chaincfg.Params) (wire.TxWitness, error) {
 
@@ -137,7 +124,7 @@ func p2wpkhWitnessSignature(tx *wire.MsgTx, idx int, amount hnsutil.Amount,
 	)
 	sigHashes := txscript.NewTxSigHashes(tx, prevOutputFetcher)
 
-	scriptCode, err := p2wpkhScriptCode(pkScript, net)
+	scriptCode, err := rpctest.P2WPKHScriptCode(pkScript, net)
 	if err != nil {
 		return nil, err
 	}
