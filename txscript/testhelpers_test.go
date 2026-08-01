@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // parseHex parses a hexadecimal literal used in short-form test scripts.
@@ -20,9 +21,30 @@ func parseHex(tok string) ([]byte, error) {
 	return hex.DecodeString(tok[2:])
 }
 
-// shortFormOps holds a map of opcode names to values for use in short-form
-// parsing.
-var shortFormOps map[string]byte
+var (
+	shortFormOps     map[string]byte
+	shortFormOpsOnce sync.Once
+)
+
+// initShortFormOps builds the opcode names and aliases used in short-form
+// scripts.
+func initShortFormOps() {
+	ops := make(map[string]byte)
+	for opcodeName, opcodeValue := range OpcodeByName {
+		if strings.Contains(opcodeName, "OP_UNKNOWN") {
+			continue
+		}
+		ops[opcodeName] = opcodeValue
+
+		if (opcodeName == "OP_FALSE" || opcodeName == "OP_TRUE") ||
+			(opcodeValue != OP_0 && (opcodeValue < OP_1 ||
+				opcodeValue > OP_16)) {
+
+			ops[strings.TrimPrefix(opcodeName, "OP_")] = opcodeValue
+		}
+	}
+	shortFormOps = ops
+}
 
 // mustParseShortForm parses a short-form test script and panics on error.
 func mustParseShortForm(script string) []byte {
@@ -81,23 +103,7 @@ var scriptClassTests = []scriptClassTest{
 // 0x-prefixed values are inserted as raw bytes, and single-quoted strings are
 // pushed as data.
 func parseShortForm(script string) ([]byte, error) {
-	if shortFormOps == nil {
-		ops := make(map[string]byte)
-		for opcodeName, opcodeValue := range OpcodeByName {
-			if strings.Contains(opcodeName, "OP_UNKNOWN") {
-				continue
-			}
-			ops[opcodeName] = opcodeValue
-
-			if (opcodeName == "OP_FALSE" || opcodeName == "OP_TRUE") ||
-				(opcodeValue != OP_0 && (opcodeValue < OP_1 ||
-					opcodeValue > OP_16)) {
-
-				ops[strings.TrimPrefix(opcodeName, "OP_")] = opcodeValue
-			}
-		}
-		shortFormOps = ops
-	}
+	shortFormOpsOnce.Do(initShortFormOps)
 
 	script = strings.ReplaceAll(script, "\n", " ")
 	script = strings.ReplaceAll(script, "\t", " ")
