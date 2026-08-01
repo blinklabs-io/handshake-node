@@ -329,6 +329,16 @@ func TestResultStructHelp(t *testing.T) {
 			},
 		},
 		{
+			name: "struct with ignored field",
+			reflectType: func() reflect.Type {
+				type s struct {
+					Field int `json:"-"`
+				}
+				return reflect.TypeOf(s{})
+			}(),
+			expected: nil,
+		},
+		{
 			name: "struct with array of primitive field",
 			reflectType: func() reflect.Type {
 				type s struct {

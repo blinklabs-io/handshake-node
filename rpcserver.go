@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"math/rand"
 	"net"
@@ -1971,7 +1972,7 @@ func softForkStatus(state blockchain.ThresholdState) (string, error) {
 	case blockchain.ThresholdStarted:
 		return "started", nil
 	case blockchain.ThresholdLockedIn:
-		return "lockedin", nil
+		return "locked_in", nil
 	case blockchain.ThresholdActive:
 		return "active", nil
 	case blockchain.ThresholdFailed:
@@ -1985,29 +1986,26 @@ func softForkStatus(state blockchain.ThresholdState) (string, error) {
 // by getblockchaininfo.  Keep this mapping independent from whether a given
 // network configures the deployment: Params.Deployments is a fixed-size array
 // and sparse networks legitimately leave entries at their zero value.
-func deploymentName(deployment int) (string, bool) {
+func deploymentName(deployment uint32) (string, bool) {
 	switch deployment {
 	case chaincfg.DeploymentTestDummy:
-		return "dummy", true
-	case chaincfg.DeploymentTestDummyMinActivation:
-		return "dummy-min-activation", true
-	case chaincfg.DeploymentCSV:
-		return "csv", true
-	case chaincfg.DeploymentSegwit:
-		return "segwit", true
-	case chaincfg.DeploymentTaproot:
-		return "taproot", true
-	case chaincfg.DeploymentTestDummyAlwaysActive:
-		return "dummy-always-active", true
+		return "testdummy", true
 	case chaincfg.DeploymentHardening:
 		return "hardening", true
 	case chaincfg.DeploymentICANNLockup:
-		return "icann-lockup", true
+		return "icannlockup", true
 	case chaincfg.DeploymentAirstop:
 		return "airstop", true
 	default:
 		return "", false
 	}
+}
+
+var handshakeDeploymentIDs = [...]uint32{
+	chaincfg.DeploymentHardening,
+	chaincfg.DeploymentICANNLockup,
+	chaincfg.DeploymentAirstop,
+	chaincfg.DeploymentTestDummy,
 }
 
 // deploymentConfigured reports whether a fixed deployment slot is populated
@@ -2019,13 +2017,46 @@ func deploymentConfigured(deployment *chaincfg.ConsensusDeployment) bool {
 		deployment.AlwaysActiveHeight != 0
 }
 
+func deploymentTimes(
+	deployment *chaincfg.ConsensusDeployment,
+) (startTime, timeout int64) {
+	timeout = math.MaxUint32
+	if starter, ok := deployment.DeploymentStarter.(*chaincfg.MedianTimeDeploymentStarter); ok {
+		if start := starter.StartTime(); !start.IsZero() {
+			startTime = start.Unix()
+		}
+	}
+	if ender, ok := deployment.DeploymentEnder.(*chaincfg.MedianTimeDeploymentEnder); ok {
+		if end := ender.EndTime(); !end.IsZero() {
+			timeout = end.Unix()
+		}
+	}
+	return startTime, timeout
+}
+
+type getBlockChainInfoResult struct {
+	*hnsjson.GetBlockChainInfoResult
+	SoftForks map[string]*hnsjson.SoftForkDeployment `json:"softforks"`
+}
+
 // handleGetBlockChainInfo implements the getblockchaininfo command.
 func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	// Obtain a snapshot of the current best known blockchain state. We'll
 	// populate the response to this call primarily from this snapshot.
 	params := s.cfg.ChainParams
 	chain := s.cfg.Chain
-	chainSnapshot := chain.BestSnapshot()
+	deploymentIDs := make([]uint32, 0, len(handshakeDeploymentIDs))
+	for _, deployment := range handshakeDeploymentIDs {
+		if deploymentConfigured(&params.Deployments[deployment]) {
+			deploymentIDs = append(deploymentIDs, deployment)
+		}
+	}
+	chainSnapshot, deploymentStates, err :=
+		chain.BestSnapshotAndThresholdStates(deploymentIDs)
+	if err != nil {
+		context := "Failed to obtain deployment status"
+		return nil, internalRPCError(err.Error(), context)
+	}
 
 	chainInfo := &hnsjson.GetBlockChainInfoResult{
 		Chain:         params.Name,
@@ -2035,51 +2066,15 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 		Difficulty:    getDifficultyRatio(chainSnapshot.Bits, params),
 		MedianTime:    chainSnapshot.MedianTime.Unix(),
 		Pruned:        cfg.Prune != 0,
-		SoftForks: &hnsjson.SoftForks{
-			Bip9SoftForks: make(map[string]*hnsjson.Bip9SoftForkDescription),
-		},
+		Deployments:   make(map[string]*hnsjson.SoftForkDeployment),
 	}
 
-	// Next, populate the response with information describing the current
-	// status of soft-forks deployed via the super-majority block
-	// signalling mechanism.
-	height := chainSnapshot.Height
-	chainInfo.SoftForks.SoftForks = []*hnsjson.SoftForkDescription{
-		{
-			ID:      "bip34",
-			Version: 2,
-			Reject: struct {
-				Status bool `json:"status"`
-			}{
-				Status: height >= params.BIP0034Height,
-			},
-		},
-		{
-			ID:      "bip66",
-			Version: 3,
-			Reject: struct {
-				Status bool `json:"status"`
-			}{
-				Status: height >= params.BIP0066Height,
-			},
-		},
-		{
-			ID:      "bip65",
-			Version: 4,
-			Reject: struct {
-				Status bool `json:"status"`
-			}{
-				Status: height >= params.BIP0065Height,
-			},
-		},
+	if params.Name == "mainnet" {
+		chainInfo.Chain = "main"
 	}
 
-	// Finally, query the BIP0009 version bits state for all currently
-	// defined BIP0009 soft-fork deployments.
-	for deployment, deploymentDetails := range params.Deployments {
-		if !deploymentConfigured(&deploymentDetails) {
-			continue
-		}
+	for _, deployment := range deploymentIDs {
+		deploymentDetails := params.Deployments[deployment]
 
 		// Map the integer deployment ID into a human readable
 		// fork-name.
@@ -2092,45 +2087,46 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 			}
 		}
 
-		// Query the chain for the current status of the deployment as
-		// identified by its deployment ID.
-		deploymentStatus, err := chain.ThresholdState(uint32(deployment))
-		if err != nil {
-			context := "Failed to obtain deployment status"
-			return nil, internalRPCError(err.Error(), context)
-		}
+		deploymentState := deploymentStates[deployment]
 
 		// Attempt to convert the current deployment status into a
 		// human readable string. If the status is unrecognized, then a
 		// non-nil error is returned.
-		statusString, err := softForkStatus(deploymentStatus)
+		statusString, err := softForkStatus(deploymentState.State)
 		if err != nil {
 			return nil, &hnsjson.RPCError{
 				Code: hnsjson.ErrRPCInternal.Code,
 				Message: fmt.Sprintf("unknown deployment status: %v",
-					deploymentStatus),
+					deploymentState.State),
 			}
 		}
 
 		// Finally, populate the soft-fork description with all the
 		// information gathered above.
-		var startTime, endTime int64
-		if starter, ok := deploymentDetails.DeploymentStarter.(*chaincfg.MedianTimeDeploymentStarter); ok {
-			startTime = starter.StartTime().Unix()
+		startTime, timeout := deploymentTimes(&deploymentDetails)
+		var rpcStatistics *hnsjson.SoftForkStatistics
+		if deploymentState.Statistics != nil {
+			rpcStatistics = &hnsjson.SoftForkStatistics{
+				Period:    deploymentState.Statistics.Period,
+				Threshold: deploymentState.Statistics.Threshold,
+				Elapsed:   deploymentState.Statistics.Elapsed,
+				Count:     deploymentState.Statistics.Count,
+				Possible:  deploymentState.Statistics.Possible,
+			}
 		}
-		if ender, ok := deploymentDetails.DeploymentEnder.(*chaincfg.MedianTimeDeploymentEnder); ok {
-			endTime = ender.EndTime().Unix()
-		}
-		chainInfo.Bip9SoftForks[forkName] = &hnsjson.Bip9SoftForkDescription{
-			Status:              strings.ToLower(statusString),
-			Bit:                 deploymentDetails.BitNumber,
-			StartTime2:          startTime,
-			Timeout:             endTime,
-			MinActivationHeight: int32(deploymentDetails.MinActivationHeight),
+		chainInfo.Deployments[forkName] = &hnsjson.SoftForkDeployment{
+			Status:     statusString,
+			Bit:        deploymentDetails.BitNumber,
+			StartTime:  startTime,
+			Timeout:    timeout,
+			Statistics: rpcStatistics,
 		}
 	}
 
-	return chainInfo, nil
+	return &getBlockChainInfoResult{
+		GetBlockChainInfoResult: chainInfo,
+		SoftForks:               chainInfo.Deployments,
+	}, nil
 }
 
 // handleGetBlockCount implements the getblockcount command.

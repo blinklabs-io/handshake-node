@@ -60,7 +60,12 @@ func TestParityRunAndResume(t *testing.T) {
 					}
 				}
 			case "getblockchaininfo":
-				result = map[string]any{"chain": "mainnet", "bip9_softforks": map[string]any{"hardening": map[string]any{"status": "active"}}}
+				result = map[string]any{
+					"chain": "main",
+					"softforks": map[string]any{
+						"hardening": map[string]any{"status": "active"},
+					},
+				}
 			case "getnetworkinfo":
 				result = map[string]any{"version": 1}
 			default:

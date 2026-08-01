@@ -203,7 +203,7 @@ func TestHandshakeBlockVersionBits(t *testing.T) {
 		t.Fatalf("regtest calcNextBlockVersion: %v", err)
 	}
 
-	const wantRegtest = uint32(0x10400003)
+	const wantRegtest = uint32(1 << 28)
 	if uint32(got) != wantRegtest {
 		t.Fatalf("regtest next version = 0x%08x, want 0x%08x",
 			uint32(got), wantRegtest)

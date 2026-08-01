@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -854,12 +855,13 @@ func TestJSONRPCReadRejectsDeclaredOversizeBody(t *testing.T) {
 
 func TestHandshakeDeploymentNames(t *testing.T) {
 	tests := []struct {
-		id   int
+		id   uint32
 		name string
 	}{
 		{chaincfg.DeploymentHardening, "hardening"},
-		{chaincfg.DeploymentICANNLockup, "icann-lockup"},
+		{chaincfg.DeploymentICANNLockup, "icannlockup"},
 		{chaincfg.DeploymentAirstop, "airstop"},
+		{chaincfg.DeploymentTestDummy, "testdummy"},
 	}
 
 	for _, test := range tests {
@@ -878,7 +880,7 @@ func TestHandshakeDeploymentStatuses(t *testing.T) {
 	}{
 		{blockchain.ThresholdDefined, "defined"},
 		{blockchain.ThresholdStarted, "started"},
-		{blockchain.ThresholdLockedIn, "lockedin"},
+		{blockchain.ThresholdLockedIn, "locked_in"},
 		{blockchain.ThresholdActive, "active"},
 		{blockchain.ThresholdFailed, "failed"},
 	}
@@ -901,18 +903,16 @@ func TestConfiguredDeploymentNamesByNetwork(t *testing.T) {
 			name:   "mainnet",
 			params: &chaincfg.MainNetParams,
 			want: map[string]bool{
-				"dummy": true, "hardening": true,
-				"icann-lockup": true, "airstop": true,
+				"testdummy": true, "hardening": true,
+				"icannlockup": true, "airstop": true,
 			},
 		},
 		{
 			name:   "regtest",
 			params: &chaincfg.RegressionNetParams,
 			want: map[string]bool{
-				"dummy": true, "dummy-min-activation": true,
-				"dummy-always-active": true, "csv": true,
-				"segwit": true, "hardening": true,
-				"icann-lockup": true, "airstop": true,
+				"testdummy": true, "hardening": true,
+				"icannlockup": true, "airstop": true,
 			},
 		},
 	}
@@ -920,7 +920,8 @@ func TestConfiguredDeploymentNamesByNetwork(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := make(map[string]bool)
-			for id, deployment := range test.params.Deployments {
+			for _, id := range handshakeDeploymentIDs {
+				deployment := test.params.Deployments[id]
 				if !deploymentConfigured(&deployment) {
 					continue
 				}
@@ -933,6 +934,68 @@ func TestConfiguredDeploymentNamesByNetwork(t *testing.T) {
 			require.Equal(t, test.want, got, "configured deployment names mismatch")
 		})
 	}
+}
+
+func TestDeploymentTimesUseHsdSentinels(t *testing.T) {
+	deployment := &chaincfg.RegressionNetParams.Deployments[chaincfg.DeploymentTestDummy]
+	startTime, timeout := deploymentTimes(deployment)
+	require.EqualValues(t, 0, startTime)
+	require.EqualValues(t, math.MaxUint32, timeout)
+}
+
+func TestGetBlockChainInfoResultUsesHsdSoftForkSchema(t *testing.T) {
+	result := &getBlockChainInfoResult{
+		GetBlockChainInfoResult: &hnsjson.GetBlockChainInfoResult{
+			Chain:       "main",
+			Deployments: make(map[string]*hnsjson.SoftForkDeployment),
+		},
+		SoftForks: map[string]*hnsjson.SoftForkDeployment{
+			"hardening": {
+				Status:    "started",
+				Bit:       0,
+				StartTime: 1581638400,
+				Timeout:   1707868800,
+				Statistics: &hnsjson.SoftForkStatistics{
+					Period:    2016,
+					Threshold: 1916,
+					Elapsed:   100,
+					Count:     95,
+					Possible:  true,
+				},
+			},
+		},
+	}
+
+	got, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"chain": "main",
+		"blocks": 0,
+		"headers": 0,
+		"bestblockhash": "",
+		"difficulty": 0,
+		"mediantime": 0,
+		"pruned": false,
+		"softforks": {
+			"hardening": {
+				"status": "started",
+				"bit": 0,
+				"startTime": 1581638400,
+				"timeout": 1707868800,
+				"statistics": {
+					"period": 2016,
+					"threshold": 1916,
+					"elapsed": 100,
+					"count": 95,
+					"possible": true
+				}
+			}
+		}
+	}`, string(got))
+
+	require.NotContains(t, string(got), "bip9_softforks")
+	require.NotContains(t, string(got), "start_time")
+	require.NotContains(t, string(got), "bip34")
 }
 
 func TestHnsutilAddressToWireRejectsTaprootShapedAddress(t *testing.T) {

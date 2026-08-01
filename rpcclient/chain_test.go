@@ -8,11 +8,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/gorilla/websocket"
 )
 
@@ -54,6 +56,16 @@ func TestUnmarshalGetBlockChainInfoResultSoftForks(t *testing.T) {
 			res:        []byte(`{"softforks": {"segwit": {"type": "bip9"}}}`),
 			compatible: true,
 		},
+		{
+			name:    "handshake-node with hsd softforks",
+			version: HandshakeNodeVersion{},
+			res: []byte(`{"softforks":{"hardening":{` +
+				`"status":"started","bit":0,"startTime":1581638400,` +
+				`"timeout":1707868800,"statistics":{"period":2016,` +
+				`"threshold":1916,"elapsed":100,"count":95,` +
+				`"possible":true}}}}`),
+			compatible: true,
+		},
 	}
 
 	for _, test := range tests {
@@ -87,6 +99,34 @@ func TestUnmarshalGetBlockChainInfoResultSoftForks(t *testing.T) {
 				t.Fatal("expected to not unmarshal softforks")
 			}
 			if !test.compatible {
+				return
+			}
+
+			if _, ok := test.version.(HandshakeNodeVersion); ok {
+				want := &hnsjson.SoftForkDeployment{
+					Status:    "started",
+					Bit:       0,
+					StartTime: 1581638400,
+					Timeout:   1707868800,
+					Statistics: &hnsjson.SoftForkStatistics{
+						Period:    2016,
+						Threshold: 1916,
+						Elapsed:   100,
+						Count:     95,
+						Possible:  true,
+					},
+				}
+				if !reflect.DeepEqual(info.Deployments["hardening"], want) {
+					t.Fatalf("unexpected Handshake deployment: %#v",
+						info.Deployments["hardening"])
+				}
+				legacy := info.Bip9SoftForks["hardening"]
+				if legacy.StartTime() != want.StartTime {
+					t.Fatal("legacy deployment path was not populated")
+				}
+				if !reflect.DeepEqual(legacy.Statistics, want.Statistics) {
+					t.Fatal("legacy deployment statistics were not populated")
+				}
 				return
 			}
 
