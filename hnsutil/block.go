@@ -27,18 +27,17 @@ func (e OutOfRangeError) Error() string {
 	return string(e)
 }
 
-// Block defines a bitcoin block that provides easier and more efficient
+// Block defines a Handshake block that provides easier and more efficient
 // manipulation of raw blocks.  It also memoizes hashes for the block and its
 // transactions on their first access so subsequent accesses don't have to
 // repeat the relatively expensive hashing operations.
 type Block struct {
-	msgBlock                 *wire.MsgBlock  // Underlying MsgBlock
-	serializedBlock          []byte          // Serialized bytes for the block
-	serializedBlockNoWitness []byte          // Serialized bytes for block w/o witness data
-	blockHash                *chainhash.Hash // Cached block hash
-	blockHeight              int32           // Height in the main block chain
-	transactions             []*Tx           // Transactions
-	txnsGenerated            bool            // ALL wrapped transactions generated
+	msgBlock        *wire.MsgBlock  // Underlying MsgBlock
+	serializedBlock []byte          // Serialized bytes for the block
+	blockHash       *chainhash.Hash // Cached block hash
+	blockHeight     int32           // Height in the main block chain
+	transactions    []*Tx           // Transactions
+	txnsGenerated   bool            // ALL wrapped transactions generated
 }
 
 // MsgBlock returns the underlying wire.MsgBlock for the Block.
@@ -72,22 +71,11 @@ func (b *Block) Bytes() ([]byte, error) {
 // BytesNoWitness returns the serialized bytes for the block with transactions
 // encoded without any witness data.
 func (b *Block) BytesNoWitness() ([]byte, error) {
-	// Return the cached serialized bytes if it has already been generated.
-	if len(b.serializedBlockNoWitness) != 0 {
-		return b.serializedBlockNoWitness, nil
-	}
-
-	// Serialize the MsgBlock.
-	var w bytes.Buffer
-	err := b.msgBlock.SerializeNoWitness(&w)
-	if err != nil {
+	w := bytes.NewBuffer(make([]byte, 0, b.msgBlock.SerializeSizeStripped()))
+	if err := b.msgBlock.SerializeNoWitness(w); err != nil {
 		return nil, err
 	}
-	serializedBlock := w.Bytes()
-
-	// Cache the serialized bytes and return them.
-	b.serializedBlockNoWitness = serializedBlock
-	return serializedBlock, nil
+	return w.Bytes(), nil
 }
 
 // Hash returns the block identifier hash for the Block.  This is equivalent to

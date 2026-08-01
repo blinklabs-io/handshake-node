@@ -143,6 +143,39 @@ func TestBlock(t *testing.T) {
 		}
 	}
 
+	var block100000NoWitnessBuf bytes.Buffer
+	if err := Block100000.SerializeNoWitness(&block100000NoWitnessBuf); err != nil {
+		t.Fatalf("SerializeNoWitness: %v", err)
+	}
+	wantNoWitness := block100000NoWitnessBuf.Bytes()
+
+	gotNoWitness, err := b.BytesNoWitness()
+	if err != nil {
+		t.Fatalf("BytesNoWitness: %v", err)
+	}
+	if !bytes.Equal(gotNoWitness, wantNoWitness) {
+		t.Fatalf(
+			"BytesNoWitness: wrong bytes - got %v, want %v",
+			spew.Sdump(gotNoWitness),
+			spew.Sdump(wantNoWitness),
+		)
+	}
+
+	// BytesNoWitness deliberately avoids retaining another full block
+	// serialization. Verify each call creates an independent result.
+	gotNoWitness[0] ^= 0xff
+	gotNoWitnessAgain, err := b.BytesNoWitness()
+	if err != nil {
+		t.Fatalf("BytesNoWitness second call: %v", err)
+	}
+	if !bytes.Equal(gotNoWitnessAgain, wantNoWitness) {
+		t.Fatalf(
+			"BytesNoWitness second call: wrong bytes - got %v, want %v",
+			spew.Sdump(gotNoWitnessAgain),
+			spew.Sdump(wantNoWitness),
+		)
+	}
+
 	// Transaction offsets and length for the transaction in Block100000.
 	wantTxLocs := []wire.TxLoc{
 		{TxStart: 237, TxLen: 98},
