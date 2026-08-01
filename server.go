@@ -3147,9 +3147,12 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	if cfg.Prune != 0 {
 		hnsLog.Infof("Prune set to %d MiB", cfg.Prune)
 	}
+	pruneTarget, err := hsdInteropPruneTarget(db, cfg.Prune)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create a new block chain instance with the appropriate configuration.
-	var err error
 	s.chain, err = blockchain.New(&blockchain.Config{
 		DB:               s.db,
 		Interrupt:        interrupt,
@@ -3159,7 +3162,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		SigCache:         s.sigCache,
 		IndexManager:     indexManager,
 		HashCache:        s.hashCache,
-		Prune:            cfg.Prune * 1024 * 1024,
+		Prune:            pruneTarget,
 		UtxoCacheMaxSize: uint64(cfg.UtxoCacheMaxSizeMiB) * 1024 * 1024,
 		AssumeValid:      cfg.assumeValid,
 	})

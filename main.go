@@ -499,6 +499,10 @@ func loadBlockDB() (database.DB, error) {
 			return nil, err
 		}
 	}
+	if err := applyHsdInteropDatabaseOverrides(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	hnsLog.Info("Block database loaded")
 	return db, nil
