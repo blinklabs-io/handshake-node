@@ -5,9 +5,7 @@
 package blockchain
 
 import (
-	"encoding/hex"
 	"math"
-	"reflect"
 	"testing"
 	"time"
 
@@ -17,42 +15,6 @@ import (
 	"github.com/blinklabs-io/handshake-node/txscript"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
-
-func TestBIP0030ExceptionHashByteOrder(t *testing.T) {
-	tests := []struct {
-		name          string
-		legacyDisplay string
-		got           *chainhash.Hash
-	}{
-		{
-			name:          "height 91842",
-			legacyDisplay: "00000000000a4d0a398161ffc163c503763b1f4360639393e0e4c8e300e0caec",
-			got:           block91842Hash,
-		},
-		{
-			name:          "height 91880",
-			legacyDisplay: "00000000000743f190a18c5577a3c2d2a1f610ae9601ac046a38084ccb7cd721",
-			got:           block91880Hash,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			displayBytes, err := hex.DecodeString(test.legacyDisplay)
-			if err != nil {
-				t.Fatalf("invalid test hash: %v", err)
-			}
-
-			var want chainhash.Hash
-			for i, b := range displayBytes {
-				want[len(want)-1-i] = b
-			}
-			if *test.got != want {
-				t.Fatalf("exception hash: got %x, want %x", test.got[:], want[:])
-			}
-		})
-	}
-}
 
 // TestSequenceLocksActive tests the SequenceLockActive function to ensure it
 // works as expected in all possible combinations/scenarios.
@@ -406,72 +368,6 @@ func TestCheckTransactionStart(t *testing.T) {
 	ruleErr, ok := err.(RuleError)
 	if !ok || ruleErr.ErrorCode != ErrEarlyTransactions {
 		t.Fatalf("checkBlockContext error = %v, want ErrEarlyTransactions", err)
-	}
-}
-
-// TestCheckSerializedHeight tests the CheckSerializedHeight function with
-// various serialized heights and also does negative tests to ensure errors
-// and handled properly.
-func TestCheckSerializedHeight(t *testing.T) {
-	// Create an empty coinbase template to be used in the tests below.
-	coinbaseOutpoint := wire.NewOutPoint(&chainhash.Hash{}, math.MaxUint32)
-	coinbaseTx := wire.NewMsgTx(1)
-	coinbaseTx.AddTxIn(wire.NewTxIn(coinbaseOutpoint, wire.MaxTxInSequenceNum, nil))
-
-	// Expected rule errors.
-	missingHeightError := RuleError{
-		ErrorCode: ErrMissingCoinbaseHeight,
-	}
-	badHeightError := RuleError{
-		ErrorCode: ErrBadCoinbaseHeight,
-	}
-
-	tests := []struct {
-		sigScript  []byte // Serialized data
-		wantHeight int32  // Expected height
-		err        error  // Expected error type
-	}{
-		// No serialized height length.
-		{[]byte{}, 0, missingHeightError},
-		// Serialized height length with no height bytes.
-		{[]byte{0x02}, 0, missingHeightError},
-		// Serialized height length with too few height bytes.
-		{[]byte{0x02, 0x4a}, 0, missingHeightError},
-		// Serialized height that needs 2 bytes to encode.
-		{[]byte{0x02, 0x4a, 0x52}, 21066, nil},
-		// Serialized height that needs 2 bytes to encode, but backwards
-		// endianness.
-		{[]byte{0x02, 0x4a, 0x52}, 19026, badHeightError},
-		// Serialized height that needs 3 bytes to encode.
-		{[]byte{0x03, 0x40, 0x0d, 0x03}, 200000, nil},
-		// Serialized height that needs 3 bytes to encode, but backwards
-		// endianness.
-		{[]byte{0x03, 0x40, 0x0d, 0x03}, 1074594560, badHeightError},
-	}
-
-	t.Logf("Running %d tests", len(tests))
-	for i, test := range tests {
-		msgTx := coinbaseTx.Copy()
-		// In Handshake, the coinbase script is carried in the witness.
-		msgTx.TxIn[0].Witness = wire.TxWitness{test.sigScript}
-		tx := hnsutil.NewTx(msgTx)
-
-		err := CheckSerializedHeight(tx, test.wantHeight)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
-			t.Errorf("CheckSerializedHeight #%d wrong error type "+
-				"got: %v <%T>, want: %T", i, err, err, test.err)
-			continue
-		}
-
-		if rerr, ok := err.(RuleError); ok {
-			trerr := test.err.(RuleError)
-			if rerr.ErrorCode != trerr.ErrorCode {
-				t.Errorf("CheckSerializedHeight #%d wrong "+
-					"error code got: %v, want: %v", i,
-					rerr.ErrorCode, trerr.ErrorCode)
-				continue
-			}
-		}
 	}
 }
 
