@@ -83,9 +83,8 @@ func (rate DooPerByte) ToHNSPerKb() HNSPerKilobyte {
 	)
 }
 
-// ToBtcPerKb is retained for source compatibility. The returned value has
-// always represented the native coin per kilobyte; for Handshake that coin is
-// HNS.
+// ToBtcPerKb is retained for source compatibility. It returns Handshake's
+// native coin per kilobyte in HNS.
 //
 // Deprecated: use ToHNSPerKb.
 func (rate DooPerByte) ToBtcPerKb() HNSPerKilobyte {
