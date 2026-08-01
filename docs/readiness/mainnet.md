@@ -35,8 +35,11 @@ before launching isolated regtest nodes. It covers plaintext and Brontide
 handshakes, malformed packet isolation, block relay from hsd, a 32-block
 competing-branch reorg, clean and forced restarts, continued synchronization
 from the same datadir, and drop-and-rebuild recovery for the committed filter,
-transaction, and address indexes. Pruning and explicit database corruption
-recovery remain release blockers.
+transaction, and address indexes. It also forces real flat-file pruning,
+verifies an old block is no longer available, corrupts the metadata database,
+checks that startup fails closed, and verifies recovery by deleting only the
+corrupted block database, resynchronizing from hsd, pruning again, and
+continuing at the new tip.
 
 Restart and index-rebuild scenarios pass `--regtestpersist`; ordinary
 `--regtest` startup resets its database by default.
@@ -88,8 +91,6 @@ pruned node and after rebuilding enabled indexes. A release also requires a
 
 - Handshake-native fixtures must replace inherited Bitcoin fixtures and skips
   in consensus, storage, mempool, script, and P2P integration packages.
-- Extend the deterministic hsd regtest harness with pruning and explicit
-  database corruption recovery in CI.
 - A clean mainnet parity run, interrupted/resumed parity run, and 72-hour soak
   must complete with zero mismatch or corruption.
 

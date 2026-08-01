@@ -344,7 +344,8 @@ func buildHandshakeNode(t *testing.T, outputDir string) string {
 		t.Fatalf("resolve repository root: %v", err)
 	}
 	binary := filepath.Join(outputDir, "handshake-node")
-	cmd := exec.Command("go", "build", "-trimpath", "-o", binary, ".")
+	cmd := exec.Command("go", "build", "-trimpath", "-tags=hsdinterop",
+		"-o", binary, ".")
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
