@@ -140,6 +140,9 @@ const (
 	// ErrOverwriteTx indicates a block contains a transaction that has
 	// the same hash as a previous transaction which has not been fully
 	// spent.
+	//
+	// Deprecated: retained for RuleError API compatibility. Handshake
+	// validation does not produce this inherited Bitcoin BIP30 error.
 	ErrOverwriteTx
 
 	// ErrImmatureSpend indicates a transaction is attempting to spend a
@@ -175,13 +178,15 @@ const (
 	ErrBadCoinbaseValue
 
 	// ErrMissingCoinbaseHeight indicates the coinbase transaction for a
-	// block does not start with the serialized block block height as
+	// block does not start with the serialized block height as
 	// required for version 2 and higher blocks.
+	//
+	// Deprecated: retained for RuleError API compatibility. Handshake commits
+	// coinbase height in transaction locktime.
 	ErrMissingCoinbaseHeight
 
-	// ErrBadCoinbaseHeight indicates the serialized block height in the
-	// coinbase transaction for version 2 and higher blocks does not match
-	// the expected value.
+	// ErrBadCoinbaseHeight indicates the height committed in a Handshake
+	// coinbase transaction's locktime does not match the expected value.
 	ErrBadCoinbaseHeight
 
 	// ErrScriptMalformed indicates a transaction script is malformed in

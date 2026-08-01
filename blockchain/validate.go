@@ -792,8 +792,8 @@ func assertNoTimeWarp(blockHeight, blocksPerReTarget int32, headerTimestamp,
 // on its position within the block chain.
 //
 // The flags modify the behavior of this function as follows:
-//   - BFFastAdd: The transaction are not checked to see if they are finalized
-//     and the somewhat expensive BIP0034 validation is not performed.
+//   - BFFastAdd: Transactions are not checked for finalization, and Handshake
+//     coinbase-height validation is not performed.
 //
 // The flags are also passed to checkBlockHeaderContext.  See its documentation
 // for how the flags modify its behavior.
