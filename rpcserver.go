@@ -1644,7 +1644,7 @@ func handleEstimateFee(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 		return -1.0, err
 	}
 
-	// Convert to satoshis per kb.
+	// Return HNS per kilobyte.
 	return float64(feeRate), nil
 }
 

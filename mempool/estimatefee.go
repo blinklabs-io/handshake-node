@@ -45,9 +45,7 @@ const (
 	// it will provide fee estimations.
 	DefaultEstimateFeeMinRegisteredBlocks = 3
 
-	bytePerKb = 1000
-
-	btcPerSatoshi = 1e-8
+	bytesPerKilobyte = 1000
 )
 
 var (
@@ -56,38 +54,65 @@ var (
 	EstimateFeeDatabaseKey = []byte("estimatefee")
 )
 
-// SatoshiPerByte is number with units of satoshis per byte.
-type SatoshiPerByte float64
+// DooPerByte is a fee rate in Handshake's base unit per byte.
+type DooPerByte float64
 
-// BtcPerKilobyte is number with units of bitcoins per kilobyte.
-type BtcPerKilobyte float64
+// HNSPerKilobyte is a fee rate in HNS per kilobyte.
+type HNSPerKilobyte float64
 
-// ToBtcPerKb returns a float value that represents the given
-// SatoshiPerByte converted to satoshis per kb.
-func (rate SatoshiPerByte) ToBtcPerKb() BtcPerKilobyte {
+// SatoshiPerByte is retained as an alias for source compatibility.
+//
+// Deprecated: use DooPerByte. Handshake's base unit is the doo, not the
+// satoshi.
+type SatoshiPerByte = DooPerByte
+
+// BtcPerKilobyte is retained as an alias for source compatibility.
+//
+// Deprecated: use HNSPerKilobyte.
+type BtcPerKilobyte = HNSPerKilobyte
+
+// ToHNSPerKb converts a fee rate in doo per byte to HNS per kilobyte.
+func (rate DooPerByte) ToHNSPerKb() HNSPerKilobyte {
 	// If our rate is the error value, return that.
-	if rate == SatoshiPerByte(-1.0) {
+	if rate == DooPerByte(-1.0) {
 		return -1.0
 	}
 
-	return BtcPerKilobyte(float64(rate) * bytePerKb * btcPerSatoshi)
+	return HNSPerKilobyte(
+		float64(rate) * bytesPerKilobyte / hnsutil.DooPerHNS,
+	)
+}
+
+// ToBtcPerKb is retained for source compatibility. The returned value has
+// always represented the native coin per kilobyte; for Handshake that coin is
+// HNS.
+//
+// Deprecated: use ToHNSPerKb.
+func (rate DooPerByte) ToBtcPerKb() HNSPerKilobyte {
+	return rate.ToHNSPerKb()
 }
 
 // Fee returns the fee for a transaction of a given size for
 // the given fee rate.
-func (rate SatoshiPerByte) Fee(size uint32) hnsutil.Amount {
+func (rate DooPerByte) Fee(size uint32) hnsutil.Amount {
 	// If our rate is the error value, return that.
-	if rate == SatoshiPerByte(-1) {
+	if rate == DooPerByte(-1) {
 		return hnsutil.Amount(-1)
 	}
 
 	return hnsutil.Amount(float64(rate) * float64(size))
 }
 
-// NewSatoshiPerByte creates a SatoshiPerByte from an Amount and a
-// size in bytes.
-func NewSatoshiPerByte(fee hnsutil.Amount, size uint32) SatoshiPerByte {
-	return SatoshiPerByte(float64(fee) / float64(size))
+// NewDooPerByte creates a DooPerByte from an Amount and a size in bytes.
+func NewDooPerByte(fee hnsutil.Amount, size uint32) DooPerByte {
+	return DooPerByte(float64(fee) / float64(size))
+}
+
+// NewSatoshiPerByte creates a fee rate from an Amount and a size in bytes.
+//
+// Deprecated: use NewDooPerByte.
+func NewSatoshiPerByte(fee hnsutil.Amount, size uint32) DooPerByte {
+	return NewDooPerByte(fee, size)
 }
 
 // observedTransaction represents an observed transaction and some
@@ -96,8 +121,8 @@ type observedTransaction struct {
 	// A transaction hash.
 	hash chainhash.Hash
 
-	// The fee per byte of the transaction in satoshis.
-	feeRate SatoshiPerByte
+	// The fee per byte of the transaction in doo.
+	feeRate DooPerByte
 
 	// The block height when it was observed.
 	observed int32
@@ -120,7 +145,7 @@ func deserializeObservedTransaction(r io.Reader) (*observedTransaction, error) {
 	// The first 32 bytes should be a hash.
 	binary.Read(r, binary.BigEndian, &ot.hash)
 
-	// The next 8 are SatoshiPerByte
+	// The next 8 bytes are a DooPerByte encoded as a float64.
 	binary.Read(r, binary.BigEndian, &ot.feeRate)
 
 	// And next there are two uint32's.
@@ -173,7 +198,7 @@ type FeeEstimator struct {
 	bin      [estimateFeeDepth][]*observedTransaction
 
 	// The cached estimates.
-	cached []SatoshiPerByte
+	cached []DooPerByte
 
 	// Transactions that have been removed from the bins. This allows us to
 	// revert in case of an orphaned block.
@@ -212,7 +237,7 @@ func (ef *FeeEstimator) ObserveTransaction(t *TxDesc) {
 
 		ef.observed[hash] = &observedTransaction{
 			hash:     hash,
-			feeRate:  NewSatoshiPerByte(hnsutil.Amount(t.Fee), size),
+			feeRate:  NewDooPerByte(hnsutil.Amount(t.Fee), size),
 			observed: t.Height,
 			mined:    mining.UnminedHeight,
 		}
@@ -465,7 +490,7 @@ func (ef *FeeEstimator) rollback() {
 // estimateFeeSet is a set of txs that can that is sorted
 // by the fee per kb rate.
 type estimateFeeSet struct {
-	feeRate []SatoshiPerByte
+	feeRate []DooPerByte
 	bin     [estimateFeeDepth]uint32
 }
 
@@ -482,9 +507,9 @@ func (b *estimateFeeSet) Swap(i, j int) {
 // estimateFee returns the estimated fee for a transaction
 // to confirm in confirmations blocks from now, given
 // the data set we have collected.
-func (b *estimateFeeSet) estimateFee(confirmations int) SatoshiPerByte {
+func (b *estimateFeeSet) estimateFee(confirmations int) DooPerByte {
 	if confirmations <= 0 {
-		return SatoshiPerByte(math.Inf(1))
+		return DooPerByte(math.Inf(1))
 	}
 
 	if confirmations > estimateFeeDepth {
@@ -525,7 +550,7 @@ func (ef *FeeEstimator) newEstimateFeeSet() *estimateFeeSet {
 		capacity += l
 	}
 
-	set.feeRate = make([]SatoshiPerByte, capacity)
+	set.feeRate = make([]DooPerByte, capacity)
 
 	i := 0
 	for _, b := range ef.bin {
@@ -542,10 +567,10 @@ func (ef *FeeEstimator) newEstimateFeeSet() *estimateFeeSet {
 
 // estimates returns the set of all fee estimates from 1 to estimateFeeDepth
 // confirmations from now.
-func (ef *FeeEstimator) estimates() []SatoshiPerByte {
+func (ef *FeeEstimator) estimates() []DooPerByte {
 	set := ef.newEstimateFeeSet()
 
-	estimates := make([]SatoshiPerByte, estimateFeeDepth)
+	estimates := make([]DooPerByte, estimateFeeDepth)
 	for i := 0; i < estimateFeeDepth; i++ {
 		estimates[i] = set.estimateFee(i + 1)
 	}
@@ -553,9 +578,9 @@ func (ef *FeeEstimator) estimates() []SatoshiPerByte {
 	return estimates
 }
 
-// EstimateFee estimates the fee per byte to have a tx confirmed a given
-// number of blocks from now.
-func (ef *FeeEstimator) EstimateFee(numBlocks uint32) (BtcPerKilobyte, error) {
+// EstimateFee estimates the fee in HNS per kilobyte to have a transaction
+// confirmed a given number of blocks from now.
+func (ef *FeeEstimator) EstimateFee(numBlocks uint32) (HNSPerKilobyte, error) {
 	ef.mtx.Lock()
 	defer ef.mtx.Unlock()
 
@@ -580,7 +605,7 @@ func (ef *FeeEstimator) EstimateFee(numBlocks uint32) (BtcPerKilobyte, error) {
 		ef.cached = ef.estimates()
 	}
 
-	return ef.cached[int(numBlocks)-1].ToBtcPerKb(), nil
+	return ef.cached[int(numBlocks)-1].ToHNSPerKb(), nil
 }
 
 // In case the format for the serialized version of the FeeEstimator changes,
