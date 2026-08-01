@@ -86,64 +86,6 @@ func isSupportedDbType(dbType string) bool {
 	return false
 }
 
-// loadBlocks reads files containing bitcoin block data (gzipped but otherwise
-// in the format bitcoind writes) from disk and returns them as an array of
-// hnsutil.Block.  This is largely borrowed from the test code in btcdb.
-func loadBlocks(filename string) (blocks []*hnsutil.Block, err error) {
-	filename = filepath.Join("testdata/", filename)
-
-	var network = wire.MainNet
-	var dr io.Reader
-	var fi io.ReadCloser
-
-	fi, err = os.Open(filename)
-	if err != nil {
-		return
-	}
-
-	if strings.HasSuffix(filename, ".bz2") {
-		dr = bzip2.NewReader(fi)
-	} else {
-		dr = fi
-	}
-	defer fi.Close()
-
-	var block *hnsutil.Block
-
-	err = nil
-	for height := int64(1); err == nil; height++ {
-		var rintbuf uint32
-		err = binary.Read(dr, binary.LittleEndian, &rintbuf)
-		if err == io.EOF {
-			// hit end of file at expected offset: no warning
-			height--
-			err = nil
-			break
-		}
-		if err != nil {
-			break
-		}
-		if rintbuf != uint32(network) {
-			break
-		}
-		err = binary.Read(dr, binary.LittleEndian, &rintbuf)
-		blocklen := rintbuf
-
-		rbytes := make([]byte, blocklen)
-
-		// read block
-		dr.Read(rbytes)
-
-		block, err = hnsutil.NewBlockFromBytes(rbytes)
-		if err != nil {
-			return
-		}
-		blocks = append(blocks, block)
-	}
-
-	return
-}
-
 // chainSetup is used to create a new db and chain instance with the genesis
 // block already inserted.  In addition to the new chain instance, it returns
 // a teardown function the caller should invoke when done testing to clean up.
