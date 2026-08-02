@@ -358,10 +358,6 @@ type Config struct {
 	// announcements retained for trickled delivery.  A non-positive value
 	// selects the default.
 	MaxOutboundInventory int
-
-	// UsingV2Conn is defined if and only if we accept and attempt to make
-	// v2 connections.
-	UsingV2Conn bool
 }
 
 // OutboundQueueBudget bounds response generation, serialization, retained
@@ -646,6 +642,7 @@ type Peer struct {
 	lastSend      int64
 	connected     int32
 	disconnect    int32
+	brontide      atomic.Bool
 
 	conn         net.Conn
 	lifecycleMtx sync.Mutex
@@ -794,7 +791,7 @@ func (p *Peer) StatsSnapshot() *StatsSnap {
 		LastPingNonce:  p.lastPingNonce,
 		LastPingMicros: p.lastPingMicros,
 		LastPingTime:   p.lastPingTime,
-		V2Connection:   p.cfg.UsingV2Conn,
+		V2Connection:   p.brontide.Load(),
 	}
 
 	p.statsMtx.RUnlock()
@@ -1411,7 +1408,7 @@ func (p *Peer) prepareOutboundMessage(msg *outMsg) error {
 		msg.message = nil
 	}
 	msg.queueBytes = uint64(len(encoded)) + outboundMessageOverhead
-	if p.cfg.UsingV2Conn {
+	if p.brontide.Load() {
 		msg.queueBytes += uint64(len(encoded))*brontideTransientCopies +
 			brontideFrameOverhead
 	}
@@ -2708,7 +2705,7 @@ func (p *Peer) Connected() bool {
 // SetBrontideConnection records whether the underlying transport was upgraded
 // to Handshake Brontide. It is set by the server after transport negotiation.
 func (p *Peer) SetBrontideConnection(encrypted bool) {
-	p.cfg.UsingV2Conn = encrypted
+	p.brontide.Store(encrypted)
 }
 
 // recoverFromPanic catches any panic that occurs in a peer goroutine,
@@ -3205,15 +3202,6 @@ func (p *Peer) WaitForDisconnect() {
 	p.lifecycleMtx.Unlock()
 }
 
-// ShouldDowngradeToV1 is retained for the old transport downgrade hook.
-// Handshake Brontide/plaintext fallback is handled before peer negotiation.
-//
-// This function is safe for concurrent access.
-func (p *Peer) ShouldDowngradeToV1() bool {
-	// Brontide fallback is handled before the peer protocol starts.
-	return false
-}
-
 // newPeerBase returns a new base bitcoin peer based on the inbound flag.  This
 // is used by the NewInboundPeer and NewOutboundPeer functions to perform base
 // setup needed by both types of peers.
@@ -3269,10 +3257,6 @@ func newPeerBase(origCfg *Config, inbound bool) *Peer {
 		services:           cfg.Services,
 		protocolVersion:    cfg.ProtocolVersion,
 	}
-
-	// Transport encryption is set by the server after Brontide/plaintext
-	// connection setup.
-	p.cfg.UsingV2Conn = false
 
 	return &p
 }
