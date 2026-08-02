@@ -543,7 +543,7 @@ func (m *memWallet) CreateTransaction(outputs []*wire.TxOut,
 
 		privKey, _ := btcec.PrivKeyFromBytes(privKeyOld.Serialize())
 
-		scriptCode, err := p2wpkhScriptCode(utxo.pkScript, m.net)
+		scriptCode, err := P2WPKHScriptCode(utxo.pkScript, m.net)
 		if err != nil {
 			return nil, err
 		}
@@ -609,7 +609,9 @@ func (m *memWallet) ConfirmedBalance() hnsutil.Amount {
 	return balance
 }
 
-func p2wpkhScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
+// P2WPKHScriptCode returns the script code for a Handshake version-0
+// pubkey-hash witness program.
+func P2WPKHScriptCode(pkScript []byte, net *chaincfg.Params) ([]byte, error) {
 	if !txscript.IsPayToWitnessPubKeyHash(pkScript) {
 		return nil, fmt.Errorf("unsupported wallet witness script %x", pkScript)
 	}
