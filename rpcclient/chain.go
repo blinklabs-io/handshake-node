@@ -1139,7 +1139,7 @@ func (c *Client) EstimateFeeAsync(numBlocks int64) FutureEstimateFeeResult {
 	return c.SendCmd(cmd)
 }
 
-// EstimateFee provides an estimated fee  in bitcoins per kilobyte.
+// EstimateFee provides an estimated fee in HNS per kilobyte.
 func (c *Client) EstimateFee(numBlocks int64) (float64, error) {
 	return c.EstimateFeeAsync(numBlocks).Receive()
 }

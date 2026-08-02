@@ -123,12 +123,12 @@ var helpDescsEnUS = map[string]string{
 	"decodescript-hexscript": "Hex-encoded script",
 
 	// EstimateFeeCmd help.
-	"estimatefee--synopsis": "Estimate the fee per kilobyte in satoshis " +
+	"estimatefee--synopsis": "Estimate the fee per kilobyte in HNS " +
 		"required for a transaction to be mined before a certain number of " +
 		"blocks have been generated.",
 	"estimatefee-numblocks": "The maximum number of blocks which can be " +
 		"generated before the transaction is mined.",
-	"estimatefee--result0": "Estimated fee per kilobyte in satoshis for a block to " +
+	"estimatefee--result0": "Estimated fee per kilobyte in HNS for a block to " +
 		"be mined in the next NumBlocks blocks.",
 
 	// GenerateCmd help
