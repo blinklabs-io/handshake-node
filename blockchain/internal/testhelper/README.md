@@ -1,14 +1,12 @@
 testhelper
 ==========
 
-[![Build Status](https://github.com/btcsuite/btcd/workflows/Build%20and%20Test/badge.svg)](https://github.com/btcsuite/btcd/actions)
+[![Build Status](https://github.com/blinklabs-io/handshake-node/actions/workflows/go-test.yml/badge.svg)](https://github.com/blinklabs-io/handshake-node/actions/workflows/go-test.yml)
 [![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/btcsuite/btcd/blockchain/testhelper)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper)
 
-Package testhelper provides functions that are used internally in the
-btcd/blockchain and btcd/blockchain/fullblocktests package to test consensus
-validation rules.  Mainly provided to avoid dependency cycles internally among
-the different packages in btcd.
+Package testhelper provides functions used internally by the blockchain tests
+to exercise consensus validation rules.
 
 ## License
 

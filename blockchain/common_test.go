@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blinklabs-io/handshake-node/blockchain/internal/testhelper"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
@@ -85,64 +84,6 @@ func isSupportedDbType(dbType string) bool {
 	}
 
 	return false
-}
-
-// loadBlocks reads files containing bitcoin block data (gzipped but otherwise
-// in the format bitcoind writes) from disk and returns them as an array of
-// hnsutil.Block.  This is largely borrowed from the test code in btcdb.
-func loadBlocks(filename string) (blocks []*hnsutil.Block, err error) {
-	filename = filepath.Join("testdata/", filename)
-
-	var network = wire.MainNet
-	var dr io.Reader
-	var fi io.ReadCloser
-
-	fi, err = os.Open(filename)
-	if err != nil {
-		return
-	}
-
-	if strings.HasSuffix(filename, ".bz2") {
-		dr = bzip2.NewReader(fi)
-	} else {
-		dr = fi
-	}
-	defer fi.Close()
-
-	var block *hnsutil.Block
-
-	err = nil
-	for height := int64(1); err == nil; height++ {
-		var rintbuf uint32
-		err = binary.Read(dr, binary.LittleEndian, &rintbuf)
-		if err == io.EOF {
-			// hit end of file at expected offset: no warning
-			height--
-			err = nil
-			break
-		}
-		if err != nil {
-			break
-		}
-		if rintbuf != uint32(network) {
-			break
-		}
-		err = binary.Read(dr, binary.LittleEndian, &rintbuf)
-		blocklen := rintbuf
-
-		rbytes := make([]byte, blocklen)
-
-		// read block
-		dr.Read(rbytes)
-
-		block, err = hnsutil.NewBlockFromBytes(rbytes)
-		if err != nil {
-			return
-		}
-		blocks = append(blocks, block)
-	}
-
-	return
 }
 
 // chainSetup is used to create a new db and chain instance with the genesis
@@ -427,25 +368,6 @@ func newFakeNode(parent *blockNode, blockVersion int32, bits uint32, timestamp t
 	return newBlockNode(header, parent)
 }
 
-// addBlock adds a block to the blockchain that succeeds the previous block.
-// The blocks spends all the provided spendable outputs.  The new block and
-// the new spendable outputs created in the block are returned.
-func addBlock(chain *BlockChain, prev *hnsutil.Block, spends []*testhelper.SpendableOut) (
-	*hnsutil.Block, []*testhelper.SpendableOut, error) {
-
-	block, outs, err := newBlock(chain, prev, spends)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	_, _, err = chain.ProcessBlock(block, BFNone)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return block, outs, nil
-}
-
 // calcMerkleRoot creates a merkle tree from the slice of transactions and
 // returns the root of the tree.
 func calcMerkleRoot(txns []*wire.MsgTx) chainhash.Hash {
@@ -458,64 +380,4 @@ func calcMerkleRoot(txns []*wire.MsgTx) chainhash.Hash {
 		utilTxns = append(utilTxns, hnsutil.NewTx(tx))
 	}
 	return CalcMerkleRoot(utilTxns, false)
-}
-
-// newBlock creates a block to the blockchain that succeeds the previous block.
-// The blocks spends all the provided spendable outputs.  The new block and the
-// newly spendable outputs created in the block are returned.
-func newBlock(chain *BlockChain, prev *hnsutil.Block,
-	spends []*testhelper.SpendableOut) (*hnsutil.Block, []*testhelper.SpendableOut, error) {
-
-	blockHeight := prev.Height() + 1
-	txns := make([]*wire.MsgTx, 0, 1+len(spends))
-
-	// Create and add coinbase tx.
-	cb := testhelper.CreateCoinbaseTx(blockHeight, CalcBlockSubsidy(blockHeight, chain.chainParams))
-	txns = append(txns, cb)
-
-	// Spend all txs to be spent.
-	for _, spend := range spends {
-		cb.TxOut[0].Value += int64(testhelper.LowFee)
-
-		spendTx := testhelper.CreateSpendTx(spend, testhelper.LowFee)
-		txns = append(txns, spendTx)
-	}
-
-	// Use a timestamp that is one second after the previous block unless
-	// this is the first block in which case the current time is used.
-	var ts time.Time
-	if blockHeight == 1 {
-		ts = time.Unix(time.Now().Unix(), 0)
-	} else {
-		ts = prev.MsgBlock().Header.Timestamp.Add(time.Second)
-	}
-
-	// Create the block. The nonce will be solved in the below code in
-	// SolveBlock.
-	block := hnsutil.NewBlock(&wire.MsgBlock{
-		Header: wire.BlockHeader{
-			Version:    1,
-			PrevBlock:  *prev.Hash(),
-			MerkleRoot: calcMerkleRoot(txns),
-			Bits:       chain.chainParams.PowLimitBits,
-			Timestamp:  ts,
-			Nonce:      0, // To be solved.
-		},
-		Transactions: txns,
-	})
-	block.SetHeight(blockHeight)
-
-	// Solve the block.
-	if !testhelper.SolveBlock(&block.MsgBlock().Header) {
-		return nil, nil, fmt.Errorf("Unable to solve block at height %d", blockHeight)
-	}
-
-	// Create spendable outs to return.
-	outs := make([]*testhelper.SpendableOut, len(txns))
-	for i, tx := range txns {
-		out := testhelper.MakeSpendableOutForTx(tx, 0)
-		outs[i] = &out
-	}
-
-	return block, outs, nil
 }
