@@ -191,16 +191,17 @@ type deferredSyncRequest struct {
 }
 
 // limitAdd is a helper function for maps that require a maximum limit by
-// evicting a random value if adding the new value would cause it to
+// evicting an arbitrary value if adding the new value would cause it to
 // overflow the maximum allowed.
 func limitAdd(m map[chainhash.Hash]struct{}, hash chainhash.Hash, limit int) {
-	if len(m)+1 > limit {
-		// Remove a random entry from the map.  For most compilers, Go's
-		// range statement iterates starting at a random item although
-		// that is not 100% guaranteed by the spec.  The iteration order
-		// is not important here because an adversary would have to be
-		// able to pull off preimage attacks on the hashing function in
-		// order to target eviction of specific entries anyways.
+	if _, ok := m[hash]; ok {
+		return
+	}
+
+	if len(m) >= limit {
+		// The iteration order is not important because an adversary would
+		// have to be able to pull off preimage attacks on the hashing
+		// function in order to target eviction of specific entries.
 		for txHash := range m {
 			delete(m, txHash)
 			break

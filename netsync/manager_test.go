@@ -53,6 +53,67 @@ type recordingPeerNotifier struct {
 	data    []interface{}
 }
 
+func TestLimitAdd(t *testing.T) {
+	t.Parallel()
+
+	firstHash := chainhash.Hash{0x01}
+	secondHash := chainhash.Hash{0x02}
+	thirdHash := chainhash.Hash{0x03}
+
+	t.Run("below capacity", func(t *testing.T) {
+		hashes := map[chainhash.Hash]struct{}{
+			firstHash: {},
+		}
+
+		limitAdd(hashes, secondHash, 3)
+
+		require.Len(t, hashes, 2)
+		require.Contains(t, hashes, firstHash)
+		require.Contains(t, hashes, secondHash)
+	})
+
+	t.Run("reaches capacity", func(t *testing.T) {
+		hashes := map[chainhash.Hash]struct{}{
+			firstHash: {},
+		}
+
+		limitAdd(hashes, secondHash, 2)
+
+		require.Len(t, hashes, 2)
+		require.Contains(t, hashes, firstHash)
+		require.Contains(t, hashes, secondHash)
+	})
+
+	t.Run("duplicate at capacity", func(t *testing.T) {
+		hashes := map[chainhash.Hash]struct{}{
+			firstHash:  {},
+			secondHash: {},
+		}
+
+		limitAdd(hashes, firstHash, 2)
+
+		require.Equal(t, map[chainhash.Hash]struct{}{
+			firstHash:  {},
+			secondHash: {},
+		}, hashes)
+	})
+
+	t.Run("new hash at capacity", func(t *testing.T) {
+		hashes := map[chainhash.Hash]struct{}{
+			firstHash:  {},
+			secondHash: {},
+		}
+
+		limitAdd(hashes, thirdHash, 2)
+
+		require.Len(t, hashes, 2)
+		require.Contains(t, hashes, thirdHash)
+		_, containsFirst := hashes[firstHash]
+		_, containsSecond := hashes[secondHash]
+		require.NotEqual(t, containsFirst, containsSecond)
+	})
+}
+
 func (n *recordingPeerNotifier) RelayInventory(iv *wire.InvVect,
 	data interface{}) {
 
