@@ -37,7 +37,6 @@ profile.tmp
 profile.cov
 coverage.txt
 hnsutil/coverage.txt
-hnsutil/psbt/coverage.txt
 
 # vim
 *.swp
