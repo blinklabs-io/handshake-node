@@ -69,13 +69,5 @@ between unexpected errors, such as database errors, versus errors due to rule
 violations through type assertions.  In addition, callers can programmatically
 determine the specific rule violation by examining the ErrorCode field of the
 type asserted blockchain.RuleError.
-
-# Bitcoin Improvement Proposals
-
-This package includes spec changes outlined by the following BIPs:
-
-	BIP0016 (https://en.bitcoin.it/wiki/BIP_0016)
-	BIP0030 (https://en.bitcoin.it/wiki/BIP_0030)
-	BIP0034 (https://en.bitcoin.it/wiki/BIP_0034)
 */
 package blockchain

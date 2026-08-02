@@ -5,8 +5,6 @@
 package blockchain
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -45,17 +43,9 @@ const (
 	// used to calculate the median time used to validate block timestamps.
 	medianTimeBlocks = 11
 
-	// serializedHeightVersion is the legacy Bitcoin block version which
-	// changed block coinbases to start with the serialized block height.
-	serializedHeightVersion = 2
-
 	// baseSubsidy is the starting subsidy amount for mined blocks.  This
 	// value is halved every SubsidyHalvingInterval blocks.
 	baseSubsidy = 2000 * hnsutil.DooPerHNS
-
-	// coinbaseHeightAllocSize is the amount of bytes that the
-	// ScriptBuilder will allocate when validating the coinbase height.
-	coinbaseHeightAllocSize = 5
 
 	// maxTimeWarp is a maximum number of seconds that the timestamp of the first
 	// block of a difficulty adjustment period is allowed to
@@ -68,16 +58,6 @@ var (
 	// a package level variable to avoid the need to create a new instance
 	// every time a check is needed.
 	zeroHash chainhash.Hash
-
-	// block91842Hash is one of the two nodes which violate the rules
-	// set forth in BIP0030.  It is defined as a package level variable to
-	// avoid the need to create a new instance every time a check is needed.
-	block91842Hash = newHashFromStr("eccae000e3c8e4e093936360431f3b7603c563c1ff6181390a4d0a0000000000")
-
-	// block91880Hash is one of the two nodes which violate the rules
-	// set forth in BIP0030.  It is defined as a package level variable to
-	// avoid the need to create a new instance every time a check is needed.
-	block91880Hash = newHashFromStr("21d77ccb4c08386a04ac0196ae10f6a1d2c2a377558ca190f143070000000000")
 )
 
 // isNullOutpoint determines whether or not a previous transaction output point
@@ -87,15 +67,6 @@ func isNullOutpoint(outpoint *wire.OutPoint) bool {
 		return true
 	}
 	return false
-}
-
-// ShouldHaveSerializedBlockHeight determines if a block should have a
-// serialized block height embedded within the scriptSig of its
-// coinbase transaction. Judgement is based on the block version in the block
-// header. Blocks with version 2 and above satisfy this criteria. See BIP0034
-// for further information.
-func ShouldHaveSerializedBlockHeight(header *wire.BlockHeader) bool {
-	return header.Version >= serializedHeightVersion
 }
 
 // IsCoinBaseTx determines whether or not a transaction is a coinbase.  A
@@ -177,21 +148,6 @@ func IsFinalizedTransaction(tx *hnsutil.Tx, blockHeight int32, blockTime time.Ti
 		}
 	}
 	return true
-}
-
-// isBIP0030Node returns whether or not the passed node represents one of the
-// two blocks that violate the BIP0030 rule which prevents transactions from
-// overwriting old ones.
-func isBIP0030Node(node *blockNode) bool {
-	if node.height == 91842 && node.hash.IsEqual(block91842Hash) {
-		return true
-	}
-
-	if node.height == 91880 && node.hash.IsEqual(block91880Hash) {
-		return true
-	}
-
-	return false
 }
 
 // CalcBlockSubsidy returns the subsidy amount a block at the provided height
@@ -683,88 +639,6 @@ func CheckBlockSanity(block *hnsutil.Block, powLimit *big.Int, timeSource Median
 	return checkBlockSanity(block, powLimit, timeSource, BFNone)
 }
 
-// coinbaseWitnessScript returns the coinbase script bytes from a coinbase
-// transaction's witness stack. Some compatibility fixtures may prepend a
-// 32-byte witness nonce at Witness[0], in which case the coinbase script lives
-// at Witness[1].
-func coinbaseWitnessScript(witness [][]byte) []byte {
-	if len(witness) == 0 {
-		return nil
-	}
-	if len(witness[0]) == CoinbaseWitnessDataLen && len(witness) > 1 {
-		return witness[1]
-	}
-	return witness[0]
-}
-
-// ExtractCoinbaseHeight attempts to extract the height of the block from the
-// scriptSig of a coinbase transaction.  Coinbase heights are only present in
-// blocks of version 2 or later.  This was added as part of BIP0034.
-func ExtractCoinbaseHeight(coinbaseTx *hnsutil.Tx) (int32, error) {
-	// In Handshake, the coinbase script is carried in the witness.
-	sigScript := coinbaseWitnessScript(coinbaseTx.MsgTx().TxIn[0].Witness)
-	if len(sigScript) < 1 {
-		str := "the coinbase signature script for blocks of " +
-			"version %d or greater must start with the " +
-			"length of the serialized block height"
-		str = fmt.Sprintf(str, serializedHeightVersion)
-		return 0, ruleError(ErrMissingCoinbaseHeight, str)
-	}
-
-	// Detect the case when the block height is a small integer encoded with
-	// as single byte.
-	opcode := int(sigScript[0])
-	if opcode == txscript.OP_0 {
-		return 0, nil
-	}
-	if opcode >= txscript.OP_1 && opcode <= txscript.OP_16 {
-		return int32(opcode - (txscript.OP_1 - 1)), nil
-	}
-
-	// Otherwise, the opcode is the length of the following bytes which
-	// encode in the block height.
-	serializedLen := int(sigScript[0])
-	if len(sigScript[1:]) < serializedLen {
-		str := "the coinbase signature script for blocks of " +
-			"version %d or greater must start with the " +
-			"serialized block height"
-		str = fmt.Sprintf(str, serializedLen)
-		return 0, ruleError(ErrMissingCoinbaseHeight, str)
-	}
-
-	// We use 4 bytes here since it saves us allocations. We use a stack
-	// allocation rather than a heap allocation here.
-	var serializedHeightBytes [4]byte
-	copy(serializedHeightBytes[:], sigScript[1:serializedLen+1])
-
-	serializedHeight := int32(
-		binary.LittleEndian.Uint32(serializedHeightBytes[:]),
-	)
-
-	if err := compareScript(serializedHeight, sigScript); err != nil {
-		return 0, err
-	}
-
-	return serializedHeight, nil
-}
-
-// CheckSerializedHeight checks if the signature script in the passed
-// transaction starts with the serialized block height of wantHeight.
-func CheckSerializedHeight(coinbaseTx *hnsutil.Tx, wantHeight int32) error {
-	serializedHeight, err := ExtractCoinbaseHeight(coinbaseTx)
-	if err != nil {
-		return err
-	}
-
-	if serializedHeight != wantHeight {
-		str := fmt.Sprintf("the coinbase signature script serialized "+
-			"block height is %d when %d was expected",
-			serializedHeight, wantHeight)
-		return ruleError(ErrBadCoinbaseHeight, str)
-	}
-	return nil
-}
-
 // CoinbaseBlockHeight returns the height encoded in a Handshake coinbase
 // transaction.  Handshake commits the coinbase height in the transaction
 // locktime rather than in a Bitcoin-style scriptSig prefix.
@@ -792,26 +666,6 @@ func CheckCoinbaseHeight(coinbaseTx *hnsutil.Tx, wantHeight int32) error {
 			coinbaseHeight, wantHeight)
 		return ruleError(ErrBadCoinbaseHeight, str)
 	}
-	return nil
-}
-
-func compareScript(height int32, script []byte) error {
-	scriptBuilder := txscript.NewScriptBuilder(
-		txscript.WithScriptAllocSize(coinbaseHeightAllocSize),
-	)
-	scriptHeight, err := scriptBuilder.AddInt64(
-		int64(height),
-	).Script()
-	if err != nil {
-		return err
-	}
-
-	if !bytes.HasPrefix(script, scriptHeight) {
-		str := fmt.Sprintf("the coinbase signature script does not "+
-			"minimally encode the height %d", height)
-		return ruleError(ErrBadCoinbaseHeight, str)
-	}
-
 	return nil
 }
 
@@ -938,8 +792,8 @@ func assertNoTimeWarp(blockHeight, blocksPerReTarget int32, headerTimestamp,
 // on its position within the block chain.
 //
 // The flags modify the behavior of this function as follows:
-//   - BFFastAdd: The transaction are not checked to see if they are finalized
-//     and the somewhat expensive BIP0034 validation is not performed.
+//   - BFFastAdd: Transactions are not checked for finalization, and Handshake
+//     coinbase-height validation is not performed.
 //
 // The flags are also passed to checkBlockHeaderContext.  See its documentation
 // for how the flags modify its behavior.
@@ -1009,48 +863,6 @@ func checkTransactionStart(block *hnsutil.Block, blockHeight int32,
 
 		return ruleError(ErrEarlyTransactions,
 			"coinbase claim and airdrop outputs are not allowed before the transaction start height")
-	}
-
-	return nil
-}
-
-// checkBIP0030 ensures blocks do not contain duplicate transactions which
-// 'overwrite' older transactions that are not fully spent.  This prevents an
-// attack where a coinbase and all of its dependent transactions could be
-// duplicated to effectively revert the overwritten transactions to a single
-// confirmation thereby making them vulnerable to a double spend.
-//
-// For more details, see
-// https://github.com/bitcoin/bips/blob/master/bip-0030.mediawiki and
-// http://r6.ca/blog/20120206T005236Z.html.
-//
-// This function MUST be called with the chain state lock held (for reads).
-func (b *BlockChain) checkBIP0030(node *blockNode, block *hnsutil.Block, view *UtxoViewpoint) error {
-	// Fetch utxos for all of the transaction outputs in this block.
-	// Typically, there will not be any utxos for any of the outputs.
-	fetch := make([]wire.OutPoint, 0, len(block.Transactions()))
-	for _, tx := range block.Transactions() {
-		prevOut := wire.OutPoint{Hash: *tx.Hash()}
-		for txOutIdx := range tx.MsgTx().TxOut {
-			prevOut.Index = uint32(txOutIdx)
-			fetch = append(fetch, prevOut)
-		}
-	}
-	err := view.fetchUtxos(b.utxoCache, fetch)
-	if err != nil {
-		return err
-	}
-
-	// Duplicate transactions are only allowed if the previous transaction
-	// is fully spent.
-	for _, outpoint := range fetch {
-		utxo := view.LookupEntry(outpoint)
-		if utxo != nil && !utxo.IsSpent() {
-			str := fmt.Sprintf("tried to overwrite transaction %v "+
-				"at block height %d that is not fully spent",
-				outpoint.Hash, utxo.BlockHeight())
-			return ruleError(ErrOverwriteTx, str)
-		}
 	}
 
 	return nil
@@ -1261,29 +1073,6 @@ func (b *BlockChain) checkConnectBlockWithNameView(node *blockNode,
 	deploymentFlags, err := b.handshakeDeploymentFlags(node.parent)
 	if err != nil {
 		return err
-	}
-
-	// BIP0030 added a rule to prevent blocks which contain duplicate
-	// transactions that 'overwrite' older transactions which are not fully
-	// spent.  See the documentation for checkBIP0030 for more details.
-	//
-	// There are two blocks in the chain which violate this rule, so the
-	// check must be skipped for those blocks.  The isBIP0030Node function
-	// is used to determine if this block is one of the two blocks that must
-	// be skipped.
-	//
-	// In addition, as of BIP0034, duplicate coinbases are no longer
-	// possible due to its requirement for including the block height in the
-	// coinbase and thus it is no longer possible to create transactions
-	// that 'overwrite' older ones.  Therefore, only enforce the rule if
-	// BIP0034 is not yet active.  This is a useful optimization because the
-	// BIP0030 check is expensive since it involves a ton of cache misses in
-	// the utxoset.
-	if !isBIP0030Node(node) && (node.height < b.chainParams.BIP0034Height) {
-		err := b.checkBIP0030(node, block, view)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Load all of the utxos referenced by the inputs for all transactions
