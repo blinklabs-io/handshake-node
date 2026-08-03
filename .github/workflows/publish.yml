@@ -171,7 +171,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.os }}
     if: >-
-      always() &&
+      !cancelled() &&
       (github.ref == 'refs/heads/main' ||
       needs.create-draft-release.result == 'success')
     needs: [create-draft-release]
@@ -282,12 +282,30 @@ jobs:
             [[ -n "${tag}" ]] || continue
             mapfile -t amd64_digests < <(
               docker manifest inspect "${tag}-amd64" |
-                jq -er '.manifests[].digest'
+                jq -er '
+                  .manifests[] |
+                  select(
+                    .platform.os == "linux" and
+                    .platform.architecture == "amd64"
+                  ) |
+                  .digest
+                '
             )
             mapfile -t arm64_digests < <(
               docker manifest inspect "${tag}-arm64" |
-                jq -er '.manifests[].digest'
+                jq -er '
+                  .manifests[] |
+                  select(
+                    .platform.os == "linux" and
+                    .platform.architecture == "arm64"
+                  ) |
+                  .digest
+                '
             )
+            if (( ${#amd64_digests[@]} == 0 || ${#arm64_digests[@]} == 0 )); then
+              echo "missing linux/amd64 or linux/arm64 image for ${tag}" >&2
+              exit 1
+            fi
             refs=()
             for digest in "${amd64_digests[@]}" "${arm64_digests[@]}"; do
               refs+=("${tag%:*}@${digest}")
