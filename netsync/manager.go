@@ -1745,19 +1745,7 @@ out:
 				msg.reply <- peerID
 
 			case processBlockMsg:
-				_, isOrphan, err := sm.chain.ProcessBlock(
-					msg.block, msg.flags)
-				if err != nil {
-					msg.reply <- processBlockResponse{
-						isOrphan: false,
-						err:      err,
-					}
-				}
-
-				msg.reply <- processBlockResponse{
-					isOrphan: isOrphan,
-					err:      nil,
-				}
+				sm.handleProcessBlockMsg(&msg)
 
 			case isCurrentMsg:
 				msg.reply <- sm.current()
@@ -1786,6 +1774,14 @@ out:
 
 	log.Trace("Block handler done")
 	sm.wg.Done()
+}
+
+func (sm *SyncManager) handleProcessBlockMsg(msg *processBlockMsg) {
+	_, isOrphan, err := sm.chain.ProcessBlock(msg.block, msg.flags)
+	msg.reply <- processBlockResponse{
+		isOrphan: isOrphan,
+		err:      err,
+	}
 }
 
 // handleBlockchainNotification handles notifications from blockchain.  It does

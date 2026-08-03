@@ -263,6 +263,33 @@ func TestShouldMarkRejectedBlockInvalid(t *testing.T) {
 	}
 }
 
+func TestProcessBlockReturnsErrorAndContinues(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 2)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+	sm.Start()
+	defer func() {
+		require.NoError(t, sm.Stop())
+	}()
+
+	_, err := sm.ProcessBlock(blocks[0], blockchain.BFNone)
+	require.NoError(t, err)
+
+	// Processing the same block again returns a duplicate-block error. The
+	// following valid block verifies that the handler did not block sending a
+	// second response for the error.
+	_, err = sm.ProcessBlock(blocks[0], blockchain.BFNone)
+	var ruleErr blockchain.RuleError
+	require.ErrorAs(t, err, &ruleErr)
+	require.Equal(t, blockchain.ErrDuplicateBlock, ruleErr.ErrorCode)
+
+	_, err = sm.ProcessBlock(blocks[1], blockchain.BFNone)
+	require.NoError(t, err)
+}
+
 func connectSyncTestPeer(t *testing.T, params *chaincfg.Params,
 	height int32) (*peer.Peer, net.Conn, func()) {
 	return connectSyncTestPeerWithConfig(t, params, height, peer.Config{})
