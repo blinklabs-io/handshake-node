@@ -13,7 +13,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/decred/dcrd/lru v1.0.0
 	github.com/gorilla/websocket v1.5.0
-	github.com/jessevdk/go-flags v1.4.0
+	github.com/jessevdk/go-flags v1.6.1
 	github.com/jrick/logrotate v1.0.0
 	github.com/miekg/dns v1.1.69
 	github.com/stretchr/testify v1.11.1
