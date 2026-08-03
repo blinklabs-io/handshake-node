@@ -271,7 +271,9 @@ func TestProcessBlockReturnsErrorAndContinues(t *testing.T) {
 	sm, tearDown := makeMockSyncManager(t, &params)
 	defer tearDown()
 	sm.Start()
-	defer sm.Stop()
+	defer func() {
+		require.NoError(t, sm.Stop())
+	}()
 
 	_, err := sm.ProcessBlock(blocks[0], blockchain.BFNone)
 	require.NoError(t, err)
