@@ -1844,7 +1844,10 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	var blkBytes []byte
 	err = s.cfg.DB.View(func(dbTx database.Tx) error {
 		var err error
-		blkBytes, err = dbTx.FetchBlock(hash)
+		rawBytes, err := dbTx.FetchBlock(hash)
+		if err == nil {
+			blkBytes = bytes.Clone(rawBytes)
+		}
 		return err
 	})
 	if err != nil {
@@ -1853,19 +1856,24 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 			Message: "Block not found",
 		}
 	}
-	// If verbosity is 0, return the serialized block as a hex encoded string.
-	if c.Verbosity != nil && *c.Verbosity == 0 {
-		return hex.EncodeToString(blkBytes), nil
-	}
-
-	// Otherwise, generate the JSON object and return it.
-
 	// Deserialize the block.
-	blk, err := hnsutil.NewBlockFromBytes(blkBytes)
+	blk, err := blockchain.DBBlockFromBytes(blkBytes, *hash)
 	if err != nil {
 		context := "Failed to deserialize block"
 		return nil, internalRPCError(err.Error(), context)
 	}
+
+	// If verbosity is 0, return the sanitized serialized block as a hex
+	// encoded string.
+	if c.Verbosity != nil && *c.Verbosity == 0 {
+		serializedBlock, err := blk.Bytes()
+		if err != nil {
+			return nil, internalRPCError(err.Error(), "Failed to serialize block")
+		}
+		return hex.EncodeToString(serializedBlock), nil
+	}
+
+	// Otherwise, generate the JSON object and return it.
 
 	// Get the block height from chain.
 	blockHeight, err := s.cfg.Chain.BlockHeightByHash(hash)

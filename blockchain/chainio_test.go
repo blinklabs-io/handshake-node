@@ -11,9 +11,33 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg"
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
+
+func TestDBBlockFromBytesIgnoresTrailingBytes(t *testing.T) {
+	var buf bytes.Buffer
+	if err := chaincfg.MainNetParams.GenesisBlock.Serialize(&buf); err != nil {
+		t.Fatalf("serialize genesis block: %v", err)
+	}
+
+	serialized := append(append([]byte(nil), buf.Bytes()...), 0xde, 0xad)
+	hash := chainhash.Hash{}
+	block, err := DBBlockFromBytes(serialized, hash)
+	if err != nil {
+		t.Fatalf("deserialize block with trailing bytes: %v", err)
+	}
+
+	clean, err := block.Bytes()
+	if err != nil {
+		t.Fatalf("serialize sanitized block: %v", err)
+	}
+	if !bytes.Equal(clean, buf.Bytes()) {
+		t.Fatalf("sanitized block differs from original serialization")
+	}
+}
 
 // TestErrNotInMainChain ensures the functions related to errNotInMainChain work
 // as expected.
