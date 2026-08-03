@@ -2039,6 +2039,15 @@ type getBlockChainInfoResult struct {
 	SoftForks map[string]*hnsjson.SoftForkDeployment `json:"softforks"`
 }
 
+// rpcChainName returns the hsd-compatible network identifier used by
+// getblockchaininfo. Hsd calls the main network "main".
+func rpcChainName(params *chaincfg.Params) string {
+	if params.Name == "mainnet" {
+		return "main"
+	}
+	return params.Name
+}
+
 // handleGetBlockChainInfo implements the getblockchaininfo command.
 func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	// Obtain a snapshot of the current best known blockchain state. We'll
@@ -2059,7 +2068,7 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 	}
 
 	chainInfo := &hnsjson.GetBlockChainInfoResult{
-		Chain:         params.Name,
+		Chain:         rpcChainName(params),
 		Blocks:        chainSnapshot.Height,
 		Headers:       chainSnapshot.Height,
 		BestBlockHash: chainSnapshot.Hash.String(),
@@ -2067,10 +2076,6 @@ func handleGetBlockChainInfo(s *rpcServer, cmd interface{}, closeChan <-chan str
 		MedianTime:    chainSnapshot.MedianTime.Unix(),
 		Pruned:        cfg.Prune != 0,
 		Deployments:   make(map[string]*hnsjson.SoftForkDeployment),
-	}
-
-	if params.Name == "mainnet" {
-		chainInfo.Chain = "main"
 	}
 
 	for _, deployment := range deploymentIDs {

@@ -66,6 +66,12 @@ func TestUnmarshalGetBlockChainInfoResultSoftForks(t *testing.T) {
 				`"possible":true}}}}`),
 			compatible: true,
 		},
+		{
+			name:       "handshake-node with null deployment",
+			version:    HandshakeNodeVersion{},
+			res:        []byte(`{"softforks":{"hardening":null}}`),
+			compatible: false,
+		},
 	}
 
 	for _, test := range tests {
@@ -121,8 +127,12 @@ func TestUnmarshalGetBlockChainInfoResultSoftForks(t *testing.T) {
 						info.Deployments["hardening"])
 				}
 				legacy := info.Bip9SoftForks["hardening"]
-				if legacy.StartTime() != want.StartTime {
+				if legacy.StartTime1 != want.StartTime ||
+					legacy.StartTime2 != want.StartTime {
 					t.Fatal("legacy deployment path was not populated")
+				}
+				if legacy.MinActivationHeight != 0 {
+					t.Fatal("unexpected legacy minimum activation height")
 				}
 				if !reflect.DeepEqual(legacy.Statistics, want.Statistics) {
 					t.Fatal("legacy deployment statistics were not populated")

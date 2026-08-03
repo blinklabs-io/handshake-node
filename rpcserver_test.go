@@ -943,6 +943,11 @@ func TestDeploymentTimesUseHsdSentinels(t *testing.T) {
 	require.EqualValues(t, math.MaxUint32, timeout)
 }
 
+func TestRPCChainName(t *testing.T) {
+	require.Equal(t, "main", rpcChainName(&chaincfg.MainNetParams))
+	require.Equal(t, "regtest", rpcChainName(&chaincfg.RegressionNetParams))
+}
+
 func TestGetBlockChainInfoResultUsesHsdSoftForkSchema(t *testing.T) {
 	result := &getBlockChainInfoResult{
 		GetBlockChainInfoResult: &hnsjson.GetBlockChainInfoResult{

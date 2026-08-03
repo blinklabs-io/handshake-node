@@ -259,8 +259,10 @@ type GetBlockChainInfoResult struct {
 	PruneHeight          int32   `json:"pruneheight,omitempty"`
 	ChainWork            string  `json:"chainwork,omitempty"`
 	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
-	// Deployments contains Handshake soft-fork deployments. It is populated
-	// by rpcclient from the hsd-compatible softforks object.
+	// Deployments contains Handshake soft-fork deployments. Rpcclient
+	// populates the deprecated Bip9SoftForks view with fields shared by hsd,
+	// but Since and MinActivationHeight remain zero because hsd does not
+	// expose them.
 	Deployments map[string]*SoftForkDeployment `json:"-"`
 	*SoftForks
 	*UnifiedSoftForks

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
@@ -565,14 +566,20 @@ func unmarshalGetBlockChainInfoResultSoftForks(chainInfo *hnsjson.GetBlockChainI
 		}
 		chainInfo.Deployments = softForks.Deployments
 
-		// Keep the former Go access path populated for source compatibility.
+		// Keep the deprecated Bitcoin-shaped access path populated for source
+		// compatibility. Hsd does not expose Since or MinActivationHeight;
+		// canonical Handshake deployments have no minimum activation height.
 		legacy := make(map[string]*hnsjson.Bip9SoftForkDescription,
 			len(softForks.Deployments))
 		for name, deployment := range softForks.Deployments {
+			if deployment == nil {
+				return fmt.Errorf("softfork %q is null", name)
+			}
 			legacy[name] = &hnsjson.Bip9SoftForkDescription{
 				Status:     deployment.Status,
 				Bit:        deployment.Bit,
 				StartTime1: deployment.StartTime,
+				StartTime2: deployment.StartTime,
 				Timeout:    deployment.Timeout,
 				Statistics: deployment.Statistics,
 			}
