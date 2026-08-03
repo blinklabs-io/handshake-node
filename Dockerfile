@@ -24,6 +24,10 @@ RUN addgroup -S -g 101 handshake && \
 COPY --from=build /out/handshake-node /out/hnsctl /bin/
 
 ENV HOME=/home/handshake
+# Keep Go heap growth below the supported 8 GiB container budget while leaving
+# room for the block index, database, file cache, stacks, and other non-heap
+# allocations. Operators can override this when providing a different budget.
+ENV GOMEMLIMIT=7GiB
 WORKDIR /data
 USER 100:101
 VOLUME ["/data"]
