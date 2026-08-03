@@ -263,30 +263,29 @@ func TestShouldMarkRejectedBlockInvalid(t *testing.T) {
 	}
 }
 
-func TestHandleProcessBlockMsgReturnsSingleErrorResponse(t *testing.T) {
+func TestProcessBlockReturnsErrorAndContinues(t *testing.T) {
 	params := chaincfg.RegressionNetParams
 	params.Checkpoints = nil
-	blocks := generateTestBlocks(t, &params, 1)
+	blocks := generateTestBlocks(t, &params, 2)
 
 	sm, tearDown := makeMockSyncManager(t, &params)
 	defer tearDown()
+	sm.Start()
+	defer sm.Stop()
 
-	// Store the block first so processing it again returns a duplicate-block
-	// error without requiring a timer-based goroutine test.
-	_, _, err := sm.chain.ProcessBlock(blocks[0], blockchain.BFNone)
+	_, err := sm.ProcessBlock(blocks[0], blockchain.BFNone)
 	require.NoError(t, err)
 
-	reply := make(chan processBlockResponse, 1)
-	sm.handleProcessBlockMsg(&processBlockMsg{
-		block: blocks[0],
-		flags: blockchain.BFNone,
-		reply: reply,
-	})
+	// Processing the same block again returns a duplicate-block error. The
+	// following valid block verifies that the handler did not block sending a
+	// second response for the error.
+	_, err = sm.ProcessBlock(blocks[0], blockchain.BFNone)
+	var ruleErr blockchain.RuleError
+	require.ErrorAs(t, err, &ruleErr)
+	require.Equal(t, blockchain.ErrDuplicateBlock, ruleErr.ErrorCode)
 
-	response := <-reply
-	require.Error(t, response.err)
-	require.False(t, response.isOrphan)
-	require.Empty(t, reply)
+	_, err = sm.ProcessBlock(blocks[1], blockchain.BFNone)
+	require.NoError(t, err)
 }
 
 func connectSyncTestPeer(t *testing.T, params *chaincfg.Params,
