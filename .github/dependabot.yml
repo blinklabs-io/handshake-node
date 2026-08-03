@@ -19,3 +19,8 @@ updates:
     directory: /hnsutil
     schedule:
       interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /chaincfg/chainhash
+    schedule:
+      interval: weekly
