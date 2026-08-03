@@ -243,6 +243,12 @@ jobs:
           push-to-registry: true
 
   build-image-manifest:
+    # build-images also runs on main, where create-draft-release is skipped.
+    # always() is required so that skipped release-only dependencies do not
+    # implicitly skip this job after the platform image builds succeed.
+    if: >-
+      always() &&
+      needs.build-images.result == 'success'
     needs: [build-images]
     permissions:
       contents: read
