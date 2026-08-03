@@ -243,6 +243,12 @@ jobs:
           push-to-registry: true
 
   build-image-manifest:
+    # build-images also runs on main, where create-draft-release is skipped.
+    # !cancelled() allows skipped release-only dependencies without allowing
+    # a cancelled workflow to publish a manifest.
+    if: >-
+      !cancelled() &&
+      needs.build-images.result == 'success'
     needs: [build-images]
     permissions:
       contents: read
