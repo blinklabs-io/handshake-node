@@ -8,10 +8,10 @@ import (
 	"bytes"
 	"errors"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/blinklabs-io/handshake-node/hnsutil/base58"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil/base58"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // ErrMalformedPrivateKey describes an error where a WIF-encoded private
@@ -117,6 +117,19 @@ func DecodeWIF(wif string) (*WIF, error) {
 
 	netID := decoded[0]
 	privKeyBytes := decoded[1 : 1+btcec.PrivKeyBytesLen]
+
+	// A valid secp256k1 private key is in the range [1, N-1].
+	// PrivKeyFromBytes reduces values modulo N, so validate the encoded
+	// scalar first to avoid accepting zero or silently changing an
+	// out-of-range key into a different key.
+	var keyScalar btcec.ModNScalar
+	defer keyScalar.Zero()
+	if overflow := keyScalar.SetByteSlice(privKeyBytes); overflow ||
+		keyScalar.IsZero() {
+
+		return nil, ErrMalformedPrivateKey
+	}
+
 	privKey, _ := btcec.PrivKeyFromBytes(privKeyBytes)
 	return &WIF{privKey, compress, netID}, nil
 }

@@ -121,6 +121,21 @@ func TestEncodeDecodeWIF(t *testing.T) {
 			wif:  "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTj",
 			err:  ErrChecksumMismatch,
 		},
+		{
+			name: "decodeZeroPrivateKeyWif",
+			wif:  "5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAbuatmU",
+			err:  ErrMalformedPrivateKey,
+		},
+		{
+			name: "decodeOrderPrivateKeyWif",
+			wif:  "5Km2kuu7vtFDPpxywn4u3NLpbr5jKpTB3jsuDU2KYEqetwr388P",
+			err:  ErrMalformedPrivateKey,
+		},
+		{
+			name: "decodeAboveOrderPrivateKeyWif",
+			wif:  "5Km2kuu7vtFDPpxywn4u3NLpbr5jKpTB3jsuDU2KYEqeuVhzTbv",
+			err:  ErrMalformedPrivateKey,
+		},
 	}
 
 	for _, invalidCase := range invalidDecodeCases {

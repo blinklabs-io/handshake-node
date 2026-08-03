@@ -5,6 +5,7 @@
 package txscript
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
@@ -69,5 +70,22 @@ func TestTaprootSigVerifierCacheMiss(t *testing.T) {
 	}
 	if result := verifier.Verify(); !result.sigValid {
 		t.Fatal("valid taproot signature failed after shared cache miss")
+	}
+}
+
+func TestParseTaprootSigRejectsScalarOverflow(t *testing.T) {
+	pubKey, _ := btcec.PrivKeyFromBytes([]byte{0x01})
+	pkBytes := schnorr.SerializePubKey(pubKey.PubKey())
+	rawSig, err := hex.DecodeString(
+		"4e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd41" +
+			"fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+	)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+
+	_, _, _, err = parseTaprootSigAndPubKey(pkBytes, rawSig)
+	if err == nil {
+		t.Fatal("accepted Schnorr signature with s equal to group order")
 	}
 }
