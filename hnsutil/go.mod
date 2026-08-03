@@ -8,7 +8,7 @@ require (
 	github.com/blinklabs-io/handshake-node/chaincfg/chainhash v0.0.0-00010101000000-000000000000
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/davecgh/go-spew v1.1.1
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/kkdai/bstream v0.0.0-20161212061736-f391b8402d23
 	golang.org/x/crypto v0.52.0
 )
@@ -17,7 +17,7 @@ require (
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
 	github.com/deatil/go-cryptobin v1.1.1013 // indirect
-	github.com/decred/dcrd/crypto/blake256 v1.0.0 // indirect
+	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/miekg/dns v1.1.69 // indirect
 	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
