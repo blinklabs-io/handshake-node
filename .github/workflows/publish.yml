@@ -87,11 +87,11 @@ jobs:
           fi
           tar -C "dist/${{ matrix.os }}-${{ matrix.arch }}" -czf "dist/${_filename}" "handshake-node${extension}" "hnsctl${extension}"
       - name: Attest release binaries
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1 https://github.com/actions/attest/releases/tag/v4.2.1
         with:
           subject-path: dist/${{ matrix.os }}-${{ matrix.arch }}/*
       - name: Attest release asset
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1 https://github.com/actions/attest/releases/tag/v4.2.1
         with:
           subject-path: dist/${{ env.APPLICATION_NAME }}-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
       - name: Stage release asset
@@ -229,14 +229,14 @@ jobs:
             COMMIT_HASH=${{ github.sha }}
       - name: Attest Docker Hub image
         continue-on-error: ${{ github.ref_type != 'tag' }}
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1 https://github.com/actions/attest/releases/tag/v4.2.1
         with:
           subject-name: docker.io/blinklabs/handshake-node
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - name: Attest GHCR image
         continue-on-error: ${{ github.ref_type != 'tag' }}
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1 https://github.com/actions/attest/releases/tag/v4.2.1
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
