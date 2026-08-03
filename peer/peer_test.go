@@ -10,6 +10,8 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +39,18 @@ type conn struct {
 
 	// mocks socks proxy if true
 	proxy bool
+}
+
+// countingConn records close calls so lifecycle tests can detect leaked or
+// double-closed transports.
+type countingConn struct {
+	net.Conn
+	closes int32
+}
+
+func (c *countingConn) Close() error {
+	atomic.AddInt32(&c.closes, 1)
+	return c.Conn.Close()
 }
 
 // LocalAddr returns the local address for the connection.
@@ -733,6 +747,77 @@ func TestAssociateConnectionInvalidRemoteAddress(t *testing.T) {
 
 	if p.Connected() {
 		t.Fatal("peer remained connected after rejecting its remote address")
+	}
+}
+
+// TestDisconnectBeforeAssociateConnection verifies that a connection handed
+// to a peer after shutdown is closed instead of being leaked.
+func TestDisconnectBeforeAssociateConnection(t *testing.T) {
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+
+	trackedConn := &countingConn{Conn: local}
+	p := peer.NewInboundPeer(&peer.Config{})
+	p.Disconnect()
+	p.WaitForDisconnect()
+
+	p.AssociateConnection(trackedConn)
+
+	if got := atomic.LoadInt32(&trackedConn.closes); got != 1 {
+		t.Fatalf("unexpected connection close count: got %d, want 1", got)
+	}
+	if p.Connected() {
+		t.Fatal("disconnected peer accepted a connection")
+	}
+}
+
+// TestAssociateConnectionDisconnectRace verifies that concurrent association
+// and disconnection close the transferred connection exactly once.
+func TestAssociateConnectionDisconnectRace(t *testing.T) {
+	const iterations = 100
+	peerCfg := &peer.Config{
+		ChainParams:    &chaincfg.MainNetParams,
+		AllowSelfConns: true,
+		NewestBlock: func() (*chainhash.Hash, int32, error) {
+			return &chainhash.Hash{}, 0, nil
+		},
+	}
+
+	for i := 0; i < iterations; i++ {
+		local, remote := net.Pipe()
+		trackedConn := &countingConn{Conn: local}
+		p, err := peer.NewOutboundPeer(peerCfg, "127.0.0.1:8333")
+		if err != nil {
+			t.Fatalf("NewOutboundPeer: %v", err)
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			p.AssociateConnection(trackedConn)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			p.Disconnect()
+		}()
+
+		close(start)
+		wg.Wait()
+		p.WaitForDisconnect()
+
+		if got := atomic.LoadInt32(&trackedConn.closes); got != 1 {
+			t.Fatalf("iteration %d: unexpected connection close count: got %d, want 1", i, got)
+		}
+		if p.Connected() {
+			t.Fatalf("iteration %d: peer remained connected", i)
+		}
+
+		_ = remote.Close()
 	}
 }
 
