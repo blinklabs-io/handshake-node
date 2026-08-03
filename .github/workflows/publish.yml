@@ -13,38 +13,9 @@ env:
   GO_VERSION: 1.26.5
 
 jobs:
-  create-draft-release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      RELEASE_ID: ${{ steps.create-release.outputs.result }}
-    steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
-      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
-        id: create-release
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          result-encoding: string
-          script: |
-            try {
-              const response = await github.rest.repos.createRelease({
-                draft: true,
-                generate_release_notes: true,
-                name: process.env.RELEASE_TAG,
-                owner: context.repo.owner,
-                prerelease: process.env.RELEASE_TAG.includes('-'),
-                repo: context.repo.repo,
-                tag_name: process.env.RELEASE_TAG,
-              });
-
-              return response.data.id;
-            } catch (error) {
-              core.setFailed(error.message);
-            }
-
-  build-binaries:
+  validate-release-binaries:
+    name: validate binary (${{ matrix.os }}/${{ matrix.arch }})
+    if: startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
@@ -71,15 +42,10 @@ jobs:
             os: windows
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    needs: [create-draft-release]
     permissions:
-      actions: write
       attestations: write
-      checks: write
-      contents: write
+      contents: read
       id-token: write
-      packages: write
-      statuses: write
     steps:
       - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> \"$GITHUB_ENV\""
         shell: bash
@@ -112,7 +78,6 @@ jobs:
             grep -Fq $'build\tvcs.modified=false' <<< "${metadata}"
           done
       - name: Create release asset
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
@@ -121,26 +86,79 @@ jobs:
             extension=.exe
           fi
           tar -C "dist/${{ matrix.os }}-${{ matrix.arch }}" -czf "dist/${_filename}" "handshake-node${extension}" "hnsctl${extension}"
-      - name: Upload release asset
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
-          curl \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary "@dist/${_filename}" \
-            "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}"
       - name: Attest release binaries
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
         with:
           subject-path: dist/${{ matrix.os }}-${{ matrix.arch }}/*
       - name: Attest release asset
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1 https://github.com/actions/attest/releases/tag/v4.1.1
         with:
           subject-path: dist/${{ env.APPLICATION_NAME }}-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+      - name: Stage release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/${{ env.APPLICATION_NAME }}-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  create-draft-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [validate-release-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      RELEASE_ID: ${{ steps.create-release.outputs.result }}
+    steps:
+      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> \"$GITHUB_ENV\""
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
+        id: create-release
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            try {
+              const response = await github.rest.repos.createRelease({
+                draft: true,
+                generate_release_notes: true,
+                name: process.env.RELEASE_TAG,
+                owner: context.repo.owner,
+                prerelease: process.env.RELEASE_TAG.includes('-'),
+                repo: context.repo.repo,
+                tag_name: process.env.RELEASE_TAG,
+              });
+
+              return response.data.id;
+            } catch (error) {
+              core.setFailed(error.message);
+            }
+
+  publish-binaries:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [create-draft-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 https://github.com/actions/download-artifact/releases/tag/v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Upload release assets
+        shell: bash
+        env:
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
+        run: |
+          for asset in dist/*.tar.gz; do
+            filename="${asset##*/}"
+            curl --fail-with-body \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${asset}" \
+              "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=${filename}"
+          done
 
   build-images:
     strategy:
@@ -152,6 +170,10 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
+    if: >-
+      always() &&
+      (github.ref == 'refs/heads/main' ||
+      needs.create-draft-release.result == 'success')
     needs: [create-draft-release]
     permissions:
       actions: write
@@ -162,8 +184,8 @@ jobs:
       packages: write
       statuses: write
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
-      - run: git config --global --add safe.directory $PWD
+      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> \"$GITHUB_ENV\""
+      - run: git config --global --add safe.directory "$PWD"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
         with:
           fetch-depth: 0
@@ -253,13 +275,26 @@ jobs:
             type=semver,pattern={{version}}
       - name: manifest-create
         shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          for t in `echo '${{ steps.meta.outputs.tags }}'`; do
-            docker manifest create ${t} \
-              $(docker manifest inspect ${t}-amd64 | jq -r '.manifests[] | .digest' | sed -e "s|^|${t%:*}@|") \
-              $(docker manifest inspect ${t}-arm64 | jq -r '.manifests[] | .digest' | sed -e "s|^|${t%:*}@|")
-            docker manifest push ${t}
-          done
+          while IFS= read -r tag; do
+            [[ -n "${tag}" ]] || continue
+            mapfile -t amd64_digests < <(
+              docker manifest inspect "${tag}-amd64" |
+                jq -er '.manifests[].digest'
+            )
+            mapfile -t arm64_digests < <(
+              docker manifest inspect "${tag}-arm64" |
+                jq -er '.manifests[].digest'
+            )
+            refs=()
+            for digest in "${amd64_digests[@]}" "${arm64_digests[@]}"; do
+              refs+=("${tag%:*}@${digest}")
+            done
+            docker manifest create "${tag}" "${refs[@]}"
+            docker manifest push "${tag}"
+          done <<< "${IMAGE_TAGS}"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
       - name: Docker Hub Description
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0 https://github.com/peter-evans/dockerhub-description/releases/tag/v5.0.0
@@ -271,10 +306,11 @@ jobs:
           short-description: Handshake blockchain full node
 
   finalize-release:
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [create-draft-release, build-binaries, build-images, build-image-manifest]
+    needs: [create-draft-release, publish-binaries, build-images, build-image-manifest]
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         if: startsWith(github.ref, 'refs/tags/')
