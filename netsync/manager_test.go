@@ -263,6 +263,32 @@ func TestShouldMarkRejectedBlockInvalid(t *testing.T) {
 	}
 }
 
+func TestHandleProcessBlockMsgReturnsSingleErrorResponse(t *testing.T) {
+	params := chaincfg.RegressionNetParams
+	params.Checkpoints = nil
+	blocks := generateTestBlocks(t, &params, 1)
+
+	sm, tearDown := makeMockSyncManager(t, &params)
+	defer tearDown()
+
+	// Store the block first so processing it again returns a duplicate-block
+	// error without requiring a timer-based goroutine test.
+	_, _, err := sm.chain.ProcessBlock(blocks[0], blockchain.BFNone)
+	require.NoError(t, err)
+
+	reply := make(chan processBlockResponse, 1)
+	sm.handleProcessBlockMsg(&processBlockMsg{
+		block: blocks[0],
+		flags: blockchain.BFNone,
+		reply: reply,
+	})
+
+	response := <-reply
+	require.Error(t, response.err)
+	require.False(t, response.isOrphan)
+	require.Empty(t, reply)
+}
+
 func connectSyncTestPeer(t *testing.T, params *chaincfg.Params,
 	height int32) (*peer.Peer, net.Conn, func()) {
 	return connectSyncTestPeerWithConfig(t, params, height, peer.Config{})
