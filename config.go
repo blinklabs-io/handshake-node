@@ -98,6 +98,13 @@ func minUint32(a, b uint32) uint32 {
 	return b
 }
 
+func validateMaxPeers(maxPeers int) error {
+	if maxPeers <= 0 {
+		return fmt.Errorf("maxpeers must be greater than zero: %d", maxPeers)
+	}
+	return nil
+}
+
 // config defines the configuration options for handshake-node.
 //
 // See loadConfig for details on the configuration load process.
@@ -872,6 +879,12 @@ func loadConfig() (*config, []string, error) {
 	if cfg.MaxInboundPerIP < 0 {
 		str := "%s: the maxinboundperip option may not be negative"
 		err := fmt.Errorf(str, funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if err := validateMaxPeers(cfg.MaxPeers); err != nil {
+		err := fmt.Errorf("%s: %w", funcName, err)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err

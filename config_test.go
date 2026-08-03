@@ -18,6 +18,30 @@ import (
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
+func TestValidateMaxPeers(t *testing.T) {
+	tests := []struct {
+		name     string
+		maxPeers int
+		wantErr  bool
+	}{
+		{name: "negative", maxPeers: -1, wantErr: true},
+		{name: "zero", maxPeers: 0, wantErr: true},
+		{name: "positive", maxPeers: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateMaxPeers(test.maxPeers)
+			if test.wantErr && err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
 func TestDefaultRPCPorts(t *testing.T) {
 	if mainNetParams.rpcPort != "12037" {
 		t.Fatalf("mainnet RPC port: got %q, want %q",

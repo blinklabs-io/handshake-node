@@ -33,6 +33,21 @@ type verifyResult struct {
 
 const rawEcdsaSignatureLen = 64
 
+// parseHnsSchnorrSignature validates the scalar range that the upstream
+// btcec/v2.5.0 parser fails to enforce before parsing the signature.
+func parseHnsSchnorrSignature(rawSig []byte) (*schnorr.Signature, error) {
+	if len(rawSig) == schnorr.SignatureSize {
+		var s btcec.ModNScalar
+		defer s.Zero()
+		if overflow := s.SetByteSlice(rawSig[32:]); overflow {
+			return nil, scriptError(ErrSigInvalidSIntID,
+				"invalid signature: S >= group order")
+		}
+	}
+
+	return schnorr.ParseSignature(rawSig)
+}
+
 func parseHnsEcdsaSignature(sigBytes []byte) (*ecdsa.Signature, error) {
 	if len(sigBytes) != rawEcdsaSignatureLen {
 		str := fmt.Sprintf("malformed signature: got %d bytes, want %d",
@@ -337,7 +352,7 @@ func parseTaprootSigAndPubKey(pkBytes, rawSig []byte,
 	// implicit SIGHASH_DEFAULT sighash type.
 	case len(rawSig) == schnorr.SignatureSize:
 		// First, parse out the signature which is just the raw sig itself.
-		sig, err = schnorr.ParseSignature(rawSig)
+		sig, err = parseHnsSchnorrSignature(rawSig)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -356,7 +371,7 @@ func parseTaprootSigAndPubKey(pkBytes, rawSig []byte,
 		sigHashType = SigHashType(rawSig[schnorr.SignatureSize])
 
 		rawSig = rawSig[:schnorr.SignatureSize]
-		sig, err = schnorr.ParseSignature(rawSig)
+		sig, err = parseHnsSchnorrSignature(rawSig)
 		if err != nil {
 			return nil, nil, 0, err
 		}
