@@ -754,8 +754,8 @@ func TestAssociateConnectionInvalidRemoteAddress(t *testing.T) {
 // to a peer after shutdown is closed instead of being leaked.
 func TestDisconnectBeforeAssociateConnection(t *testing.T) {
 	local, remote := net.Pipe()
-	defer local.Close()
-	defer remote.Close()
+	defer func() { _ = local.Close() }()
+	defer func() { _ = remote.Close() }()
 
 	trackedConn := &countingConn{Conn: local}
 	p := peer.NewInboundPeer(&peer.Config{})
