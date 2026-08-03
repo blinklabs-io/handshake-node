@@ -244,10 +244,10 @@ jobs:
 
   build-image-manifest:
     # build-images also runs on main, where create-draft-release is skipped.
-    # always() is required so that skipped release-only dependencies do not
-    # implicitly skip this job after the platform image builds succeed.
+    # !cancelled() allows skipped release-only dependencies without allowing
+    # a cancelled workflow to publish a manifest.
     if: >-
-      always() &&
+      !cancelled() &&
       needs.build-images.result == 'success'
     needs: [build-images]
     permissions:
