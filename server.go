@@ -82,6 +82,44 @@ var (
 // zeroHash is the zero value hash (all zeros).  It is defined as a convenience.
 var zeroHash chainhash.Hash
 
+// targetOutboundPeers returns the automatic outbound target after permanent
+// peers reserve their share of the total peer budget.
+func targetOutboundPeers(maxPeers, permanentPeers int, automaticOutbound bool) int {
+	if !automaticOutbound || permanentPeers >= maxPeers {
+		return 0
+	}
+
+	available := maxPeers - permanentPeers
+	if available < defaultTargetOutbound {
+		return available
+	}
+	return defaultTargetOutbound
+}
+
+// reservedOutboundPeers returns the outbound capacity reserved for permanent
+// and automatic peers, capped at the configured total peer limit.
+func reservedOutboundPeers(
+	maxPeers, targetOutbound, permanentPeers int, automaticOutbound bool,
+) int {
+	reserved := permanentPeers
+	if automaticOutbound {
+		reserved += targetOutbound
+	}
+	if reserved > maxPeers {
+		return maxPeers
+	}
+	return reserved
+}
+
+// maxInboundPeers returns the inbound capacity left after outbound peers have
+// reserved their share of the total peer budget.
+func maxInboundPeers(maxPeers, reservedOutbound int) uint32 {
+	if maxPeers <= reservedOutbound {
+		return 0
+	}
+	return uint32(maxPeers - reservedOutbound)
+}
+
 // onionAddr implements the net.Addr interface and represents a tor address.
 type onionAddr struct {
 	addr string
@@ -3028,6 +3066,23 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		srvrLog.Infof("User-agent whitelist %s", agentWhitelist)
 	}
 
+	permanentPeers := cfg.ConnectPeers
+	if len(permanentPeers) == 0 {
+		permanentPeers = cfg.AddPeers
+	}
+	automaticOutbound := !cfg.RegressionTest && len(cfg.ConnectPeers) == 0
+	targetOutbound := targetOutboundPeers(
+		cfg.MaxPeers, len(permanentPeers), automaticOutbound,
+	)
+	reservedOutbound := reservedOutboundPeers(
+		cfg.MaxPeers, targetOutbound, len(permanentPeers), automaticOutbound,
+	)
+	maxInbound := maxInboundPeers(cfg.MaxPeers, reservedOutbound)
+	if maxInbound == 0 && len(listeners) > 0 {
+		srvrLog.Infof("Inbound connections disabled: maxpeers=%d, "+
+			"reserved-outbound=%d", cfg.MaxPeers, reservedOutbound)
+	}
+
 	s := server{
 		chainParams:          chainParams,
 		addrManager:          amgr,
@@ -3047,7 +3102,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
 		maxProofRPS:          cfg.MaxProofRPS,
-		inboundSlots:         make(chan struct{}, cfg.MaxPeers),
+		inboundSlots:         make(chan struct{}, int(maxInbound)),
 		inboundPeersByIP:     make(map[string]int),
 		maxInboundPerIP:      cfg.MaxInboundPerIP,
 		outboundQueueBudget: peer.NewOutboundQueueBudget(
@@ -3241,7 +3296,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	// discovered peers in order to prevent it from becoming a public test
 	// network.
 	var newAddressFunc func() (net.Addr, error)
-	if !cfg.RegressionTest && len(cfg.ConnectPeers) == 0 {
+	if automaticOutbound && targetOutbound > 0 {
 		newAddressFunc = func() (net.Addr, error) {
 			for tries := 0; tries < 100; tries++ {
 				addr := s.addrManager.GetAddress()
@@ -3290,11 +3345,8 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		}
 	}
 
-	// Create a connection manager.
-	targetOutbound := defaultTargetOutbound
-	if cfg.MaxPeers < targetOutbound {
-		targetOutbound = cfg.MaxPeers
-	}
+	// Create a connection manager. Permanent peers and automatic outbound
+	// peers share the configured MaxPeers budget.
 	cmgr, err := connmgr.New(s.connManagerConfig(
 		listeners, uint32(targetOutbound), newAddressFunc,
 	))
@@ -3304,10 +3356,6 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	s.connManager = cmgr
 
 	// Start up persistent peers.
-	permanentPeers := cfg.ConnectPeers
-	if len(permanentPeers) == 0 {
-		permanentPeers = cfg.AddPeers
-	}
 	for _, addr := range permanentPeers {
 		netAddr, err := addrStringToNetAddr(addr)
 		if err != nil {
