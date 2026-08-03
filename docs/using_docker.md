@@ -75,11 +75,11 @@ the defaults include a 250 MiB UTXO cache, a 100 MiB database cache, and up to
 retained-memory estimate limit. The block index, Go runtime, database, file
 cache, and transient validation allocations share the remaining container
 memory.
-The official image sets the Go runtime soft heap limit to `GOMEMLIMIT=7GiB` by
+The official image sets the Go runtime soft memory limit to `GOMEMLIMIT=7GiB` by
 default. Treat the remaining approximately 1 GiB as a planning margin for
-non-heap allocations; it is not reserved, and non-Go memory can consume or
-exceed it. Override `GOMEMLIMIT` only when the container memory budget is sized
-accordingly; it is a Go heap target, not a hard limit on total container memory.
+non-Go allocations; it is not reserved, and non-Go memory can consume or exceed
+it. Override `GOMEMLIMIT` only when the container memory budget is sized
+accordingly; it is a Go runtime target, not a hard limit on total container memory.
 `GOMAXPROCS` or the container CPU limit controls CPU concurrency; it does not
 limit memory.
 
