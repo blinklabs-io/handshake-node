@@ -88,6 +88,9 @@ func resultStructHelp(xT descLookupFunc, rt reflect.Type, indentLevel int) []str
 	results := make([]string, 0, numField)
 	for i := 0; i < numField; i++ {
 		rtf := rt.Field(i)
+		if strings.Split(rtf.Tag.Get("json"), ",")[0] == "-" {
+			continue
+		}
 
 		// The field name to display is the json name when it's
 		// available, otherwise use the lowercase field name.

@@ -473,29 +473,8 @@ var RegressionNetParams = Params{
 				time.Time{}, // Never expires
 			),
 		},
-		DeploymentTestDummyMinActivation: {
-			BitNumber:                 22,
-			CustomActivationThreshold: 72,  // Only needs 50% hash rate.
-			MinActivationHeight:       600, // Can only activate after height 600.
-			DeploymentStarter: NewMedianTimeDeploymentStarter(
-				time.Time{}, // Always available for vote
-			),
-			DeploymentEnder: NewMedianTimeDeploymentEnder(
-				time.Time{}, // Never expires
-			),
-		},
-		DeploymentTestDummyAlwaysActive: {
-			BitNumber: 30,
-			DeploymentStarter: NewMedianTimeDeploymentStarter(
-				time.Time{}, // Always available for vote
-			),
-			DeploymentEnder: NewMedianTimeDeploymentEnder(
-				time.Time{}, // Never expires
-			),
-			AlwaysActiveHeight: 1,
-		},
 		DeploymentHardening: {
-			BitNumber: 3,
+			BitNumber: 0,
 			DeploymentStarter: NewMedianTimeDeploymentStarter(
 				time.Unix(1581638400, 0), // February 14, 2020
 			),
@@ -504,7 +483,7 @@ var RegressionNetParams = Params{
 			),
 		},
 		DeploymentICANNLockup: {
-			BitNumber: 4,
+			BitNumber: 1,
 			DeploymentStarter: NewMedianTimeDeploymentStarter(
 				time.Unix(1691625600, 0), // August 10, 2023
 			),
@@ -519,24 +498,6 @@ var RegressionNetParams = Params{
 			),
 			DeploymentEnder: NewMedianTimeDeploymentEnder(
 				time.Unix(1759881600, 0), // October 8, 2025
-			),
-		},
-		DeploymentCSV: {
-			BitNumber: 0,
-			DeploymentStarter: NewMedianTimeDeploymentStarter(
-				time.Time{}, // Always available for vote
-			),
-			DeploymentEnder: NewMedianTimeDeploymentEnder(
-				time.Time{}, // Never expires
-			),
-		},
-		DeploymentSegwit: {
-			BitNumber: 1,
-			DeploymentStarter: NewMedianTimeDeploymentStarter(
-				time.Time{}, // Always available for vote
-			),
-			DeploymentEnder: NewMedianTimeDeploymentEnder(
-				time.Time{}, // Never expires.
 			),
 		},
 	},

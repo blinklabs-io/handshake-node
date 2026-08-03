@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
@@ -555,6 +556,39 @@ func unmarshalPartialGetBlockChainInfoResult(res []byte) (*hnsjson.GetBlockChain
 // related fields into the GetBlockChainInfoResult instance.
 func unmarshalGetBlockChainInfoResultSoftForks(chainInfo *hnsjson.GetBlockChainInfoResult,
 	version BackendVersion, res []byte) error {
+
+	if _, ok := version.(HandshakeNodeVersion); ok {
+		var softForks struct {
+			Deployments map[string]*hnsjson.SoftForkDeployment `json:"softforks"`
+		}
+		if err := json.Unmarshal(res, &softForks); err != nil {
+			return err
+		}
+		chainInfo.Deployments = softForks.Deployments
+
+		// Keep the deprecated Bitcoin-shaped access path populated for source
+		// compatibility. Hsd does not expose Since or MinActivationHeight;
+		// canonical Handshake deployments have no minimum activation height.
+		legacy := make(map[string]*hnsjson.Bip9SoftForkDescription,
+			len(softForks.Deployments))
+		for name, deployment := range softForks.Deployments {
+			if deployment == nil {
+				return fmt.Errorf("softfork %q is null", name)
+			}
+			legacy[name] = &hnsjson.Bip9SoftForkDescription{
+				Status:     deployment.Status,
+				Bit:        deployment.Bit,
+				StartTime1: deployment.StartTime,
+				StartTime2: deployment.StartTime,
+				Timeout:    deployment.Timeout,
+				Statistics: deployment.Statistics,
+			}
+		}
+		chainInfo.SoftForks = &hnsjson.SoftForks{
+			Bip9SoftForks: legacy,
+		}
+		return nil
+	}
 
 	// Versions of bitcoind on or after v0.19.0 use the unified format.
 	if version.SupportUnifiedSoftForks() {

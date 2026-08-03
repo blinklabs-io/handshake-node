@@ -2083,10 +2083,14 @@ out:
 			break out
 		}
 		atomic.StoreInt64(&p.lastRecv, time.Now().Unix())
-		p.stallControl <- stallControlMsg{sccReceiveMessage, rmsg}
+		if !p.sendStallControl(stallControlMsg{sccReceiveMessage, rmsg}) {
+			break out
+		}
 
 		// Handle each supported message type.
-		p.stallControl <- stallControlMsg{sccHandlerStart, rmsg}
+		if !p.sendStallControl(stallControlMsg{sccHandlerStart, rmsg}) {
+			break out
+		}
 		switch msg := rmsg.(type) {
 		case *wire.HnsMsgVersion:
 			// Limit to one version message per peer.
@@ -2257,7 +2261,9 @@ out:
 			log.Debugf("Received unhandled message of type %v "+
 				"from %v", rmsg.Type(), p)
 		}
-		p.stallControl <- stallControlMsg{sccHandlerDone, rmsg}
+		if !p.sendStallControl(stallControlMsg{sccHandlerDone, rmsg}) {
+			break out
+		}
 
 		// A message was received so reset the idle timer.
 		idleTimer.Reset(idleTimeout)
@@ -2503,7 +2509,11 @@ out:
 			messageView := &serializedHandshakeMessage{
 				messageType: msg.messageType,
 			}
-			p.stallControl <- stallControlMsg{sccSendMessage, messageView}
+			if !p.sendStallControl(stallControlMsg{sccSendMessage, messageView}) {
+				p.releaseOutboundMessage(msg)
+				signalMessageDone(msg.doneChan)
+				break out
+			}
 
 			err := p.writeEncodedMessage(
 				msg.message, msg.messageType, msg.encoded,
@@ -2735,6 +2745,17 @@ func (p *Peer) Disconnect() {
 		p.conn.Close()
 	}
 	close(p.quit)
+}
+
+// sendStallControl reports peer activity without allowing shutdown to block
+// the peer's I/O goroutines when the stall handler has already stopped.
+func (p *Peer) sendStallControl(msg stallControlMsg) bool {
+	select {
+	case p.stallControl <- msg:
+		return true
+	case <-p.quit:
+		return false
+	}
 }
 
 // launchGoroutine starts a peer-owned goroutine and tracks it for

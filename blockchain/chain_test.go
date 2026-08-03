@@ -148,7 +148,14 @@ func TestHaveBlock(t *testing.T) {
 // combinations of inputs to the CalcSequenceLock function in order to ensure
 // the returned SequenceLocks are correct for each test instance.
 func TestCalcSequenceLock(t *testing.T) {
-	netParams := &chaincfg.RegressionNetParams
+	netParams := chaincfg.RegressionNetParams
+	netParams.Deployments[chaincfg.DeploymentCSV] = chaincfg.ConsensusDeployment{
+		BitNumber: 0,
+		DeploymentStarter: chaincfg.NewMedianTimeDeploymentStarter(
+			time.Time{},
+		),
+		DeploymentEnder: chaincfg.NewMedianTimeDeploymentEnder(time.Time{}),
+	}
 
 	// Use the CSV deployment bit directly. Handshake block versions are
 	// plain deployment-bit masks, without Bitcoin's versionbits top bits.
@@ -156,7 +163,7 @@ func TestCalcSequenceLock(t *testing.T) {
 	blockVersion := int32(uint32(1) << csvBit)
 
 	// Generate enough synthetic blocks to activate CSV.
-	chain := newFakeChain(netParams)
+	chain := newFakeChain(&netParams)
 	node := chain.bestChain.Tip()
 	blockTime := node.Header().Timestamp
 	numBlocksToActivate := (netParams.MinerConfirmationWindow * 3)

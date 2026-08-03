@@ -17,6 +17,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/blockchain"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/integration/rpctest"
 )
 
@@ -70,7 +71,7 @@ func thresholdStateToStatus(state blockchain.ThresholdState) (string, error) {
 	case blockchain.ThresholdStarted:
 		return "started", nil
 	case blockchain.ThresholdLockedIn:
-		return "lockedin", nil
+		return "locked_in", nil
 	case blockchain.ThresholdActive:
 		return "active", nil
 	case blockchain.ThresholdFailed:
@@ -99,7 +100,7 @@ func assertSoftForkStatus(r *rpctest.Harness, t *testing.T, forkKey string, stat
 	}
 
 	// Ensure the key is available.
-	desc, ok := info.SoftForks.Bip9SoftForks[forkKey]
+	desc, ok := info.Deployments[forkKey]
 	if !ok {
 		_, _, line, _ := runtime.Caller(1)
 		t.Fatalf("assertion failed at line %d: softfork status for %q "+
@@ -112,6 +113,31 @@ func assertSoftForkStatus(r *rpctest.Harness, t *testing.T, forkKey string, stat
 		t.Fatalf("assertion failed at line %d: softfork status for %q "+
 			"is %v instead of expected %v", line, forkKey,
 			desc.Status, status)
+	}
+}
+
+func assertSoftForkStatistics(
+	r *rpctest.Harness,
+	t *testing.T,
+	forkKey string,
+	want hnsjson.SoftForkStatistics,
+) {
+	t.Helper()
+
+	info, err := r.Client.GetBlockChainInfo()
+	if err != nil {
+		t.Fatalf("failed to retrieve chain info: %v", err)
+	}
+	deployment, ok := info.Deployments[forkKey]
+	if !ok {
+		t.Fatalf("softfork statistics for %q are missing", forkKey)
+	}
+	if deployment.Statistics == nil {
+		t.Fatalf("softfork statistics for %q are nil", forkKey)
+	}
+	if *deployment.Statistics != want {
+		t.Fatalf("softfork statistics for %q = %+v, want %+v",
+			forkKey, *deployment.Statistics, want)
 	}
 }
 
@@ -134,14 +160,6 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 		t.Fatalf("unable to setup test chain: %v", err)
 	}
 	defer r.TearDown()
-
-	// If the deployment is meant to be always active, then it should be
-	// active from the very first block.
-	if deploymentID == chaincfg.DeploymentTestDummyAlwaysActive {
-		assertChainHeight(r, t, 0)
-		assertSoftForkStatus(r, t, forkKey, blockchain.ThresholdActive)
-		return
-	}
 
 	// *** ThresholdDefined ***
 	//
@@ -188,6 +206,20 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	assertChainHeight(r, t, confirmationWindow-1)
 	assertSoftForkStatus(r, t, forkKey, blockchain.ThresholdStarted)
 
+	if deploymentID >= uint32(len(r.ActiveNet.Deployments)) {
+		t.Fatalf("deployment ID %d does not exist", deploymentID)
+	}
+	deployment := &r.ActiveNet.Deployments[deploymentID]
+	activationThreshold := r.ActiveNet.RuleChangeActivationThreshold
+	if deployment.CustomActivationThreshold != 0 {
+		activationThreshold = deployment.CustomActivationThreshold
+	}
+	assertSoftForkStatistics(r, t, forkKey, hnsjson.SoftForkStatistics{
+		Period:    confirmationWindow,
+		Threshold: activationThreshold,
+		Possible:  true,
+	})
+
 	// *** ThresholdStarted part 2 - Fail to achieve ThresholdLockedIn ***
 	//
 	// Generate enough blocks to reach the next window in such a way that
@@ -196,14 +228,6 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	//
 	// Assert the chain height is the expected value and the soft fork
 	// status is still started and did NOT move to locked in.
-	if deploymentID > uint32(len(r.ActiveNet.Deployments)) {
-		t.Fatalf("deployment ID %d does not exist", deploymentID)
-	}
-	deployment := &r.ActiveNet.Deployments[deploymentID]
-	activationThreshold := r.ActiveNet.RuleChangeActivationThreshold
-	if deployment.CustomActivationThreshold != 0 {
-		activationThreshold = deployment.CustomActivationThreshold
-	}
 	signalForkVersion := int32(1 << deployment.BitNumber)
 	for i := uint32(0); i < activationThreshold-1; i++ {
 		_, err := r.GenerateAndSubmitBlock(nil, signalForkVersion,
@@ -212,6 +236,13 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 			t.Fatalf("failed to generated block %d: %v", i, err)
 		}
 	}
+	assertSoftForkStatistics(r, t, forkKey, hnsjson.SoftForkStatistics{
+		Period:    confirmationWindow,
+		Threshold: activationThreshold,
+		Elapsed:   activationThreshold - 1,
+		Count:     activationThreshold - 1,
+		Possible:  true,
+	})
 	for i := uint32(0); i < confirmationWindow-(activationThreshold-1); i++ {
 		_, err := r.GenerateAndSubmitBlock(nil, vbDefaultBlockVersion,
 			time.Time{})
@@ -278,40 +309,6 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 	}
 	expectedChainHeight := (confirmationWindow * 4) - 1
 	assertChainHeight(r, t, expectedChainHeight)
-
-	// If this isn't a fork that has a min activation height set, then it
-	// should be active at this point.
-	if deployment.MinActivationHeight == 0 {
-		assertSoftForkStatus(r, t, forkKey, blockchain.ThresholdActive)
-		return
-	}
-
-	// Otherwise, we'll need to mine additional blocks to pass the min
-	// activation height and ensure the rule set applies. For regtest the
-	// deployment can only activate after height 600, and at this point
-	// we've mined 4*144 blocks, so another confirmation window will put us
-	// over.
-	numBlocksLeft := confirmationWindow
-	for i := uint32(0); i < numBlocksLeft; i++ {
-		// Ensure that we're always in the locked in state right up
-		// until after we mine the very last block.
-		if i < numBlocksLeft {
-			assertSoftForkStatus(
-				r, t, forkKey, blockchain.ThresholdLockedIn,
-			)
-		}
-
-		_, err := r.GenerateAndSubmitBlock(
-			nil, signalForkVersion, time.Time{},
-		)
-		if err != nil {
-			t.Fatalf("failed to generated block %d: %v", i, err)
-		}
-	}
-
-	// At this point, the soft fork should now be shown as active.
-	expectedChainHeight = (confirmationWindow * 5) - 1
-	assertChainHeight(r, t, expectedChainHeight)
 	assertSoftForkStatus(r, t, forkKey, blockchain.ThresholdActive)
 }
 
@@ -342,10 +339,7 @@ func testBIP0009(t *testing.T, forkKey string, deploymentID uint32) {
 func TestBIP0009(t *testing.T) {
 	t.Parallel()
 
-	testBIP0009(t, "dummy", chaincfg.DeploymentTestDummy)
-	testBIP0009(t, "dummy-min-activation", chaincfg.DeploymentTestDummyMinActivation)
-	testBIP0009(t, "dummy-always-active", chaincfg.DeploymentTestDummyAlwaysActive)
-	testBIP0009(t, "segwit", chaincfg.DeploymentSegwit)
+	testBIP0009(t, "testdummy", chaincfg.DeploymentTestDummy)
 }
 
 // TestBIP0009Mining ensures blocks built via the CPU miner follow the rules

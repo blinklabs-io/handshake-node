@@ -79,6 +79,47 @@ func TestTransactionStartMatchesHsd(t *testing.T) {
 	}
 }
 
+func TestHandshakeDeploymentsMatchHsd(t *testing.T) {
+	t.Parallel()
+
+	canonical := map[int]uint8{
+		DeploymentHardening:   0,
+		DeploymentICANNLockup: 1,
+		DeploymentAirstop:     2,
+		DeploymentTestDummy:   28,
+	}
+
+	for _, params := range []*Params{&MainNetParams, &RegressionNetParams} {
+		params := params
+		t.Run(params.Name, func(t *testing.T) {
+			t.Parallel()
+
+			configured := 0
+			for id, deployment := range params.Deployments {
+				isConfigured := deployment.DeploymentStarter != nil ||
+					deployment.DeploymentEnder != nil ||
+					deployment.AlwaysActiveHeight != 0
+				wantBit, isCanonical := canonical[id]
+				if isConfigured {
+					configured++
+				}
+				if isConfigured != isCanonical {
+					t.Fatalf("deployment %d configured = %v, want %v",
+						id, isConfigured, isCanonical)
+				}
+				if isCanonical && deployment.BitNumber != wantBit {
+					t.Fatalf("deployment %d bit = %d, want %d",
+						id, deployment.BitNumber, wantBit)
+				}
+			}
+			if configured != len(canonical) {
+				t.Fatalf("configured deployments = %d, want %d",
+					configured, len(canonical))
+			}
+		})
+	}
+}
+
 // TestInvalidHashStr ensures newHashFromStr only accepts full, valid hashes.
 func TestInvalidHashStr(t *testing.T) {
 	tests := []string{

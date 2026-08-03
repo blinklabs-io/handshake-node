@@ -389,7 +389,7 @@ func compareTipDeployments(ctx context.Context, node, hsd *rpcClient, target int
 	if !equalHex(nodeHash, hsdHash) {
 		return addMismatch(rep, target, "deployment_tip_hash", nodeHash, hsdHash)
 	}
-	if err := compareSelected(ctx, node, hsd, target, "deployments", "getblockchaininfo", nil, nil, []string{"chain", "softforks", "bip9_softforks"}, rep); err != nil {
+	if err := compareSelected(ctx, node, hsd, target, "deployments", "getblockchaininfo", nil, nil, []string{"chain", "softforks"}, rep); err != nil {
 		return err
 	}
 	rep.DeploymentCheck = "pass at captured target"

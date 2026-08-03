@@ -182,13 +182,34 @@ type SoftForkDescription struct {
 // Bip9SoftForkDescription describes the current state of a defined BIP0009
 // version bits soft-fork.
 type Bip9SoftForkDescription struct {
-	Status              string `json:"status"`
-	Bit                 uint8  `json:"bit"`
-	StartTime1          int64  `json:"startTime"`
-	StartTime2          int64  `json:"start_time"`
-	Timeout             int64  `json:"timeout"`
-	Since               int32  `json:"since"`
-	MinActivationHeight int32  `json:"min_activation_height"`
+	Status              string              `json:"status"`
+	Bit                 uint8               `json:"bit"`
+	StartTime1          int64               `json:"startTime"`
+	StartTime2          int64               `json:"start_time"`
+	Timeout             int64               `json:"timeout"`
+	Since               int32               `json:"since"`
+	MinActivationHeight int32               `json:"min_activation_height"`
+	Statistics          *SoftForkStatistics `json:"statistics,omitempty"`
+}
+
+// SoftForkStatistics describes signalling progress within the current
+// deployment window.
+type SoftForkStatistics struct {
+	Period    uint32 `json:"period"`
+	Threshold uint32 `json:"threshold"`
+	Elapsed   uint32 `json:"elapsed"`
+	Count     uint32 `json:"count"`
+	Possible  bool   `json:"possible"`
+}
+
+// SoftForkDeployment describes a Handshake versionbits deployment using the
+// schema returned by hsd.
+type SoftForkDeployment struct {
+	Status     string              `json:"status"`
+	Bit        uint8               `json:"bit"`
+	StartTime  int64               `json:"startTime"`
+	Timeout    int64               `json:"timeout"`
+	Statistics *SoftForkStatistics `json:"statistics,omitempty"`
 }
 
 // StartTime returns the starting time of the softfork as a Unix epoch.
@@ -238,6 +259,11 @@ type GetBlockChainInfoResult struct {
 	PruneHeight          int32   `json:"pruneheight,omitempty"`
 	ChainWork            string  `json:"chainwork,omitempty"`
 	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
+	// Deployments contains Handshake soft-fork deployments. Rpcclient
+	// populates the deprecated Bip9SoftForks view with fields shared by hsd,
+	// but Since and MinActivationHeight remain zero because hsd does not
+	// expose them.
+	Deployments map[string]*SoftForkDeployment `json:"-"`
 	*SoftForks
 	*UnifiedSoftForks
 }

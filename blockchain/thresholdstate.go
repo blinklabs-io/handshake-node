@@ -16,6 +16,23 @@ import (
 // consensus changes.
 type ThresholdState byte
 
+// ThresholdStatistics describes voting progress in the current miner
+// confirmation window.
+type ThresholdStatistics struct {
+	Period    uint32
+	Threshold uint32
+	Elapsed   uint32
+	Count     uint32
+	Possible  bool
+}
+
+// ThresholdStateResult describes a deployment's current threshold state and,
+// while started, its voting progress.
+type ThresholdStateResult struct {
+	State      ThresholdState
+	Statistics *ThresholdStatistics
+}
+
 // These constants are used to identify specific threshold states.
 const (
 	// ThresholdDefined is the first state for each deployment and is the
@@ -380,6 +397,74 @@ func (b *BlockChain) ThresholdState(deploymentID uint32) (ThresholdState, error)
 	b.chainLock.Unlock()
 
 	return state, err
+}
+
+// thresholdStatistics returns voting statistics for the confirmation window
+// containing the block after tip.
+func thresholdStatistics(tip *blockNode,
+	checker thresholdConditionChecker) (*ThresholdStatistics, error) {
+
+	period := checker.MinerConfirmationWindow()
+	threshold := checker.RuleChangeActivationThreshold()
+	stats := &ThresholdStatistics{
+		Period:    period,
+		Threshold: threshold,
+		Possible:  threshold == 0,
+	}
+	if period == 0 || tip == nil {
+		return stats, nil
+	}
+
+	stats.Elapsed = uint32(tip.height+1) % period
+	countNode := tip
+	for i := uint32(0); i < stats.Elapsed; i++ {
+		condition, err := checker.Condition(countNode)
+		if err != nil {
+			return nil, err
+		}
+		if condition {
+			stats.Count++
+		}
+		countNode = countNode.parent
+	}
+
+	stats.Possible = stats.Count+(period-stats.Elapsed) >= threshold
+	return stats, nil
+}
+
+// BestSnapshotAndThresholdStates returns the current best-chain snapshot and
+// rule-change state for each deployment ID. Voting statistics are only
+// returned for deployments in the started state. All results are evaluated
+// against the same chain tip.
+//
+// This function is safe for concurrent access.
+func (b *BlockChain) BestSnapshotAndThresholdStates(
+	deploymentIDs []uint32,
+) (*BestState, map[uint32]ThresholdStateResult, error) {
+	b.chainLock.Lock()
+	defer b.chainLock.Unlock()
+
+	tip := b.bestChain.Tip()
+	results := make(map[uint32]ThresholdStateResult, len(deploymentIDs))
+	for _, deploymentID := range deploymentIDs {
+		state, err := b.deploymentState(tip, deploymentID)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		result := ThresholdStateResult{State: state}
+		if state == ThresholdStarted {
+			deployment := &b.chainParams.Deployments[deploymentID]
+			checker := deploymentChecker{deployment: deployment, chain: b}
+			result.Statistics, err = thresholdStatistics(tip, checker)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		results[deploymentID] = result
+	}
+
+	return b.BestSnapshot(), results, nil
 }
 
 // IsDeploymentActive returns true if the target deploymentID is active, and
