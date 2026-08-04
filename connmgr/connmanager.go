@@ -60,6 +60,7 @@ type ConnReq struct {
 
 	Addr      net.Addr
 	Permanent bool
+	automatic bool
 
 	conn       net.Conn
 	state      ConnState
@@ -127,8 +128,9 @@ type Config struct {
 	// OnAccept.  A true result transfers ownership to OnAccept as usual.
 	OnAcceptPreflight func(net.Conn) bool
 
-	// TargetOutbound is the number of outbound network connections to
-	// maintain. Defaults to 8.
+	// TargetOutbound is the number of automatic outbound network connections
+	// to maintain. Connections made through Connect are additional. Defaults
+	// to 8.
 	TargetOutbound uint32
 
 	// RetryDuration is the duration to wait before retrying connection
@@ -263,6 +265,10 @@ func (cm *ConnManager) connHandler() {
 
 		// conns represents the set of all actively connected peers.
 		conns = make(map[uint64]*ConnReq, cm.cfg.TargetOutbound)
+
+		// automaticConnections counts only connections initiated by
+		// NewConnReq. Explicit Connect requests are additional peers.
+		automaticConnections uint32
 	)
 
 out:
@@ -302,6 +308,9 @@ out:
 				connReq.updateState(ConnEstablished)
 				connReq.conn = msg.conn
 				conns[connReq.id] = connReq
+				if connReq.automatic {
+					automaticConnections++
+				}
 				log.Debugf("Connected to %v", connReq)
 				connReq.retryCount = 0
 				cm.failedAttempts = 0
@@ -335,6 +344,9 @@ out:
 				// An existing connection was located, remove and close it.
 				log.Debugf("Disconnected from %v", connReq)
 				delete(conns, msg.id)
+				if connReq.automatic {
+					automaticConnections--
+				}
 
 				if connReq.conn != nil {
 					connReq.conn.Close()
@@ -344,7 +356,7 @@ out:
 				// unconditionally for a permanent connection.  Update the
 				// externally visible state before invoking the callback.
 				shouldRetry := msg.retry &&
-					(uint32(len(conns)) < cm.cfg.TargetOutbound ||
+					(automaticConnections < cm.cfg.TargetOutbound ||
 						connReq.Permanent)
 				if shouldRetry {
 					connReq.updateState(ConnPending)
@@ -397,7 +409,7 @@ func (cm *ConnManager) NewConnReq() {
 		return
 	}
 
-	c := &ConnReq{}
+	c := &ConnReq{automatic: true}
 	atomic.StoreUint64(&c.id, atomic.AddUint64(&cm.connReqCount, 1))
 
 	// Submit a request of a pending connection attempt to the connection
@@ -573,7 +585,7 @@ func (cm *ConnManager) Start() {
 		}
 	}
 
-	for i := atomic.LoadUint64(&cm.connReqCount); i < uint64(cm.cfg.TargetOutbound); i++ {
+	for i := uint32(0); i < cm.cfg.TargetOutbound; i++ {
 		go cm.NewConnReq()
 	}
 }
