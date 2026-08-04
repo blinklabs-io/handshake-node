@@ -3167,7 +3167,7 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 	}
 
 	// Already connected?
-	if !atomic.CompareAndSwapInt32(&p.connected, 0, 1) {
+	if atomic.LoadInt32(&p.connected) != 0 {
 		p.lifecycleMtx.Unlock()
 		return
 	}
@@ -3185,6 +3185,7 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 		if err != nil {
 			log.Errorf("Cannot create remote net address: %v", err)
 			p.lifecycleMtx.Unlock()
+			_ = conn.Close()
 			p.Disconnect()
 			return
 		}
@@ -3196,6 +3197,9 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 		p.na = currentNa
 	}
 
+	// Publish the connection only after all fields used by concurrent callers
+	// have been initialized.
+	atomic.StoreInt32(&p.connected, 1)
 	p.launchGoroutine(func() {
 		if err := p.start(); err != nil {
 			log.Debugf("Cannot start peer %v: %v", p, err)
