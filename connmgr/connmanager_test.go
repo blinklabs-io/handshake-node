@@ -497,11 +497,13 @@ func TestTargetOutboundComposition(t *testing.T) {
 			}
 
 			cmgr.Start()
+			t.Cleanup(cmgr.Stop)
 			if !permanentBeforeStart {
 				connectPermanent()
 			}
 
 			waitForConnection := func() *ConnReq {
+				t.Helper()
 				if deadline, ok := t.Deadline(); ok {
 					ctx, cancel := context.WithDeadline(
 						context.Background(), deadline,
@@ -536,7 +538,6 @@ func TestTargetOutboundComposition(t *testing.T) {
 				t.Fatalf("unexpected permanent count: got %d, want %d",
 					permanentCount, permanentPeers)
 			}
-			cmgr.Stop()
 		})
 	}
 }
