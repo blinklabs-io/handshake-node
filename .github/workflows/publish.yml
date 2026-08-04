@@ -22,14 +22,20 @@ jobs:
         include:
           - name: unit-cover
             command: make unit-cover
+            fetch-depth: 1
           - name: unit-race
             command: make unit-race
+            fetch-depth: 1
           - name: rpc-integration
             command: make integration
+            fetch-depth: 1
           - name: vulnerability
             command: make vuln
+            fetch-depth: 1
           - name: lint
             command: make lint workers=2
+            # The lint configuration compares against origin/main.
+            fetch-depth: 0
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -37,9 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
-          # The lint configuration compares against origin/main. Release tags
-          # must fetch the branch ref so that this baseline is available.
-          fetch-depth: 0
+          fetch-depth: ${{ matrix.fetch-depth }}
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
