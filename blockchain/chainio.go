@@ -1524,7 +1524,7 @@ func (b *BlockChain) initChainState() error {
 		if err != nil {
 			return err
 		}
-		block, err := hnsutil.NewBlockFromBytes(blockBytes)
+		block, err := DBBlockFromBytes(blockBytes, state.hash)
 		if err != nil {
 			return err
 		}
@@ -1549,7 +1549,11 @@ func (b *BlockChain) initChainState() error {
 		}
 
 		// Initialize the state related to the best block.
-		blockSize := uint64(len(blockBytes))
+		serializedBlock, err := block.Bytes()
+		if err != nil {
+			return err
+		}
+		blockSize := uint64(len(serializedBlock))
 		blockWeight := uint64(GetBlockWeight(block))
 		numTxns := uint64(len(block.MsgBlock().Transactions))
 		b.stateSnapshot = newBestState(tip, blockSize, blockWeight,
@@ -1565,6 +1569,25 @@ func (b *BlockChain) initChainState() error {
 	// attempt to flush the index to the DB. This will only result in a
 	// write if the elements are dirty, so it'll usually be a noop.
 	return b.index.flushToDB()
+}
+
+// DBBlockFromBytes deserializes a block stored in the database. Older
+// databases may contain bytes after the end of a serialized block; those
+// bytes are ignored so they cannot make an otherwise valid block unusable.
+func DBBlockFromBytes(blockBytes []byte, hash chainhash.Hash) (*hnsutil.Block, error) {
+	blockReader := bytes.NewReader(blockBytes)
+	block, err := hnsutil.NewBlockFromReader(blockReader)
+	if err != nil {
+		return nil, err
+	}
+
+	if trailingBytes := blockReader.Len(); trailingBytes > 0 {
+		log.Debugf("Block %v has %d trailing bytes in the database; ignoring them",
+			hash, trailingBytes)
+		blockBytes = blockBytes[:len(blockBytes)-trailingBytes]
+	}
+
+	return hnsutil.NewBlockFromBlockAndBytes(block.MsgBlock(), blockBytes), nil
 }
 
 // deserializeBlockRow parses a value in the block index bucket into a block
@@ -1625,7 +1648,7 @@ func dbFetchBlockByNode(dbTx database.Tx, node *blockNode) (*hnsutil.Block, erro
 	}
 
 	// Create the encapsulated block and set the height appropriately.
-	block, err := hnsutil.NewBlockFromBytes(blockBytes)
+	block, err := DBBlockFromBytes(blockBytes, node.hash)
 	if err != nil {
 		return nil, err
 	}

@@ -21,6 +21,21 @@ type failingViewDB struct {
 	err       error
 }
 
+type failingUpdateDB struct {
+	database.DB
+	failAt      int
+	updateCalls int
+	err         error
+}
+
+func (db *failingUpdateDB) Update(fn func(database.Tx) error) error {
+	db.updateCalls++
+	if db.updateCalls == db.failAt {
+		return db.err
+	}
+	return db.DB.Update(fn)
+}
+
 func (db *failingViewDB) View(fn func(database.Tx) error) error {
 	db.viewCalls++
 	if db.viewCalls == db.failAt {
@@ -85,5 +100,49 @@ func TestDropIndexPropagatesBucketCatalogError(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("check drop marker: %v", err)
+	}
+}
+
+func TestDropIndexPropagatesBucketDeleteError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "index-drop")
+	db, err := database.Create("ffldb", dbPath, wire.MainNet)
+	if err != nil {
+		t.Fatalf("create test database: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close test database: %v", err)
+		}
+	}()
+
+	indexKey := []byte("delete-error-index")
+	err = db.Update(func(tx database.Tx) error {
+		metadata := tx.Metadata()
+		tips, err := metadata.CreateBucketIfNotExists(indexTipsBucketName)
+		if err != nil {
+			return err
+		}
+		if err := tips.Put(indexKey, []byte("tip")); err != nil {
+			return err
+		}
+		index, err := metadata.CreateBucket(indexKey)
+		if err != nil {
+			return err
+		}
+		return index.Put([]byte("entry"), []byte("value"))
+	})
+	if err != nil {
+		t.Fatalf("initialize test index: %v", err)
+	}
+
+	injectedErr := errors.New("injected bucket delete error")
+	failingDB := &failingUpdateDB{
+		DB:     db,
+		failAt: 3,
+		err:    injectedErr,
+	}
+	err = dropIndex(failingDB, indexKey, "test index", nil)
+	if !errors.Is(err, injectedErr) {
+		t.Fatalf("drop error: got %v, want %v", err, injectedErr)
 	}
 }

@@ -1531,8 +1531,10 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	// Fetch the raw block bytes from the database.
 	var blockBytes []byte
 	err := sp.server.db.View(func(dbTx database.Tx) error {
-		var err error
-		blockBytes, err = dbTx.FetchBlock(hash)
+		rawBytes, err := dbTx.FetchBlock(hash)
+		if err == nil {
+			blockBytes = bytes.Clone(rawBytes)
+		}
 		return err
 	})
 	if err != nil {
@@ -1545,9 +1547,8 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 		return err
 	}
 
-	// Deserialize the block.
-	var msgBlock wire.MsgBlock
-	err = msgBlock.Deserialize(bytes.NewReader(blockBytes))
+	// Deserialize the block and discard any legacy trailing bytes.
+	block, err := blockchain.DBBlockFromBytes(blockBytes, *hash)
 	if err != nil {
 		peerLog.Tracef("Unable to deserialize requested block hash "+
 			"%v: %v", hash, err)
@@ -1557,6 +1558,7 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 		}
 		return err
 	}
+	msgBlock := block.MsgBlock()
 
 	// We only send the channel for this message if we aren't sending
 	// an inv straight after.
@@ -1566,7 +1568,7 @@ func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash,
 	if !sendInv {
 		dc = doneChan
 	}
-	if err := sp.TryQueueMessage(&wire.HnsMsgBlock{Block: msgBlock}, dc); err != nil {
+	if err := sp.TryQueueMessage(&wire.HnsMsgBlock{Block: *msgBlock}, dc); err != nil {
 		if dc == nil {
 			signalDone(doneChan)
 		}
