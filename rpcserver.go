@@ -1862,14 +1862,14 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		context := "Failed to deserialize block"
 		return nil, internalRPCError(err.Error(), context)
 	}
+	serializedBlock, err := blk.Bytes()
+	if err != nil {
+		return nil, internalRPCError(err.Error(), "Failed to serialize block")
+	}
 
 	// If verbosity is 0, return the sanitized serialized block as a hex
 	// encoded string.
 	if c.Verbosity != nil && *c.Verbosity == 0 {
-		serializedBlock, err := blk.Bytes()
-		if err != nil {
-			return nil, internalRPCError(err.Error(), "Failed to serialize block")
-		}
 		return hex.EncodeToString(serializedBlock), nil
 	}
 
@@ -1907,7 +1907,7 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		Time:          blockHeader.Timestamp.Unix(),
 		Confirmations: int64(1 + best.Height - blockHeight),
 		Height:        int64(blockHeight),
-		Size:          int32(len(blkBytes)),
+		Size:          int32(len(serializedBlock)),
 		StrippedSize:  int32(blk.MsgBlock().SerializeSizeStripped()),
 		Weight:        int32(blockchain.GetBlockWeight(blk)),
 		Bits:          strconv.FormatInt(int64(blockHeader.Bits), 16),
