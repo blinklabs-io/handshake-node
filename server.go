@@ -113,11 +113,11 @@ func reservedOutboundPeers(
 
 // maxInboundPeers returns the inbound capacity left after outbound peers have
 // reserved their share of the total peer budget.
-func maxInboundPeers(maxPeers, reservedOutbound int) uint32 {
+func maxInboundPeers(maxPeers, reservedOutbound int) int {
 	if maxPeers <= reservedOutbound {
 		return 0
 	}
-	return uint32(maxPeers - reservedOutbound)
+	return maxPeers - reservedOutbound
 }
 
 // onionAddr implements the net.Addr interface and represents a tor address.
@@ -3102,7 +3102,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
 		maxProofRPS:          cfg.MaxProofRPS,
-		inboundSlots:         make(chan struct{}, int(maxInbound)),
+		inboundSlots:         make(chan struct{}, maxInbound),
 		inboundPeersByIP:     make(map[string]int),
 		maxInboundPerIP:      cfg.MaxInboundPerIP,
 		outboundQueueBudget: peer.NewOutboundQueueBudget(
