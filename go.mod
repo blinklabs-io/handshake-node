@@ -9,7 +9,7 @@ require (
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/cloudflare/circl v1.6.4
 	github.com/davecgh/go-spew v1.1.1
-	github.com/deatil/go-cryptobin v1.1.1013
+	github.com/deatil/go-cryptobin v1.1.1015
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/decred/dcrd/lru v1.1.3
 	github.com/gorilla/websocket v1.5.3
