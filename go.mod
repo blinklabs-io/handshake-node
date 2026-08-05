@@ -11,7 +11,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/deatil/go-cryptobin v1.1.1013
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
-	github.com/decred/dcrd/lru v1.0.0
+	github.com/decred/dcrd/lru v1.1.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/jrick/logrotate v1.1.2
