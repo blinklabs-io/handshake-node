@@ -7,7 +7,7 @@ require (
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
 	github.com/btcsuite/go-socks v0.0.0-20170105172521-4720035b7bfd
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
-	github.com/cloudflare/circl v1.6.4
+	github.com/cloudflare/circl v1.6.5
 	github.com/davecgh/go-spew v1.1.1
 	github.com/deatil/go-cryptobin v1.1.1013
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
