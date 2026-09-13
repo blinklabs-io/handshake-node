@@ -41,7 +41,7 @@ The current release is 0.3.0-rc1, a mainnet release candidate. It includes:
 
 ## Requirements
 
-[Go](https://go.dev/doc/install) 1.26.5 or newer. The module toolchain
+[Go](https://go.dev/doc/install) 1.26.6 or newer. The module toolchain
 directive automatically selects a patched Go toolchain when supported.
 
 ## Build

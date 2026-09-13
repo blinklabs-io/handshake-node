@@ -45,4 +45,4 @@ replace (
 	github.com/blinklabs-io/handshake-node/hnsutil => ./hnsutil
 )
 
-go 1.26.5
+go 1.26.6
