@@ -15,6 +15,11 @@ LABEL org.opencontainers.image.title="handshake-node" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT_HASH}"
 
+# The alpine:3.24.1 image predates openssl 3.5.8-r0, which fixes
+# CVE-2026-14456. Take the patched libcrypto3/libssl3 from the v3.24
+# package repository.
+RUN apk add --no-cache "libcrypto3>=3.5.8-r0" "libssl3>=3.5.8-r0"
+
 RUN addgroup -S -g 101 handshake && \
     adduser -S -u 100 -G handshake -h /home/handshake handshake && \
     mkdir -p /data && \
