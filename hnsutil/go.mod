@@ -18,12 +18,9 @@ require (
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
 	github.com/deatil/go-cryptobin v1.1.1013 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
-	golang.org/x/mod v0.31.0 // indirect
+	github.com/miekg/dns v1.1.73 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/tools v0.40.0 // indirect
 )
 
 replace (
