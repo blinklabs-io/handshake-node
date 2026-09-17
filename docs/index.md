@@ -18,8 +18,7 @@ wallet-facing state belong in external wallet software.
 
 ## Documentation
 
-Documentation is a work-in-progress for the current 0.3.0-rc1 mainnet release
-candidate.
+Documentation is a work-in-progress for the current 0.5.0 mainnet release.
 
 ## Contents
 

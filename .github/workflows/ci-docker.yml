@@ -59,8 +59,11 @@ jobs:
           }
           trap cleanup EXIT
 
-          docker run --rm --platform linux/${{ matrix.arch }} \
-            handshake-node:ci-${{ matrix.arch }} --version
+          version_output="$(docker run --rm --platform linux/${{ matrix.arch }} \
+            handshake-node:ci-${{ matrix.arch }} --version)"
+          grep -Fx \
+            "handshake-node version devel (commit ${{ github.sha }})" \
+            <<< "${version_output}"
           docker run --rm --platform linux/${{ matrix.arch }} \
             --entrypoint /bin/sh handshake-node:ci-${{ matrix.arch }} -ec '
               test "$(id -u)" -eq 100

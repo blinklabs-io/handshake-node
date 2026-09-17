@@ -20,9 +20,9 @@ import (
 func TestVersion(t *testing.T) {
 	pver := ProtocolVersion
 
-	if DefaultUserAgent != "/handshake-node:0.5.0/" {
+	if DefaultUserAgent != "/handshake-node:devel/" {
 		t.Fatalf("DefaultUserAgent: got %q, want %q",
-			DefaultUserAgent, "/handshake-node:0.5.0/")
+			DefaultUserAgent, "/handshake-node:devel/")
 	}
 
 	// Create version message data.

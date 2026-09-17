@@ -77,7 +77,7 @@ var (
 
 	// userAgentVersion is the user agent version and is used to help
 	// identify ourselves to other bitcoin peers.
-	userAgentVersion = fmt.Sprintf("%d.%d.%d", appMajor, appMinor, appPatch)
+	userAgentVersion = semanticVersion()
 )
 
 // zeroHash is the zero value hash (all zeros).  It is defined as a convenience.
