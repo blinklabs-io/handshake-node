@@ -1712,8 +1712,7 @@ func (tx *transaction) writePendingAndCommit() error {
 		// Atomically update the database cache.  The cache automatically
 		// handles flushing to the underlying persistent storage database.
 		if err := tx.db.cache.commitTx(tx); err != nil {
-			var ambiguousErr *ambiguousMetadataWriteError
-			if errors.As(err, &ambiguousErr) {
+			if _, ok := errors.AsType[*ambiguousMetadataWriteError](err); ok {
 				// A metadata write error does not prove the atomic LevelDB
 				// transaction was rejected.  Preserve the appended block data
 				// and fail closed until startup reconciliation determines which
@@ -1744,8 +1743,7 @@ func (tx *transaction) writePendingAndCommit() error {
 	// any block file.
 	if err := tx.db.cache.flushForPrune(); err != nil {
 		rollbackErr := rollback(err)
-		var ambiguousErr *ambiguousMetadataWriteError
-		if errors.As(err, &ambiguousErr) {
+		if _, ok := errors.AsType[*ambiguousMetadataWriteError](err); ok {
 			// The cached batch contains only transactions that preceded this
 			// pruning transaction, so its current block append can still be
 			// rolled back.  The cached batch itself might be durable, though,
@@ -1760,8 +1758,7 @@ func (tx *transaction) writePendingAndCommit() error {
 	tx.db.signalPruneStage(pruneStageBlocksSynced)
 
 	if err := tx.db.cache.commitTreapsSync(tx.pendingKeys, tx.pendingRemove); err != nil {
-		var constructionErr *metadataBatchConstructionError
-		if errors.As(err, &constructionErr) {
+		if _, ok := errors.AsType[*metadataBatchConstructionError](err); ok {
 			return rollback(err)
 		}
 

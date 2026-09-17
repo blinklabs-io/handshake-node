@@ -82,7 +82,7 @@ func (b *addrIndexBucket) printLevels(addrKey [addrKeySize]byte) string {
 	for level := uint8(0); level <= highestLevel; level++ {
 		data := b.levels[keyForLevel(addrKey, level)]
 		numEntries := len(data) / txEntrySize
-		for i := 0; i < numEntries; i++ {
+		for i := range numEntries {
 			start := i * txEntrySize
 			num := byteOrder.Uint32(data[start:])
 			_, _ = fmt.Fprintf(&levelBuf, "%02d ", num)
@@ -149,7 +149,7 @@ func (b *addrIndexBucket) sanityCheck(addrKey [addrKeySize]byte, expectedTotal i
 	for level := highestLevel + 1; level > 0; level-- {
 		data := b.levels[keyForLevel(addrKey, level)]
 		numEntries := len(data) / txEntrySize
-		for i := 0; i < numEntries; i++ {
+		for i := range numEntries {
 			start := i * txEntrySize
 			num := byteOrder.Uint32(data[start:])
 			if num != expectedNum {

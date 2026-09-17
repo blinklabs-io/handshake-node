@@ -55,7 +55,7 @@ func (n NotificationType) String() string {
 //   - NTBlockDisconnected: *hnsutil.Block
 type Notification struct {
 	Type NotificationType
-	Data interface{}
+	Data any
 }
 
 // Subscribe to block chain notifications. Registers a callback to be executed
@@ -70,7 +70,7 @@ func (b *BlockChain) Subscribe(callback NotificationCallback) {
 // sendNotification sends a notification with the passed type and data if the
 // caller requested notifications by providing a callback function in the call
 // to New.
-func (b *BlockChain) sendNotification(typ NotificationType, data interface{}) {
+func (b *BlockChain) sendNotification(typ NotificationType, data any) {
 	// Generate and send the notification.
 	n := Notification{Type: typ, Data: data}
 	b.notificationsLock.RLock()

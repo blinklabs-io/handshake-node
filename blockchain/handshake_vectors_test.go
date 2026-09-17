@@ -111,7 +111,7 @@ func extendSyntheticHeaders(chain *BlockChain, bits uint32,
 
 	node := chain.bestChain.Tip()
 	blockTime := node.Header().Timestamp
-	for i := 0; i < count; i++ {
+	for range count {
 		blockTime = blockTime.Add(spacing)
 		node = newFakeNode(node, 0, bits, blockTime)
 		chain.index.AddNode(node)

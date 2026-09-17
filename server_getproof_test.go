@@ -52,7 +52,7 @@ func TestOnGetProofRateLimitRunsBeforeProofBuild(t *testing.T) {
 	t.Cleanup(cleanup)
 	request := &wire.HnsMsgGetProof{}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		request.Key[0] = byte(i)
 		sp.OnGetProof(sp.Peer, request)
 		if _, ok := readServerTestPeerMessage(t, remote).(*wire.HnsMsgProof); !ok {

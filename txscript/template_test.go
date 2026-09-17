@@ -48,8 +48,8 @@ func TestScriptTemplate(t *testing.T) {
 	tests := []struct {
 		name       string
 		template   string
-		params     map[string]interface{}
-		customFunc map[string]interface{}
+		params     map[string]any
+		customFunc map[string]any
 		expected   string
 		wantErr    bool
 	}{
@@ -88,7 +88,7 @@ func TestScriptTemplate(t *testing.T) {
 		{
 			name:     "with hex template function for zero bytes",
 			template: "{{ hex .ZeroSig }} OP_CHECKSIG",
-			params: map[string]interface{}{
+			params: map[string]any{
 				"ZeroSig": make([]byte, 32),
 			},
 			expected: "0000000000000000000000000000000000000000000000000000000000000000 OP_CHECKSIG",
@@ -105,7 +105,7 @@ func TestScriptTemplate(t *testing.T) {
 			name: "with template parameter",
 			template: "OP_DUP OP_HASH160 {{ hex .Pubkey }} " +
 				"OP_EQUALVERIFY OP_CHECKSIG",
-			params: map[string]interface{}{
+			params: map[string]any{
 				"Pubkey": []byte{
 					0x14, 0xe8, 0x94, 0x8c, 0x7a, 0xfa,
 					0x71, 0xb6, 0xe6, 0xfa, 0xd6, 0x21,
@@ -143,7 +143,7 @@ func TestScriptTemplate(t *testing.T) {
 			name:     "with custom function",
 			template: "{{ add 10 5 }} OP_DROP",
 			params:   nil,
-			customFunc: map[string]interface{}{
+			customFunc: map[string]any{
 				"add": func(a, b int) int {
 					return a + b
 				},
@@ -230,7 +230,7 @@ func TestScriptTemplate(t *testing.T) {
 func TestScriptTemplateOptions(t *testing.T) {
 	t.Run("WithScriptTemplateParams", func(t *testing.T) {
 		template := "{{ .Value }} OP_DROP"
-		params := map[string]interface{}{
+		params := map[string]any{
 			"Value": 42,
 		}
 

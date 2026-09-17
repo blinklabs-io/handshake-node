@@ -43,7 +43,7 @@ func TestTx(t *testing.T) {
 	}
 
 	// Request the hash multiple times to test generation and caching.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		hash := tx.Hash()
 		if !hash.IsEqual(wantHash) {
 			t.Errorf("Hash #%d mismatched hash - got %v, want %v", i,
@@ -108,7 +108,7 @@ func assertCachedTxHashes(t *testing.T, tx *hnsutil.Tx, msgTx *wire.MsgTx) {
 	t.Helper()
 
 	wantHash := msgTx.TxHash()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if gotHash := tx.Hash(); !gotHash.IsEqual(&wantHash) {
 			t.Fatalf("Hash #%d: got %v, want %v",
 				i, gotHash, wantHash)
@@ -116,7 +116,7 @@ func assertCachedTxHashes(t *testing.T, tx *hnsutil.Tx, msgTx *wire.MsgTx) {
 	}
 
 	wantWitnessHash := msgTx.WitnessHash()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if gotHash := tx.WitnessHash(); !gotHash.IsEqual(&wantWitnessHash) {
 			t.Fatalf("WitnessHash #%d: got %v, want %v",
 				i, gotHash, wantWitnessHash)

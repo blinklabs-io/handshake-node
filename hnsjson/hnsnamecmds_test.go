@@ -26,17 +26,17 @@ func TestHNSExtNameCmds(t *testing.T) {
 	inputJSON := `{"txid":"` + zeroHash + `","vout":1}`
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "getnameinfo",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnameinfo", "example")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNameInfoCmd("example")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getnameinfo","params":["example"],"id":1}`,
@@ -44,10 +44,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnamebyhash",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnamebyhash", zeroHash)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNameByHashCmd(zeroHash)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getnamebyhash","params":["` + zeroHash + `"],"id":1}`,
@@ -57,10 +57,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnameresource",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnameresource", "example")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNameResourceCmd("example")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getnameresource","params":["example"],"id":1}`,
@@ -68,10 +68,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "decoderesource",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("decoderesource", "00")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewDecodeResourceCmd("00")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"decoderesource","params":["00"],"id":1}`,
@@ -81,10 +81,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnameproof",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnameproof", "example")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNameProofCmd("example", nil)
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getnameproof","params":["example"],"id":1}`,
@@ -92,10 +92,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnameproof root",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnameproof", "example", zeroHash)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNameProofCmd("example",
 					hnsjson.String(zeroHash))
 			},
@@ -107,10 +107,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnames",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnames")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNamesCmd()
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getnames","params":[],"id":1}`,
@@ -121,10 +121,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnames paginated",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnames", 10, 25)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNamesCmdWithPagination(
 					hnsjson.Int(10), hnsjson.Int(25))
 			},
@@ -136,10 +136,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getnamesbyhash",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnamesbyhash", []string{zeroHash})
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNamesByHashCmd([]string{zeroHash})
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getnamesbyhash","params":[["` + zeroHash + `"]],"id":1}`,
@@ -149,10 +149,10 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "getauctioninfo",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getauctioninfo", "example")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetAuctionInfoCmd("example")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getauctioninfo","params":["example"],"id":1}`,
@@ -160,11 +160,11 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createopen",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createopen", inputs, address,
 					0.0, "example")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateOpenCmd(inputs, address, 0,
 					"example", nil)
 			},
@@ -178,12 +178,12 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createbid",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createbid", inputs, address,
 					1.25, "example", uint32(7), zeroHash,
 					hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateBidCmd(inputs, address, 1.25,
 					"example", 7, zeroHash, hnsjson.Int64(500))
 			},
@@ -200,12 +200,12 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createreveal",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createreveal", inputs, address,
 					1.25, zeroHash, uint32(7), zeroHash,
 					hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateRevealCmd(inputs, address, 1.25,
 					zeroHash, 7, zeroHash, hnsjson.Int64(500))
 			},
@@ -222,11 +222,11 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createredeem",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createredeem", inputs, address,
 					1.25, zeroHash, uint32(7), hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateRedeemCmd(inputs, address, 1.25,
 					zeroHash, 7, hnsjson.Int64(500))
 			},
@@ -242,12 +242,12 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createregister",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createregister", inputs, address,
 					1.25, zeroHash, uint32(7), "00",
 					hnsjson.String(zeroHash), hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateRegisterCmd(inputs, address,
 					1.25, zeroHash, 7, "00",
 					hnsjson.String(zeroHash), hnsjson.Int64(500))
@@ -266,12 +266,12 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createupdate",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createupdate", inputs, address,
 					1.25, zeroHash, uint32(7), "00",
 					hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateUpdateCmd(inputs, address, 1.25,
 					zeroHash, 7, "00", hnsjson.Int64(500))
 			},
@@ -288,12 +288,12 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createrenew",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createrenew", inputs, address,
 					1.25, zeroHash, uint32(7),
 					hnsjson.String(zeroHash), hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateRenewCmd(inputs, address, 1.25,
 					zeroHash, 7, hnsjson.String(zeroHash),
 					hnsjson.Int64(500))
@@ -311,12 +311,12 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createtransfer",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createtransfer", inputs, address,
 					1.25, zeroHash, uint32(7), transferAddress,
 					hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateTransferCmd(inputs, address,
 					1.25, zeroHash, 7, transferAddress,
 					hnsjson.Int64(500))
@@ -334,13 +334,13 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createfinalize",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createfinalize", inputs, address,
 					1.25, "example", uint32(7), uint8(1),
 					uint32(2), uint32(3), hnsjson.String(zeroHash),
 					hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateFinalizeCmd(inputs, address,
 					1.25, "example", 7, 1, 2, 3,
 					hnsjson.String(zeroHash), hnsjson.Int64(500))
@@ -361,11 +361,11 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "createrevoke",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createrevoke", inputs, address,
 					1.25, zeroHash, uint32(7), hnsjson.Int64(500))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateRevokeCmd(inputs, address, 1.25,
 					zeroHash, 7, hnsjson.Int64(500))
 			},
@@ -381,11 +381,11 @@ func TestHNSExtNameCmds(t *testing.T) {
 		},
 		{
 			name: "verifynameproof",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("verifynameproof", zeroHash,
 					zeroHash, "00")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewVerifyNameProofCmd(zeroHash,
 					zeroHash, "00")
 			},

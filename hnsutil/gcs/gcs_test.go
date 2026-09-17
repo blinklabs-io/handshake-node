@@ -122,7 +122,7 @@ func testGCSMatchZeroHash(t *testing.T, includeZeroHash bool) {
 	// values of 0 through 11 as the first 12 items. We known none of these
 	// hash to zero since the brute force ended well beyond them.
 	elements := make([][]byte, 0, 13)
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		data := make([]byte, 4)
 		binary.BigEndian.PutUint32(data, uint32(i))
 		elements = append(elements, data)
@@ -328,7 +328,6 @@ func TestGCSFilterMatchAnySuite(t *testing.T) {
 	}
 
 	for _, test := range funcs {
-		test := test
 
 		t.Run(test.name, func(t *testing.T) {
 			contentsCopy := make([][]byte, len(contents2))

@@ -61,14 +61,14 @@ func TestRegisterCmdErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		method  string
-		cmdFunc func() interface{}
+		cmdFunc func() any
 		flags   hnsjson.UsageFlag
 		err     hnsjson.Error
 	}{
 		{
 			name:   "duplicate method",
 			method: "getblock",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				return struct{}{}
 			},
 			err: hnsjson.Error{ErrorCode: hnsjson.ErrDuplicateMethod},
@@ -76,7 +76,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "invalid usage flags",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				return 0
 			},
 			flags: hnsjson.TstHighestUsageFlagBit,
@@ -85,7 +85,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "invalid type",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				return 0
 			},
 			err: hnsjson.Error{ErrorCode: hnsjson.ErrInvalidType},
@@ -93,7 +93,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "invalid type 2",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				return &[]string{}
 			},
 			err: hnsjson.Error{ErrorCode: hnsjson.ErrInvalidType},
@@ -101,7 +101,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "embedded field",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ int }
 				return (*test)(nil)
 			},
@@ -110,7 +110,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unexported field",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ a int }
 				return (*test)(nil)
 			},
@@ -119,7 +119,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unsupported field type 1",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ A **int }
 				return (*test)(nil)
 			},
@@ -128,7 +128,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unsupported field type 2",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ A chan int }
 				return (*test)(nil)
 			},
@@ -137,7 +137,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unsupported field type 3",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ A complex64 }
 				return (*test)(nil)
 			},
@@ -146,7 +146,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unsupported field type 4",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ A complex128 }
 				return (*test)(nil)
 			},
@@ -155,7 +155,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unsupported field type 5",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct{ A func() }
 				return (*test)(nil)
 			},
@@ -164,8 +164,8 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "unsupported field type 6",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
-				type test struct{ A interface{} }
+			cmdFunc: func() any {
+				type test struct{ A any }
 				return (*test)(nil)
 			},
 			err: hnsjson.Error{ErrorCode: hnsjson.ErrUnsupportedFieldType},
@@ -173,7 +173,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "required after optional",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct {
 					A *int
 					B int
@@ -185,7 +185,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "non-optional with default",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct {
 					A int `jsonrpcdefault:"1"`
 				}
@@ -196,7 +196,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 		{
 			name:   "mismatched default",
 			method: "registertestcmd",
-			cmdFunc: func() interface{} {
+			cmdFunc: func() any {
 				type test struct {
 					A *int `jsonrpcdefault:"1.7"`
 				}
@@ -210,7 +210,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 	for i, test := range tests {
 		err := hnsjson.RegisterCmd(test.method, test.cmdFunc(),
 			test.flags)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
+		if reflect.TypeOf(err) != reflect.TypeFor[hnsjson.Error]() {
 			t.Errorf("Test #%d (%s) wrong error - got %T, "+
 				"want %T", i, test.name, err, test.err)
 			continue

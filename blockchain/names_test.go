@@ -182,7 +182,7 @@ func TestCheckCovenantSanityUnknownCovenants(t *testing.T) {
 
 func TestCheckBlockNameLimitsDuplicateAcrossTransactions(t *testing.T) {
 	block := &wire.MsgBlock{}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		tx := wire.NewMsgTx(1)
 		tx.AddTxIn(wire.NewTxIn(testOutPoint(uint32(i+1)),
 			math.MaxUint32, nil))
@@ -294,7 +294,7 @@ func TestCoinbaseProofInputRequiresLinkedOutput(t *testing.T) {
 func TestCheckTransactionNameLimitsRejectsTooManyOpens(t *testing.T) {
 	tx := wire.NewMsgTx(1)
 	tx.AddTxIn(wire.NewTxIn(testOutPoint(1), math.MaxUint32, nil))
-	for i := 0; i < maxBlockNameOpens+1; i++ {
+	for i := range maxBlockNameOpens + 1 {
 		name := "name" + strconv.Itoa(i)
 		tx.AddTxOut(wire.NewTxOut(1, wire.Address{}, openCovenant(name)))
 	}

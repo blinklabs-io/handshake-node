@@ -627,7 +627,7 @@ func (k *ExtendedKey) SetNet(net *chaincfg.Params) {
 // explicitly clear private key material from memory.
 func zero(b []byte) {
 	lenb := len(b)
-	for i := 0; i < lenb; i++ {
+	for i := range lenb {
 		b[i] = 0
 	}
 }

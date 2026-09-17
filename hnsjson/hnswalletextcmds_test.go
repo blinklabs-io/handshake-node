@@ -24,17 +24,17 @@ func TestBtcWalletExtCmds(t *testing.T) {
 	testID := int(1)
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "createnewaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createnewaccount", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateNewAccountCmd("acct")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"createnewaccount","params":["acct"],"id":1}`,
@@ -44,10 +44,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "dumpwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("dumpwallet", "filename")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewDumpWalletCmd("filename")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"dumpwallet","params":["filename"],"id":1}`,
@@ -57,10 +57,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "importaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importaddress", "1Address", "")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportAddressCmd("1Address", "", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importaddress","params":["1Address",""],"id":1}`,
@@ -71,10 +71,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "importaddress optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importaddress", "1Address", "acct", false)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportAddressCmd("1Address", "acct", hnsjson.Bool(false))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importaddress","params":["1Address","acct",false],"id":1}`,
@@ -86,10 +86,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "importpubkey",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importpubkey", "031234")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportPubKeyCmd("031234", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importpubkey","params":["031234"],"id":1}`,
@@ -100,10 +100,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "importpubkey optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importpubkey", "031234", false)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportPubKeyCmd("031234", hnsjson.Bool(false))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importpubkey","params":["031234",false],"id":1}`,
@@ -114,10 +114,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "importwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importwallet", "filename")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportWalletCmd("filename")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importwallet","params":["filename"],"id":1}`,
@@ -127,10 +127,10 @@ func TestBtcWalletExtCmds(t *testing.T) {
 		},
 		{
 			name: "renameaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("renameaccount", "oldacct", "newacct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewRenameAccountCmd("oldacct", "newacct")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"renameaccount","params":["oldacct","newacct"],"id":1}`,

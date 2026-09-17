@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,6 +51,53 @@ func usage(errorMessage string) {
 	fmt.Fprintln(os.Stderr, listCmdMessage)
 }
 
+//nolint:staticcheck // Preserve the command's established error text.
+func readCommandParams(args []string, input io.Reader) ([]any, error) {
+	reader := bufio.NewReader(input)
+	params := make([]any, 0, len(args))
+	for _, arg := range args {
+		if arg != "-" {
+			params = append(params, arg)
+			continue
+		}
+
+		param, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("Failed to read data from stdin: %w", err)
+		}
+		if err == io.EOF && len(param) == 0 {
+			return nil, errors.New("Not enough lines provided on stdin")
+		}
+		params = append(params, strings.TrimRight(param, "\r\n"))
+	}
+	return params, nil
+}
+
+//nolint:staticcheck // Preserve the command's established error text.
+func printResult(result []byte, output io.Writer) error {
+	resultString := string(result)
+	switch {
+	case strings.HasPrefix(resultString, "{") || strings.HasPrefix(resultString, "["):
+		var formatted bytes.Buffer
+		if err := json.Indent(&formatted, result, "", "  "); err != nil {
+			return fmt.Errorf("Failed to format result: %w", err)
+		}
+		_, err := fmt.Fprintln(output, formatted.String())
+		return err
+	case strings.HasPrefix(resultString, `"`):
+		var value string
+		if err := json.Unmarshal(result, &value); err != nil {
+			return fmt.Errorf("Failed to unmarshal result: %w", err)
+		}
+		_, err := fmt.Fprintln(output, value)
+		return err
+	case resultString != "null":
+		_, err := fmt.Fprintln(output, resultString)
+		return err
+	}
+	return nil
+}
+
 func main() {
 	cfg, args, err := loadConfig()
 	if err != nil {
@@ -77,34 +125,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Convert remaining command line args to a slice of interface values
-	// to be passed along as parameters to new command creation function.
-	//
-	// Since some commands, such as submitblock, can involve data which is
-	// too large for the Operating System to allow as a normal command line
-	// parameter, support using '-' as an argument to allow the argument
-	// to be read from a stdin pipe.
-	bio := bufio.NewReader(os.Stdin)
-	params := make([]interface{}, 0, len(args[1:]))
-	for _, arg := range args[1:] {
-		if arg == "-" {
-			param, err := bio.ReadString('\n')
-			if err != nil && err != io.EOF {
-				fmt.Fprintf(os.Stderr, "Failed to read data "+
-					"from stdin: %v\n", err)
-				os.Exit(1)
-			}
-			if err == io.EOF && len(param) == 0 {
-				fmt.Fprintln(os.Stderr, "Not enough lines "+
-					"provided on stdin")
-				os.Exit(1)
-			}
-			param = strings.TrimRight(param, "\r\n")
-			params = append(params, param)
-			continue
-		}
-
-		params = append(params, arg)
+	params, err := readCommandParams(args[1:], os.Stdin)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 
 	// Attempt to create the appropriate command using the arguments
@@ -146,27 +170,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Choose how to display the result based on its type.
-	strResult := string(result)
-	if strings.HasPrefix(strResult, "{") || strings.HasPrefix(strResult, "[") {
-		var dst bytes.Buffer
-		if err := json.Indent(&dst, result, "", "  "); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to format result: %v",
-				err)
-			os.Exit(1)
-		}
-		fmt.Println(dst.String())
-
-	} else if strings.HasPrefix(strResult, `"`) {
-		var str string
-		if err := json.Unmarshal(result, &str); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to unmarshal result: %v",
-				err)
-			os.Exit(1)
-		}
-		fmt.Println(str)
-
-	} else if strResult != "null" {
-		fmt.Println(strResult)
+	if err := printResult(result, os.Stdout); err != nil {
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(1)
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 
 	"github.com/aead/siphash"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -138,7 +138,7 @@ func BuildGCSFilter(P uint8, M uint64, key [KeySize]byte, data [][]byte) (*Filte
 		v = fastReduction(v, nphi, nplo)
 		values = append(values, v)
 	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	slices.Sort(values)
 
 	// Write the sorted list of values into the filter bitstream,
 	// compressing it using Golomb coding.
@@ -389,7 +389,7 @@ func (f *Filter) ZipMatchAny(key [KeySize]byte, data [][]byte) (bool, error) {
 		v = fastReduction(v, nphi, nplo)
 		values = append(values, v)
 	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	slices.Sort(values)
 
 	querySize := len(values)
 

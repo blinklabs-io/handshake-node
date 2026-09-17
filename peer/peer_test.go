@@ -45,11 +45,11 @@ type conn struct {
 // double-closed transports.
 type countingConn struct {
 	net.Conn
-	closes int32
+	closes atomic.Int32
 }
 
 func (c *countingConn) Close() error {
-	atomic.AddInt32(&c.closes, 1)
+	c.closes.Add(1)
 	return c.Conn.Close()
 }
 
@@ -315,7 +315,7 @@ func TestPeerConnection(t *testing.T) {
 					return nil, nil, err
 				}
 
-				for i := 0; i < 4; i++ {
+				for range 4 {
 					select {
 					case <-verack:
 					case <-time.After(time.Second):
@@ -339,7 +339,7 @@ func TestPeerConnection(t *testing.T) {
 					return nil, nil, err
 				}
 
-				for i := 0; i < 4; i++ {
+				for range 4 {
 					select {
 					case <-verack:
 					case <-time.After(time.Second):
@@ -468,7 +468,7 @@ func TestPeerListeners(t *testing.T) {
 		return
 	}
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-verack:
 		case <-time.After(time.Second * 1):
@@ -707,7 +707,7 @@ func TestOutboundPeer(t *testing.T) {
 
 	// Test PushXXX
 	var addrs []*wire.NetAddress
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		na := wire.NetAddress{}
 		addrs = append(addrs, &na)
 	}
@@ -764,7 +764,7 @@ func TestDisconnectBeforeAssociateConnection(t *testing.T) {
 
 	p.AssociateConnection(trackedConn)
 
-	if got := atomic.LoadInt32(&trackedConn.closes); got != 1 {
+	if got := trackedConn.closes.Load(); got != 1 {
 		t.Fatalf("unexpected connection close count: got %d, want 1", got)
 	}
 	if p.Connected() {
@@ -784,7 +784,7 @@ func TestAssociateConnectionDisconnectRace(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		local, remote := net.Pipe()
 		trackedConn := &countingConn{Conn: local}
 		p, err := peer.NewOutboundPeer(peerCfg, "127.0.0.1:8333")
@@ -810,7 +810,7 @@ func TestAssociateConnectionDisconnectRace(t *testing.T) {
 		wg.Wait()
 		p.WaitForDisconnect()
 
-		if got := atomic.LoadInt32(&trackedConn.closes); got != 1 {
+		if got := trackedConn.closes.Load(); got != 1 {
 			t.Fatalf("iteration %d: unexpected connection close count: got %d, want 1", i, got)
 		}
 		if p.Connected() {
@@ -1205,7 +1205,7 @@ func TestDuplicateVersionMsg(t *testing.T) {
 	}
 
 	// Wait for the veracks from the initial protocol version negotiation.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-verack:
 		case <-time.After(time.Second):
@@ -1271,7 +1271,7 @@ func TestUpdateLastBlockHeight(t *testing.T) {
 	}
 
 	// Wait for the veracks from the initial protocol version negotiation.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-verack:
 		case <-time.After(time.Second):
@@ -1493,7 +1493,7 @@ func TestEncryptedPeerTransportFlow(t *testing.T) {
 		outPeer.WaitForDisconnect()
 	}()
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-verack:
 		case <-time.After(time.Second):
@@ -1536,7 +1536,7 @@ func TestEncryptedPeerTransportFlow(t *testing.T) {
 		wire.HnsMsgTypeTx:      true,
 		wire.HnsMsgTypeHeaders: true,
 	}
-	for i := 0; i < len(msgs); i++ {
+	for range msgs {
 		select {
 		case msgType := <-received:
 			if !expected[msgType] {
@@ -1611,7 +1611,7 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 					return nil, nil, err
 				}
 
-				for i := 0; i < 2; i++ {
+				for range 2 {
 					select {
 					case <-verack:
 					case <-time.After(time.Second * 2):
@@ -1640,7 +1640,7 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 					return nil, nil, err
 				}
 
-				for i := 0; i < 2; i++ {
+				for range 2 {
 					select {
 					case <-verack:
 					case <-time.After(time.Second * 2):
@@ -1669,7 +1669,7 @@ func TestNoSendAddrV2Handshake(t *testing.T) {
 					return nil, nil, err
 				}
 
-				for i := 0; i < 2; i++ {
+				for range 2 {
 					select {
 					case <-verack:
 					case <-time.After(time.Second * 2):

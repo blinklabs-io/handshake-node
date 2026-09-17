@@ -308,7 +308,7 @@ func TestNeedMoreAddresses(t *testing.T) {
 	addrs := make([]*wire.NetAddressV2, addrsToAdd)
 
 	var err error
-	for i := 0; i < addrsToAdd; i++ {
+	for i := range addrsToAdd {
 		s := fmt.Sprintf("%d.%d.173.147:8333", i/128+60, i%128+60)
 		addrs[i], err = n.DeserializeNetAddress(s, wire.SFNodeNetwork)
 		if err != nil {
@@ -338,7 +338,7 @@ func TestGood(t *testing.T) {
 	addrs := make([]*wire.NetAddressV2, addrsToAdd)
 
 	var err error
-	for i := 0; i < addrsToAdd; i++ {
+	for i := range addrsToAdd {
 		s := fmt.Sprintf("%d.173.147.%d:8333", i/64+60, i%64+60)
 		addrs[i], err = n.DeserializeNetAddress(s, wire.SFNodeNetwork)
 		if err != nil {

@@ -2076,8 +2076,7 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 			pkBytes, fullSigBytes, vm,
 		)
 		if err != nil {
-			var scriptErr Error
-			if errors.As(err, &scriptErr) {
+			if _, ok := errors.AsType[Error](err); ok {
 				return err
 			}
 			if vm.hasFlag(ScriptVerifyNullFail) && len(fullSigBytes) > 0 {
@@ -2095,8 +2094,7 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 			pkBytes, fullSigBytes, vm,
 		)
 		if err != nil {
-			var scriptErr Error
-			if errors.As(err, &scriptErr) {
+			if _, ok := errors.AsType[Error](err); ok {
 				return err
 			}
 			if vm.hasFlag(ScriptVerifyNullFail) && len(fullSigBytes) > 0 {
@@ -2442,8 +2440,7 @@ func opcodeCheckMultiSig(op *opcode, data []byte, vm *Engine) error {
 			parsedSig, err = vm.parseSignature(signature)
 			sigInfo.parsed = true
 			if err != nil {
-				var scriptErr Error
-				if errors.As(err, &scriptErr) {
+				if _, ok := errors.AsType[Error](err); ok {
 					return err
 				}
 				continue

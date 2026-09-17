@@ -469,6 +469,21 @@ func TestParseIPNets(t *testing.T) {
 	}
 }
 
+func TestNormalizeAddressesDoesNotModifyInput(t *testing.T) {
+	addrs := []string{"localhost", "localhost:12037", "127.0.0.1"}
+	wantInput := append([]string(nil), addrs...)
+
+	got := normalizeAddresses(addrs, "12037")
+	want := []string{"localhost:12037", "127.0.0.1:12037"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("normalizeAddresses: got %v, want %v", got, want)
+	}
+	if !slices.Equal(addrs, wantInput) {
+		t.Fatalf("normalizeAddresses modified input: got %v, want %v",
+			addrs, wantInput)
+	}
+}
+
 func TestParseAssumeValid(t *testing.T) {
 	assumeValid := "5b6ef2d3c1f3cdcadfd9a030ba1811efdd17740f14e166489760741d075992e0"
 	hash, err := parseAssumeValid(assumeValid)

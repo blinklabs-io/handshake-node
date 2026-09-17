@@ -191,7 +191,7 @@ func TestWsClientServiceRequestLifecycle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		started := make(chan struct{})
 		release := make(chan struct{})
-		wsHandlers[method] = func(*wsClient, interface{}) (interface{}, error) {
+		wsHandlers[method] = func(*wsClient, any) (any, error) {
 			close(started)
 			<-release
 			return "done", nil

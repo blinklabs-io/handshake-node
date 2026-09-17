@@ -17,10 +17,10 @@ type GetZmqNotificationResult []struct {
 }
 
 func (z *GetZmqNotificationResult) MarshalJSON() ([]byte, error) {
-	var out []map[string]interface{}
+	var out []map[string]any
 	for _, notif := range *z {
 		out = append(out,
-			map[string]interface{}{
+			map[string]any{
 				"type":    notif.Type,
 				"address": notif.Address.String(),
 				"hwm":     notif.HighWaterMark,

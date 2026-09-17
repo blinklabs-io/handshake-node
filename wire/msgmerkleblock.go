@@ -83,7 +83,7 @@ func (msg *MsgMerkleBlock) BtcDecode(r io.Reader, pver uint32, enc MessageEncodi
 	// reduce the number of allocations.
 	hashes := make([]chainhash.Hash, count)
 	msg.Hashes = make([]*chainhash.Hash, 0, count)
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		hash := &hashes[i]
 		_, err := io.ReadFull(r, hash[:])
 		if err != nil {

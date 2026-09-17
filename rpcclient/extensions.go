@@ -12,9 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/wire"
 )
 
@@ -319,7 +319,7 @@ func (r FutureExportWatchingWalletResult) Receive() ([]byte, []byte, error) {
 	}
 
 	// Unmarshal result as a JSON object.
-	var obj map[string]interface{}
+	var obj map[string]any
 	err = json.Unmarshal(res, &obj)
 	if err != nil {
 		return nil, nil, err

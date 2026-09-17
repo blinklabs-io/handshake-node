@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,20 +23,20 @@ func TestSubmitPackageCmd(t *testing.T) {
 	const testID = 1
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "submitpackage minimal",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"submitpackage",
 					[]string{"hex1", "hex2"},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewJsonSubmitPackageCmd(
 					[]string{"hex1", "hex2"}, nil, nil,
 				)
@@ -50,13 +50,13 @@ func TestSubmitPackageCmd(t *testing.T) {
 		},
 		{
 			name: "submitpackage with maxfeerate",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"submitpackage",
 					[]string{"hex1", "hex2"}, 0.1,
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				maxFeeRate := 0.1
 				return hnsjson.NewJsonSubmitPackageCmd(
 					[]string{"hex1", "hex2"},
@@ -72,14 +72,14 @@ func TestSubmitPackageCmd(t *testing.T) {
 		},
 		{
 			name: "submitpackage with all optional params",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"submitpackage",
 					[]string{"hex1", "hex2", "hex3"},
 					0.25, 0.001,
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				maxFeeRate := 0.25
 				maxBurnAmount := 0.001
 				return hnsjson.NewJsonSubmitPackageCmd(
@@ -96,13 +96,13 @@ func TestSubmitPackageCmd(t *testing.T) {
 		},
 		{
 			name: "submitpackage single tx",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"submitpackage",
 					[]string{"hex1"},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewJsonSubmitPackageCmd(
 					[]string{"hex1"}, nil, nil,
 				)
@@ -116,14 +116,14 @@ func TestSubmitPackageCmd(t *testing.T) {
 		},
 		{
 			name: "submitpackage with zero maxfeerate",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"submitpackage",
 					[]string{"hex1", "hex2"},
 					0.0,
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				maxFeeRate := 0.0
 				return hnsjson.NewJsonSubmitPackageCmd(
 					[]string{"hex1", "hex2"},

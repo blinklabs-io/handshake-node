@@ -308,7 +308,7 @@ func NewGetBlockHeaderCmd(hash string, verbose *bool) *GetBlockHeaderCmd {
 
 // HashOrHeight defines a type that can be used as hash_or_height value in JSON-RPC commands.
 type HashOrHeight struct {
-	Value interface{}
+	Value any
 }
 
 // MarshalJSON implements the json.Marshaler interface
@@ -318,7 +318,7 @@ func (h HashOrHeight) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface
 func (h *HashOrHeight) UnmarshalJSON(data []byte) error {
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}
@@ -362,9 +362,9 @@ type TemplateRequest struct {
 
 	// Optional template tweaking.  SigOpLimit and SizeLimit can be int64
 	// or bool.
-	SigOpLimit interface{} `json:"sigoplimit,omitempty"`
-	SizeLimit  interface{} `json:"sizelimit,omitempty"`
-	MaxVersion uint32      `json:"maxversion,omitempty"`
+	SigOpLimit any    `json:"sigoplimit,omitempty"`
+	SizeLimit  any    `json:"sizelimit,omitempty"`
+	MaxVersion uint32 `json:"maxversion,omitempty"`
 
 	// Basic pool extension from BIP 0023.
 	Target string `json:"target,omitempty"`
@@ -381,7 +381,7 @@ type TemplateRequest struct {
 
 // convertTemplateRequestField potentially converts the provided value as
 // needed.
-func convertTemplateRequestField(fieldName string, iface interface{}) (interface{}, error) {
+func convertTemplateRequestField(fieldName string, iface any) (any, error) {
 	switch val := iface.(type) {
 	case nil:
 		return nil, nil
@@ -875,7 +875,7 @@ func NewSearchRawTransactionsCmd(address string, verbose, skip, count *int, vinE
 // AllowHighFeesOrMaxFeeRate defines a type that can either be the legacy
 // allowhighfees boolean field or the new maxfeerate float64 field.
 type AllowHighFeesOrMaxFeeRate struct {
-	Value interface{}
+	Value any
 }
 
 // String returns the string representation of this struct, used for printing
@@ -904,7 +904,7 @@ func (a *AllowHighFeesOrMaxFeeRate) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}

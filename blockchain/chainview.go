@@ -21,7 +21,7 @@ var log2FloorMasks = []uint32{0xffff0000, 0xff00, 0xf0, 0xc, 0x2}
 func fastLog2Floor(n uint32) uint8 {
 	rv := uint8(0)
 	exponent := uint8(16)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if n&log2FloorMasks[i] != 0 {
 			rv += exponent
 			n >>= exponent
@@ -388,10 +388,7 @@ func (c *chainView) blockLocator(node *blockNode) BlockLocator {
 
 		// Calculate height of previous node to include ensuring the
 		// final node is the genesis block.
-		height := node.height - step
-		if height < 0 {
-			height = 0
-		}
+		height := max(node.height-step, 0)
 
 		// When the node is in the current chain view, all of its
 		// ancestors must be too, so use a much faster O(1) lookup in

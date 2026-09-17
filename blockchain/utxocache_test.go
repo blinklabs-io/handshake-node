@@ -145,7 +145,7 @@ func TestMapsliceConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(m *mapSlice, keys []wire.OutPoint) {
 			defer wg.Done()
-			for i := 0; i < 5000; i++ {
+			for i := range 5000 {
 				m.put(keys[i], nil, 0)
 			}
 		}(&ms, test.keys)
@@ -161,7 +161,7 @@ func TestMapsliceConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(m *mapSlice) {
 			defer wg.Done()
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				m.size()
 			}
 		}(&ms)
@@ -169,7 +169,7 @@ func TestMapsliceConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(m *mapSlice) {
 			defer wg.Done()
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				m.length()
 			}
 		}(&ms)
@@ -177,7 +177,7 @@ func TestMapsliceConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(m *mapSlice, keys []wire.OutPoint) {
 			defer wg.Done()
-			for i := 0; i < 10000; i++ {
+			for i := range 10000 {
 				m.get(keys[i])
 			}
 		}(&ms, test.keys)
@@ -185,7 +185,7 @@ func TestMapsliceConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(m *mapSlice, keys []wire.OutPoint) {
 			defer wg.Done()
-			for i := 0; i < 5000; i++ {
+			for i := range 5000 {
 				m.delete(keys[i])
 			}
 		}(&ms, test.keys)
@@ -306,7 +306,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 			name: "10 entries, 4 spend",
 			blocks: func() []block {
 				blocks := make([]block, 0, 10)
-				for i := 0; i < 10; i++ {
+				for i := range 10 {
 					op := outpointFromInt(i)
 
 					block := block{
@@ -336,7 +336,7 @@ func TestUtxoCacheEntrySize(t *testing.T) {
 			name: "spend everything",
 			blocks: func() []block {
 				blocks := make([]block, 0, 500)
-				for i := 0; i < 500; i++ {
+				for i := range 500 {
 					op := outpointFromInt(i)
 
 					block := block{
@@ -576,7 +576,7 @@ func TestUtxoCacheFlush(t *testing.T) {
 
 	// Spend 5 utxos.
 	prevLen := len(outPoints)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		spendOp, outPoints = outPoints[len(outPoints)-1], outPoints[:len(outPoints)-1]
 		cache.addTxIn(&wire.TxIn{PreviousOutPoint: spendOp}, nil)
 	}

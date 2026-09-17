@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -68,7 +69,7 @@ var timeZeroVal time.Time
 
 // wsCommandHandler describes a callback function used to handle a specific
 // command.
-type wsCommandHandler func(*wsClient, interface{}) (interface{}, error)
+type wsCommandHandler func(*wsClient, any) (any, error)
 
 // wsHandlers maps RPC command strings to appropriate websocket handler
 // functions.  This is set by init because help references wsHandlers and thus
@@ -146,12 +147,12 @@ type wsNotificationManager struct {
 	server *rpcServer
 
 	// queueNotification queues a notification for handling.
-	queueNotification chan interface{}
+	queueNotification chan any
 
 	// notificationMsgs feeds notificationHandler with notifications
 	// and client (un)registration requests from a queue as well as
 	// registration and unregistration requests from clients.
-	notificationMsgs chan interface{}
+	notificationMsgs chan any
 
 	// Access channel for current number of connected clients.
 	numClients chan int
@@ -165,11 +166,11 @@ type wsNotificationManager struct {
 // sending the oldest unsent to out.  This handler stops when either of the
 // in or quit channels are closed, and closes out before returning, without
 // waiting to send any variables still remaining in the queue.
-func queueHandler(in <-chan interface{}, out chan<- interface{}, quit <-chan struct{}) {
-	var q []interface{}
-	var dequeue chan<- interface{}
+func queueHandler(in <-chan any, out chan<- any, quit <-chan struct{}) {
+	var q []any
+	var dequeue chan<- any
 	skipQueue := out
-	var next interface{}
+	var next any
 out:
 	for {
 		select {
@@ -219,7 +220,7 @@ func (m *wsNotificationManager) queueHandler() {
 // enqueueNotification queues a notification unless the manager is shutting
 // down.  Every sender must use this helper because queueHandler stops receiving
 // as soon as quit is closed.
-func (m *wsNotificationManager) enqueueNotification(n interface{}) bool {
+func (m *wsNotificationManager) enqueueNotification(n any) bool {
 	select {
 	case m.queueNotification <- n:
 		return true
@@ -1366,8 +1367,8 @@ func (m *wsNotificationManager) Shutdown() {
 func newWsNotificationManager(server *rpcServer) *wsNotificationManager {
 	return &wsNotificationManager{
 		server:            server,
-		queueNotification: make(chan interface{}),
-		notificationMsgs:  make(chan interface{}),
+		queueNotification: make(chan any),
+		notificationMsgs:  make(chan any),
 		numClients:        make(chan int),
 		quit:              make(chan struct{}),
 	}
@@ -1653,7 +1654,7 @@ out:
 
 		// Process a batched request
 		if batchedRequest {
-			var batchedRequests []interface{}
+			var batchedRequests []any
 			var results []json.RawMessage
 			var batchSize int
 			var reply json.RawMessage
@@ -1872,7 +1873,7 @@ out:
 
 						// Lookup the websocket extension for the command, if it doesn't
 						// exist fallback to handling the command as a standard command.
-						var resp interface{}
+						var resp any
 						wsHandler, ok := wsHandlers[cmd.method]
 						if ok {
 							resp, err = wsHandler(c, cmd.cmd)
@@ -1941,12 +1942,10 @@ func (c *wsClient) serviceRequestAsync(r *parsedRPCCmd) bool {
 		return false
 	}
 
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
+	c.wg.Go(func() {
 		defer c.serviceRequestSem.release()
 		c.serviceRequest(r)
-	}()
+	})
 	return true
 }
 
@@ -1955,7 +1954,7 @@ func (c *wsClient) serviceRequestAsync(r *parsedRPCCmd) bool {
 // websocket client.
 func (c *wsClient) serviceRequest(r *parsedRPCCmd) {
 	var (
-		result interface{}
+		result any
 		err    error
 	)
 
@@ -2234,7 +2233,7 @@ func newWebsocketClient(server *rpcServer, conn *websocket.Conn,
 }
 
 // handleWebsocketHelp implements the help command for websocket connections.
-func handleWebsocketHelp(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleWebsocketHelp(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.HelpCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2284,7 +2283,7 @@ func handleWebsocketHelp(wsc *wsClient, icmd interface{}) (interface{}, error) {
 // websocket connections.
 //
 // NOTE: This extension is ported from github.com/decred/dcrd
-func handleLoadTxFilter(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleLoadTxFilter(wsc *wsClient, icmd any) (any, error) {
 	cmd := icmd.(*hnsjson.LoadTxFilterCmd)
 
 	outPoints := make([]wire.OutPoint, len(cmd.OutPoints))
@@ -2327,27 +2326,27 @@ func handleLoadTxFilter(wsc *wsClient, icmd interface{}) (interface{}, error) {
 
 // handleNotifyBlocks implements the notifyblocks command extension for
 // websocket connections.
-func handleNotifyBlocks(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleNotifyBlocks(wsc *wsClient, icmd any) (any, error) {
 	wsc.server.ntfnMgr.RegisterBlockUpdates(wsc)
 	return nil, nil
 }
 
 // handleSession implements the session command extension for websocket
 // connections.
-func handleSession(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleSession(wsc *wsClient, icmd any) (any, error) {
 	return &hnsjson.SessionResult{SessionID: wsc.sessionID}, nil
 }
 
 // handleStopNotifyBlocks implements the stopnotifyblocks command extension for
 // websocket connections.
-func handleStopNotifyBlocks(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleStopNotifyBlocks(wsc *wsClient, icmd any) (any, error) {
 	wsc.server.ntfnMgr.UnregisterBlockUpdates(wsc)
 	return nil, nil
 }
 
 // handleNotifyNames implements the notifynames command extension for websocket
 // connections.
-func handleNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleNotifyNames(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.NotifyNamesCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2369,11 +2368,9 @@ func handleNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
 		}
 	}
 
-	for _, name := range names {
-		if name == "" {
-			return nil, rpcInvalidParameterError(
-				"name filter cannot be empty")
-		}
+	if slices.Contains(names, "") {
+		return nil, rpcInvalidParameterError(
+			"name filter cannot be empty")
 	}
 
 	watch := newWSNameWatch(wsc, names, nameHashes)
@@ -2383,14 +2380,14 @@ func handleNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
 
 // handleStopNotifyNames implements the stopnotifynames command extension for
 // websocket connections.
-func handleStopNotifyNames(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleStopNotifyNames(wsc *wsClient, icmd any) (any, error) {
 	wsc.server.ntfnMgr.UnregisterNameUpdates(wsc)
 	return nil, nil
 }
 
 // handleNotifySpent implements the notifyspent command extension for
 // websocket connections.
-func handleNotifySpent(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleNotifySpent(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.NotifySpentCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2407,7 +2404,7 @@ func handleNotifySpent(wsc *wsClient, icmd interface{}) (interface{}, error) {
 
 // handleNotifyNewTransactions implements the notifynewtransactions command
 // extension for websocket connections.
-func handleNotifyNewTransactions(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleNotifyNewTransactions(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.NotifyNewTransactionsCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2420,14 +2417,14 @@ func handleNotifyNewTransactions(wsc *wsClient, icmd interface{}) (interface{}, 
 
 // handleStopNotifyNewTransactions implements the stopnotifynewtransactions
 // command extension for websocket connections.
-func handleStopNotifyNewTransactions(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleStopNotifyNewTransactions(wsc *wsClient, icmd any) (any, error) {
 	wsc.server.ntfnMgr.UnregisterNewMempoolTxsUpdates(wsc)
 	return nil, nil
 }
 
 // handleNotifyReceived implements the notifyreceived command extension for
 // websocket connections.
-func handleNotifyReceived(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleNotifyReceived(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.NotifyReceivedCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2446,7 +2443,7 @@ func handleNotifyReceived(wsc *wsClient, icmd interface{}) (interface{}, error) 
 
 // handleStopNotifySpent implements the stopnotifyspent command extension for
 // websocket connections.
-func handleStopNotifySpent(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleStopNotifySpent(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.StopNotifySpentCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2466,7 +2463,7 @@ func handleStopNotifySpent(wsc *wsClient, icmd interface{}) (interface{}, error)
 
 // handleStopNotifyReceived implements the stopnotifyreceived command extension
 // for websocket connections.
-func handleStopNotifyReceived(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleStopNotifyReceived(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.StopNotifyReceivedCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -2750,7 +2747,7 @@ func rescanBlockFilter(filter *wsClientFilter, block *hnsutil.Block, params *cha
 // websocket connections.
 //
 // NOTE: This extension is ported from github.com/decred/dcrd
-func handleRescanBlocks(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleRescanBlocks(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.RescanBlocksCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal
@@ -3063,7 +3060,7 @@ fetchRange:
 // handler erroring.  Clients must handle this by finding a block still in
 // the chain (perhaps from a rescanprogress notification) to resume their
 // rescan.
-func handleRescan(wsc *wsClient, icmd interface{}) (interface{}, error) {
+func handleRescan(wsc *wsClient, icmd any) (any, error) {
 	cmd, ok := icmd.(*hnsjson.RescanCmd)
 	if !ok {
 		return nil, hnsjson.ErrRPCInternal

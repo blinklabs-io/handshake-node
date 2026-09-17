@@ -570,7 +570,7 @@ func (ef *FeeEstimator) estimates() []DooPerByte {
 	set := ef.newEstimateFeeSet()
 
 	estimates := make([]DooPerByte, estimateFeeDepth)
-	for i := 0; i < estimateFeeDepth; i++ {
+	for i := range estimateFeeDepth {
 		estimates[i] = set.estimateFee(i + 1)
 	}
 
@@ -749,7 +749,7 @@ func RestoreFeeEstimator(data FeeEstimatorState) (*FeeEstimator, error) {
 	}
 
 	// Read bins.
-	for i := 0; i < estimateFeeDepth; i++ {
+	for i := range estimateFeeDepth {
 		var numTransactions uint32
 		binary.Read(r, binary.BigEndian, &numTransactions)
 		bin := make([]*observedTransaction, numTransactions)

@@ -20,12 +20,12 @@ type Driver struct {
 	// Create is the function that will be invoked with all user-specified
 	// arguments to create the database.  This function must return
 	// ErrDbExists if the database already exists.
-	Create func(args ...interface{}) (DB, error)
+	Create func(args ...any) (DB, error)
 
 	// Open is the function that will be invoked with all user-specified
 	// arguments to open the database.  This function must return
 	// ErrDbDoesNotExist if the database has not already been created.
-	Open func(args ...interface{}) (DB, error)
+	Open func(args ...any) (DB, error)
 
 	// UseLogger uses a specified Logger to output package logging info.
 	UseLogger func(logger btclog.Logger)
@@ -63,7 +63,7 @@ func SupportedDrivers() []string {
 // for the database driver for further details.
 //
 // ErrDbUnknownType will be returned if the database type is not registered.
-func Create(dbType string, args ...interface{}) (DB, error) {
+func Create(dbType string, args ...any) (DB, error) {
 	drv, exists := drivers[dbType]
 	if !exists {
 		str := fmt.Sprintf("driver %q is not registered", dbType)
@@ -78,7 +78,7 @@ func Create(dbType string, args ...interface{}) (DB, error) {
 // driver for further details.
 //
 // ErrDbUnknownType will be returned if the database type is not registered.
-func Open(dbType string, args ...interface{}) (DB, error) {
+func Open(dbType string, args ...any) (DB, error) {
 	drv, exists := drivers[dbType]
 	if !exists {
 		str := fmt.Sprintf("driver %q is not registered", dbType)

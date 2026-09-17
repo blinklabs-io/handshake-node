@@ -952,7 +952,7 @@ func TestMaximumDepth(t *testing.T) {
 		t.Fatalf("NewMaster: unexpected error: %v", err)
 	}
 
-	for i := uint8(0); i < math.MaxUint8; i++ {
+	for i := range uint8(math.MaxUint8) {
 		if extKey.Depth() != i {
 			t.Fatalf("extendedkey depth %d should match expected value %d",
 				extKey.Depth(), i)

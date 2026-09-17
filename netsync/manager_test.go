@@ -43,14 +43,14 @@ type noopPeerNotifier struct{}
 
 func (noopPeerNotifier) AnnounceNewTransactions([]*mempool.TxDesc)            {}
 func (noopPeerNotifier) UpdatePeerHeights(*chainhash.Hash, int32, *peer.Peer) {}
-func (noopPeerNotifier) RelayInventory(*wire.InvVect, interface{})            {}
+func (noopPeerNotifier) RelayInventory(*wire.InvVect, any)                    {}
 func (noopPeerNotifier) TransactionConfirmed(*hnsutil.Tx)                     {}
 
 type recordingPeerNotifier struct {
 	noopPeerNotifier
 
 	relayed []*wire.InvVect
-	data    []interface{}
+	data    []any
 }
 
 func TestLimitAdd(t *testing.T) {
@@ -115,7 +115,7 @@ func TestLimitAdd(t *testing.T) {
 }
 
 func (n *recordingPeerNotifier) RelayInventory(iv *wire.InvVect,
-	data interface{}) {
+	data any) {
 
 	ivCopy := *iv
 	n.relayed = append(n.relayed, &ivCopy)
@@ -1501,7 +1501,7 @@ func (h *reorgTxPoolHarness) createCoinbaseTx(blockHeight int32,
 	totalInput := blockchain.CalcBlockSubsidy(blockHeight, h.chainParams)
 	amountPerOutput := totalInput / int64(numOutputs)
 	remainder := totalInput - amountPerOutput*int64(numOutputs)
-	for i := uint32(0); i < numOutputs; i++ {
+	for i := range numOutputs {
 		amount := amountPerOutput
 		if i == numOutputs-1 {
 			amount += remainder
@@ -1809,7 +1809,7 @@ func TestBuildBlockRequestCapsInflightBlocks(t *testing.T) {
 	gdmsg := sm.buildBlockRequest(syncPeer)
 	require.Len(t, gdmsg.Inventory, maxInFlightBlocks)
 
-	for i := 0; i < maxInFlightBlocks; i++ {
+	for i := range maxInFlightBlocks {
 		require.Equal(t, *blocks[i].Hash(),
 			gdmsg.Inventory[i].InvVect().Hash)
 	}
@@ -2050,7 +2050,7 @@ func createTestCoinbaseVariant(t *testing.T, height int32,
 // solution is found almost immediately.
 func solveTestBlock(header *wire.BlockHeader, params *chaincfg.Params) bool {
 	target := blockchain.CompactToBig(params.PowLimitBits)
-	for nonce := uint32(0); nonce < math.MaxUint32; nonce++ {
+	for nonce := range uint32(math.MaxUint32) {
 		header.Nonce = nonce
 		hash := header.BlockHash()
 		if blockchain.HashToBig(&hash).Cmp(target) <= 0 {

@@ -80,7 +80,7 @@ func BenchmarkCalcWitnessSigHash(b *testing.B) {
 func genComplexScript() ([]byte, error) {
 	var scriptLen int
 	builder := NewScriptBuilder()
-	for i := 0; i < MaxOpsPerScript/2; i++ {
+	for range MaxOpsPerScript / 2 {
 		builder.AddOp(OP_TRUE)
 		scriptLen++
 	}

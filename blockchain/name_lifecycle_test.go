@@ -6,6 +6,7 @@ package blockchain
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 	"time"
 
@@ -348,8 +349,8 @@ func (f *nameLifecycleFixture) connectBlock(label string,
 func (f *nameLifecycleFixture) disconnectAll() {
 	f.t.Helper()
 
-	for i := len(f.connected) - 1; i >= 0; i-- {
-		connected := f.connected[i]
+	for _, connected := range slices.Backward(f.connected) {
+
 		err := f.chain.db.Update(func(dbTx database.Tx) error {
 			return f.chain.disconnectNames(dbTx, connected.node,
 				connected.block)

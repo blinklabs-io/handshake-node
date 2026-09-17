@@ -106,10 +106,7 @@ func NewHnsNetAddress(na *NetAddress) HnsNetAddress {
 	if na == nil {
 		return HnsNetAddress{}
 	}
-	sec := na.Timestamp.Unix()
-	if sec < 0 {
-		sec = 0
-	}
+	sec := max(na.Timestamp.Unix(), 0)
 	return HnsNetAddress{
 		Time:     uint64(sec),
 		Services: uint64(na.Services),
@@ -121,10 +118,7 @@ func NewHnsNetAddress(na *NetAddress) HnsNetAddress {
 // NetAddress converts the Handshake wire address into the in-memory
 // NetAddress representation shared with the address manager.
 func (n *HnsNetAddress) NetAddress() *NetAddress {
-	sec := n.Time
-	if sec > uint64(1<<63-1) {
-		sec = uint64(1<<63 - 1)
-	}
+	sec := min(n.Time, uint64(1<<63-1))
 	return &NetAddress{
 		Timestamp: time.Unix(int64(sec), 0),
 		Services:  ServiceFlag(n.Services),
@@ -137,10 +131,7 @@ func (n *HnsNetAddress) NetAddress() *NetAddress {
 // NetAddressV2 representation while preserving the advertised Brontide static
 // key.
 func (n *HnsNetAddress) NetAddressV2() *NetAddressV2 {
-	sec := n.Time
-	if sec > uint64(1<<63-1) {
-		sec = uint64(1<<63 - 1)
-	}
+	sec := min(n.Time, uint64(1<<63-1))
 	host := n.Host
 	if host == nil || host.To16() == nil {
 		host = net.IPv6zero

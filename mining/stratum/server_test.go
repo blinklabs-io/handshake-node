@@ -169,7 +169,7 @@ func TestCreateJobPrunesSameTipJobs(t *testing.T) {
 	s := newTestServer(t, 1, nil)
 
 	var latest *Job
-	for i := 0; i < maxJobsPerPrevBlock+2; i++ {
+	for range maxJobsPerPrevBlock + 2 {
 		job, err := s.createJob()
 		if err != nil {
 			t.Fatalf("createJob: %v", err)
@@ -213,7 +213,7 @@ func TestSubscribeAuthorizeProtocol(t *testing.T) {
 	if subscribe["id"].(float64) != 1 {
 		t.Fatalf("subscribe id = %v", subscribe["id"])
 	}
-	result := subscribe["result"].([]interface{})
+	result := subscribe["result"].([]any)
 	if result[2].(float64) != ExtraNonce2Size {
 		t.Fatalf("extranonce2 size = %v", result[2])
 	}
@@ -245,14 +245,14 @@ func TestNoAuthSubmitAfterSubscribe(t *testing.T) {
 	fmt.Fprintln(clientConn, `{"id":1,"method":"mining.subscribe","params":[]}`)
 
 	subscribe := readJSONLine(t, reader)
-	result := subscribe["result"].([]interface{})
+	result := subscribe["result"].([]any)
 	extraNonce1, err := hex.DecodeString(result[1].(string))
 	if err != nil {
 		t.Fatalf("DecodeString extranonce1: %v", err)
 	}
 	readJSONLine(t, reader) // mining.set_difficulty
 	notify := readJSONLine(t, reader)
-	params := notify["params"].([]interface{})
+	params := notify["params"].([]any)
 	jobID := params[0].(string)
 
 	s.jobsMtx.RLock()
@@ -302,7 +302,7 @@ func solveShareNonce(t *testing.T, job *Job, target *big.Int,
 	}
 }
 
-func readJSONLine(t *testing.T, r *bufio.Reader) map[string]interface{} {
+func readJSONLine(t *testing.T, r *bufio.Reader) map[string]any {
 	t.Helper()
 
 	line, err := r.ReadBytes('\n')
@@ -310,7 +310,7 @@ func readJSONLine(t *testing.T, r *bufio.Reader) map[string]interface{} {
 		t.Fatalf("ReadBytes: %v", err)
 	}
 
-	var msg map[string]interface{}
+	var msg map[string]any
 	if err := json.Unmarshal(line, &msg); err != nil {
 		t.Fatalf("Unmarshal %q: %v", line, err)
 	}

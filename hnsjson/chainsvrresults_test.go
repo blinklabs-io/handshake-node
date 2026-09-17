@@ -10,9 +10,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/blinklabs-io/handshake-node/hnsjson"
 	"github.com/blinklabs-io/handshake-node/hnsutil"
-	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -24,7 +24,7 @@ func TestChainSvrCustomResults(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		result   interface{}
+		result   any
 		expected string
 	}{
 		{

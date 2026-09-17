@@ -28,7 +28,7 @@ func calculateEntries(totalBytes int, bucketSize int) int {
 }
 
 func TestCalculateEntries(t *testing.T) {
-	for i := 0; i < 10_000_000; i++ {
+	for i := range 10_000_000 {
 		// It's not possible to calculate the exact amount of entries since
 		// the map will only allocate for 2^N where N is the amount of buckets.
 		//

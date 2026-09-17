@@ -218,13 +218,13 @@ func (cm *rpcConnManager) BroadcastMessage(msg wire.HandshakeMessage) {
 //
 // This function is safe for concurrent access and is part of the
 // rpcserverConnManager interface implementation.
-func (cm *rpcConnManager) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
+func (cm *rpcConnManager) AddRebroadcastInventory(iv *wire.InvVect, data any) {
 	cm.server.AddRebroadcastInventory(iv, data)
 }
 
 // RelayInventory relays the passed inventory vector to all connected peers
 // that are not already known to have it.
-func (cm *rpcConnManager) RelayInventory(iv *wire.InvVect, data interface{}) {
+func (cm *rpcConnManager) RelayInventory(iv *wire.InvVect, data any) {
 	cm.server.RelayInventory(iv, data)
 }
 

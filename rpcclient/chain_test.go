@@ -262,9 +262,7 @@ func TestClientConnectedToWSServerRunner(t *testing.T) {
 
 				wg := sync.WaitGroup{}
 
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					for {
 						client.requestLock.Lock()
 						if client.requestList.Len() > 0 {
@@ -275,7 +273,7 @@ func TestClientConnectedToWSServerRunner(t *testing.T) {
 						}
 						client.requestLock.Unlock()
 					}
-				}()
+				})
 
 				response := <-ch
 

@@ -167,7 +167,7 @@ func (c *ControlBlock) RootHash(revealedScript []byte) []byte {
 	// proof as we can start hashing with our leaf, with each internal
 	// branch, until we reach the root.
 	numNodes := len(c.InclusionProof) / ControlBlockNodeSize
-	for nodeOffset := 0; nodeOffset < numNodes; nodeOffset++ {
+	for nodeOffset := range numNodes {
 		// Extract the new node using our index to serve as a 32-byte
 		// offset.
 		leafOffset := 32 * nodeOffset

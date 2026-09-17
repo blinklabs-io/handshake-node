@@ -56,10 +56,7 @@ type fakeRandReader struct {
 // Read returns the fake reader error and the lesser of the fake reader value
 // and the length of p.
 func (r *fakeRandReader) Read(p []byte) (int, error) {
-	n := r.n
-	if n > len(p) {
-		n = len(p)
-	}
+	n := min(r.n, len(p))
 	return n, r.err
 }
 
@@ -70,8 +67,8 @@ func TestElementWire(t *testing.T) {
 	type writeElementReflect int32
 
 	tests := []struct {
-		in  interface{} // Value to encode
-		buf []byte      // Wire encoding
+		in  any    // Value to encode
+		buf []byte // Wire encoding
 	}{
 		{int32(1), []byte{0x01, 0x00, 0x00, 0x00}},
 		{uint32(256), []byte{0x00, 0x01, 0x00, 0x00}},
@@ -190,10 +187,10 @@ func TestElementWire(t *testing.T) {
 // of various element types to confirm error paths work correctly.
 func TestElementWireErrors(t *testing.T) {
 	tests := []struct {
-		in       interface{} // Value to encode
-		max      int         // Max size of fixed buffer to induce errors
-		writeErr error       // Expected write error
-		readErr  error       // Expected read error
+		in       any   // Value to encode
+		max      int   // Max size of fixed buffer to induce errors
+		writeErr error // Expected write error
+		readErr  error // Expected read error
 	}{
 		{int32(1), 0, io.ErrShortWrite, io.EOF},
 		{uint32(256), 0, io.ErrShortWrite, io.EOF},
@@ -777,7 +774,7 @@ func TestRandomUint64(t *testing.T) {
 		"when only %d was expected"
 
 	numHits := 0
-	for i := 0; i < tries; i++ {
+	for i := range tries {
 		nonce, err := RandomUint64()
 		if err != nil {
 			t.Errorf("RandomUint64 iteration %d failed - err %v",

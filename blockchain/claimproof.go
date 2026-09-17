@@ -331,7 +331,7 @@ func parseOwnershipProof(serialized []byte) (*ownershipProof, error) {
 	proof := &ownershipProof{
 		zones: make([]ownershipZone, 0, zoneCount),
 	}
-	for i := 0; i < zoneCount; i++ {
+	for range zoneCount {
 		zone, next, err := readOwnershipZone(serialized, offset)
 		if err != nil {
 			return nil, err
@@ -362,7 +362,7 @@ func readOwnershipZone(serialized []byte, offset int) (ownershipZone, int,
 		count := int(serialized[offset])
 		offset++
 		rrs := make([]dns.RR, 0, count)
-		for j := 0; j < count; j++ {
+		for range count {
 			rr, next, err := readOwnershipRR(serialized, offset,
 				expects[i])
 			if err != nil {

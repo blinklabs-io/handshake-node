@@ -24,17 +24,17 @@ func TestChainSvrWsNtfns(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		newNtfn      func() (interface{}, error)
-		staticNtfn   func() interface{}
+		newNtfn      func() (any, error)
+		staticNtfn   func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "blockconnected",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("blockconnected", "123", 100000, 123456789)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewBlockConnectedNtfn("123", 100000, 123456789)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"blockconnected","params":["123",100000,123456789],"id":null}`,
@@ -46,10 +46,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "blockdisconnected",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("blockdisconnected", "123", 100000, 123456789)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewBlockDisconnectedNtfn("123", 100000, 123456789)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"blockdisconnected","params":["123",100000,123456789],"id":null}`,
@@ -61,10 +61,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "filteredblockconnected",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("filteredblockconnected", 100000, "header", []string{"tx0", "tx1"})
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewFilteredBlockConnectedNtfn(100000, "header", []string{"tx0", "tx1"})
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"filteredblockconnected","params":[100000,"header",["tx0","tx1"]],"id":null}`,
@@ -76,10 +76,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "filteredblockdisconnected",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("filteredblockdisconnected", 100000, "header")
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewFilteredBlockDisconnectedNtfn(100000, "header")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"filteredblockdisconnected","params":[100000,"header"],"id":null}`,
@@ -90,10 +90,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "recvtx",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("recvtx", "001122", `{"height":100000,"hash":"123","index":0,"time":12345678}`)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				blockDetails := hnsjson.BlockDetails{
 					Height: 100000,
 					Hash:   "123",
@@ -115,10 +115,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "redeemingtx",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("redeemingtx", "001122", `{"height":100000,"hash":"123","index":0,"time":12345678}`)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				blockDetails := hnsjson.BlockDetails{
 					Height: 100000,
 					Hash:   "123",
@@ -140,10 +140,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "rescanfinished",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("rescanfinished", "123", 100000, 12345678)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewRescanFinishedNtfn("123", 100000, 12345678)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"rescanfinished","params":["123",100000,12345678],"id":null}`,
@@ -155,10 +155,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "rescanprogress",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("rescanprogress", "123", 100000, 12345678)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewRescanProgressNtfn("123", 100000, 12345678)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"rescanprogress","params":["123",100000,12345678],"id":null}`,
@@ -170,10 +170,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "txaccepted",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("txaccepted", "123", 1.5)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewTxAcceptedNtfn("123", 1.5)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"txaccepted","params":["123",1.5],"id":null}`,
@@ -184,10 +184,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "txacceptedverbose",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("txacceptedverbose", `{"hex":"001122","txid":"123","version":1,"locktime":4294967295,"vin":null,"vout":null,"confirmations":0}`)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				txResult := hnsjson.TxRawResult{
 					Hex:           "001122",
 					Txid:          "123",
@@ -214,10 +214,10 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "relevanttxaccepted",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("relevanttxaccepted", "001122")
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewRelevantTxAcceptedNtfn("001122")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"relevanttxaccepted","params":["001122"],"id":null}`,
@@ -227,13 +227,13 @@ func TestChainSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "nameupdated",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("nameupdated", "example",
 					"0000000000000000000000000000000000000000000000000000000000000001",
 					"OPEN", uint8(2), "123", uint32(0),
 					`{"height":100000,"hash":"456","index":1,"time":12345678}`)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				blockDetails := hnsjson.BlockDetails{
 					Height: 100000,
 					Hash:   "456",

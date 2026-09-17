@@ -108,7 +108,7 @@ func (msg *MsgBlock) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) er
 	defer scriptPool.Return(scriptBuf)
 
 	msg.Transactions = make([]*MsgTx, 0, txCount)
-	for i := uint64(0); i < txCount; i++ {
+	for range txCount {
 		tx := MsgTx{}
 		err := tx.btcDecode(r, pver, enc, buf, scriptBuf[:])
 		if err != nil {
@@ -193,7 +193,7 @@ func (msg *MsgBlock) DeserializeTxLoc(r *bytes.Buffer) ([]TxLoc, error) {
 	// within the byte stream.
 	msg.Transactions = make([]*MsgTx, 0, txCount)
 	txLocs := make([]TxLoc, txCount)
-	for i := uint64(0); i < txCount; i++ {
+	for i := range txCount {
 		txLocs[i].TxStart = fullLen - r.Len()
 		tx := MsgTx{}
 		err := tx.btcDecode(r, 0, WitnessEncoding, buf, scriptBuf[:])

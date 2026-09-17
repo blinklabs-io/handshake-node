@@ -7,6 +7,7 @@ package hnsjson
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 // RPCVersion is a type to indicate RPC versions.
@@ -23,12 +24,7 @@ var validRpcVersions = []RPCVersion{RpcVersion1, RpcVersion2}
 
 // check if the rpc version is a valid version
 func (r RPCVersion) IsValid() bool {
-	for _, version := range validRpcVersions {
-		if version == r {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(validRpcVersions, r)
 }
 
 // cast rpc version to a string
@@ -74,7 +70,7 @@ func NewRPCError(code RPCErrorCode, message string) *RPCError {
 // to that list.  This function is only provided in case the caller is manually
 // marshalling for some reason.    The functions which accept an ID in this
 // package already call this function to ensure the provided id is valid.
-func IsValidIDType(id interface{}) bool {
+func IsValidIDType(id any) bool {
 	switch id.(type) {
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
@@ -97,7 +93,7 @@ type Request struct {
 	Jsonrpc RPCVersion        `json:"jsonrpc"`
 	Method  string            `json:"method"`
 	Params  []json.RawMessage `json:"params"`
-	ID      interface{}       `json:"id"`
+	ID      any               `json:"id"`
 }
 
 // UnmarshalJSON is a custom unmarshal func for the Request struct. The param
@@ -110,8 +106,8 @@ func (request *Request) UnmarshalJSON(b []byte) error {
 	// Step 2: Create an anonymous struct with raw replacements for the special
 	// fields.
 	aux := &struct {
-		Jsonrpc string        `json:"jsonrpc"`
-		Params  []interface{} `json:"params"`
+		Jsonrpc string `json:"jsonrpc"`
+		Params  []any  `json:"params"`
 		*Alias
 	}{
 		Alias: (*Alias)(request),
@@ -155,7 +151,7 @@ func (request *Request) UnmarshalJSON(b []byte) error {
 // concrete command type with the NewCmd or New<Foo>Cmd functions and call the
 // MarshalCmd function with that command to generate the marshalled JSON-RPC
 // request.
-func NewRequest(rpcVersion RPCVersion, id interface{}, method string, params []interface{}) (*Request, error) {
+func NewRequest(rpcVersion RPCVersion, id any, method string, params []any) (*Request, error) {
 	// default to JSON-RPC 1.0 if RPC type is not specified
 	if rpcVersion == "" {
 		rpcVersion = RpcVersion1
@@ -196,7 +192,7 @@ type Response struct {
 	Jsonrpc RPCVersion      `json:"jsonrpc"`
 	Result  json.RawMessage `json:"result"`
 	Error   *RPCError       `json:"error"`
-	ID      *interface{}    `json:"id"`
+	ID      *any            `json:"id"`
 }
 
 // NewResponse returns a new JSON-RPC response object given the provided rpc
@@ -204,7 +200,7 @@ type Response struct {
 // provided in case the caller wants to construct raw responses for some reason.
 // Typically callers will instead want to create the fully marshalled JSON-RPC
 // response to send over the wire with the MarshalResponse function.
-func NewResponse(rpcVersion RPCVersion, id interface{}, marshalledResult []byte, rpcErr *RPCError) (*Response, error) {
+func NewResponse(rpcVersion RPCVersion, id any, marshalledResult []byte, rpcErr *RPCError) (*Response, error) {
 	if !rpcVersion.IsValid() {
 		str := fmt.Sprintf("rpcversion '%s' is invalid", rpcVersion)
 		return nil, makeError(ErrInvalidType, str)
@@ -227,7 +223,7 @@ func NewResponse(rpcVersion RPCVersion, id interface{}, marshalledResult []byte,
 // MarshalResponse marshals the passed rpc version, id, result, and RPCError to
 // a JSON-RPC response byte slice that is suitable for transmission to a
 // JSON-RPC client.
-func MarshalResponse(rpcVersion RPCVersion, id interface{}, result interface{}, rpcErr *RPCError) ([]byte, error) {
+func MarshalResponse(rpcVersion RPCVersion, id any, result any, rpcErr *RPCError) ([]byte, error) {
 	if !rpcVersion.IsValid() {
 		str := fmt.Sprintf("rpcversion '%s' is invalid", rpcVersion)
 		return nil, makeError(ErrInvalidType, str)

@@ -56,7 +56,7 @@ func (msg *MsgHeaders) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) 
 	// reduce the number of allocations.
 	headers := make([]BlockHeader, count)
 	msg.Headers = make([]*BlockHeader, 0, count)
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		bh := &headers[i]
 		err := readBlockHeaderBuf(r, pver, bh, buf)
 		if err != nil {

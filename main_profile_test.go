@@ -31,7 +31,6 @@ func TestProfileServeMux(t *testing.T) {
 		{path: "/debug/pprof/goroutine", wantPattern: "/debug/pprof/"},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.path, func(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequest(http.MethodGet, test.path, nil)

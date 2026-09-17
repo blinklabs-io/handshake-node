@@ -86,7 +86,7 @@ type Config struct {
 type Server struct {
 	cfg Config
 
-	started int32
+	started atomic.Int32
 	quit    chan struct{}
 	wg      sync.WaitGroup
 
@@ -94,7 +94,7 @@ type Server struct {
 
 	jobsMtx sync.RWMutex
 	jobs    map[string]*Job
-	jobSeq  uint64
+	jobSeq  atomic.Uint64
 
 	clientsMtx sync.Mutex
 	clients    map[*client]struct{}
@@ -156,12 +156,11 @@ func New(cfg *Config) (*Server, error) {
 
 // Start begins accepting Stratum clients.
 func (s *Server) Start() {
-	if s == nil || !atomic.CompareAndSwapInt32(&s.started, 0, 1) {
+	if s == nil || !s.started.CompareAndSwap(0, 1) {
 		return
 	}
 
 	for _, listener := range s.cfg.Listeners {
-		listener := listener
 		s.wg.Add(1)
 		go s.acceptLoop(listener)
 		log.Infof("Stratum listening on %s", listener.Addr())
@@ -177,7 +176,7 @@ func (s *Server) Stop() {
 		return
 	}
 
-	started := atomic.CompareAndSwapInt32(&s.started, 1, 0)
+	started := s.started.CompareAndSwap(1, 0)
 	if started {
 		close(s.quit)
 	}
@@ -217,14 +216,12 @@ func (s *Server) acceptLoop(listener net.Listener) {
 		s.clients[c] = struct{}{}
 		s.clientsMtx.Unlock()
 
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
+		s.wg.Go(func() {
 			c.serve()
 			s.clientsMtx.Lock()
 			delete(s.clients, c)
 			s.clientsMtx.Unlock()
-		}()
+		})
 	}
 }
 
@@ -313,7 +310,7 @@ func (s *Server) createJob() (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	seq := atomic.AddUint64(&s.jobSeq, 1)
+	seq := s.jobSeq.Add(1)
 	job := &Job{
 		ID:        strconv.FormatUint(seq, 16),
 		Seq:       seq,
@@ -525,7 +522,7 @@ type client struct {
 	extraNonce1 [ExtraNonce1Size]byte
 	subscribed  bool
 	authorized  bool
-	closed      int32
+	closed      atomic.Int32
 }
 
 func newClient(server *Server, conn net.Conn) *client {
@@ -566,7 +563,7 @@ func (c *client) serve() {
 }
 
 func (c *client) close() {
-	if atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
+	if c.closed.CompareAndSwap(0, 1) {
 		_ = c.conn.Close()
 	}
 }
@@ -590,7 +587,7 @@ func (c *client) handleSubscribe(req *request) {
 		{"mining.set_difficulty", "handshake-node"},
 		{"mining.notify", "handshake-node"},
 	}
-	result := []interface{}{
+	result := []any{
 		subscriptions,
 		hex.EncodeToString(c.extraNonce1[:]),
 		ExtraNonce2Size,
@@ -650,7 +647,7 @@ func (c *client) handleSubmit(req *request) {
 
 func (c *client) notifyDifficulty() {
 	c.writeNotification("mining.set_difficulty",
-		[]interface{}{c.server.cfg.Difficulty})
+		[]any{c.server.cfg.Difficulty})
 }
 
 func (c *client) notifyJob(job *Job) {
@@ -665,7 +662,7 @@ func (c *client) notifyJob(job *Job) {
 		return
 	}
 
-	c.writeNotification("mining.notify", []interface{}{
+	c.writeNotification("mining.notify", []any{
 		job.ID,
 		headerHex,
 		targetHex(c.server.shareTarget),
@@ -708,7 +705,7 @@ func (j *Job) headerHex(extraNonce1 []byte) (string, error) {
 	return hex.EncodeToString(buf.Bytes()), nil
 }
 
-func (c *client) writeResult(id json.RawMessage, result interface{}) {
+func (c *client) writeResult(id json.RawMessage, result any) {
 	c.write(response{
 		ID:     id,
 		Result: result,
@@ -720,11 +717,11 @@ func (c *client) writeError(id json.RawMessage, code int, message string) {
 	c.write(response{
 		ID:     id,
 		Result: nil,
-		Error:  []interface{}{code, message, nil},
+		Error:  []any{code, message, nil},
 	})
 }
 
-func (c *client) writeNotification(method string, params interface{}) {
+func (c *client) writeNotification(method string, params any) {
 	c.write(notification{
 		ID:     json.RawMessage("null"),
 		Method: method,
@@ -732,7 +729,7 @@ func (c *client) writeNotification(method string, params interface{}) {
 	})
 }
 
-func (c *client) write(v interface{}) {
+func (c *client) write(v any) {
 	c.writeMtx.Lock()
 	defer c.writeMtx.Unlock()
 
@@ -756,14 +753,14 @@ func (r *request) id() json.RawMessage {
 
 type response struct {
 	ID     json.RawMessage `json:"id"`
-	Result interface{}     `json:"result"`
-	Error  interface{}     `json:"error"`
+	Result any             `json:"result"`
+	Error  any             `json:"error"`
 }
 
 type notification struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
-	Params interface{}     `json:"params"`
+	Params any             `json:"params"`
 }
 
 func rawID(id json.RawMessage) json.RawMessage {

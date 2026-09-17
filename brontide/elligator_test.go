@@ -107,7 +107,7 @@ func TestSVDWForwardMapOnCurve(t *testing.T) {
 		checkOnCurve(t, &u)
 	})
 	t.Run("random", func(t *testing.T) {
-		for i := 0; i < 256; i++ {
+		for range 256 {
 			u, err := randomFieldElement(rand.Reader)
 			if err != nil {
 				t.Fatalf("randomFieldElement: %v", err)
@@ -121,7 +121,7 @@ func TestSVDWForwardMapOnCurve(t *testing.T) {
 // inverts back through the forward map to the original point.
 func TestSVDWInvertRoundTrip(t *testing.T) {
 	successes := 0
-	for i := 0; i < 64; i++ {
+	for range 64 {
 		priv, err := GenerateKey()
 		if err != nil {
 			t.Fatalf("GenerateKey: %v", err)
@@ -131,7 +131,7 @@ func TestSVDWInvertRoundTrip(t *testing.T) {
 		priv.PubKey().AsJacobian(&point)
 		point.ToAffine()
 
-		for hint := uint32(0); hint < 4; hint++ {
+		for hint := range uint32(4) {
 			u, err := svdwInvert(&point.X, &point.Y, hint)
 			if errors.Is(err, ErrInvalidPoint) {
 				continue
@@ -158,7 +158,7 @@ func TestSVDWInvertRoundTrip(t *testing.T) {
 // TestPublicKeyHashRoundTrip verifies encode-decode round trips for many
 // random keys.
 func TestPublicKeyHashRoundTrip(t *testing.T) {
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		priv, err := GenerateKey()
 		if err != nil {
 			t.Fatalf("GenerateKey: %v", err)
@@ -253,7 +253,7 @@ func TestPublicKeyToHashEncodingsDiffer(t *testing.T) {
 	pub := priv.PubKey()
 
 	seen := make(map[string]struct{})
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		uniform, err := PublicKeyToHash(pub, rand.Reader)
 		if err != nil {
 			t.Fatalf("PublicKeyToHash: %v", err)
@@ -315,7 +315,7 @@ func TestPublicKeyFromHashArbitraryBytes(t *testing.T) {
 
 	t.Run("random", func(t *testing.T) {
 		uniform := make([]byte, UniformPublicKeySize)
-		for i := 0; i < 1024; i++ {
+		for range 1024 {
 			if _, err := io.ReadFull(rand.Reader, uniform); err != nil {
 				t.Fatalf("rand: %v", err)
 			}

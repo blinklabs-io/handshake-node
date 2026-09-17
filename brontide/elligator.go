@@ -401,7 +401,7 @@ func PublicKeyToHash(pub *btcec.PublicKey, rng io.Reader) ([]byte, error) {
 	var p0 btcec.JacobianPoint
 	pub.AsJacobian(&p0)
 
-	for i := 0; i < maxUniformEncodeAttempts; i++ {
+	for range maxUniformEncodeAttempts {
 		u1, err := randomFieldElement(rng)
 		if err != nil {
 			return nil, err
@@ -456,7 +456,7 @@ func PublicKeyToHash(pub *btcec.PublicKey, rng io.Reader) ([]byte, error) {
 // rejection, matching bcrypto's randomField.
 func randomFieldElement(rng io.Reader) (fieldVal, error) {
 	var buf [fieldElementSize]byte
-	for i := 0; i < maxRandomFieldElementAttempts; i++ {
+	for range maxRandomFieldElementAttempts {
 		if _, err := io.ReadFull(rng, buf[:]); err != nil {
 			return fieldVal{}, err
 		}

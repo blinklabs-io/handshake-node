@@ -6,6 +6,7 @@ package netsync
 
 import (
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -217,13 +218,13 @@ func limitAdd(m map[chainhash.Hash]struct{}, hash chainhash.Hash, limit int) {
 // notifications and relays announcements of new blocks to peers.
 type SyncManager struct {
 	peerNotifier   PeerNotifier
-	started        int32
-	shutdown       int32
+	started        atomic.Int32
+	shutdown       atomic.Int32
 	chain          *blockchain.BlockChain
 	txMemPool      *mempool.TxPool
 	chainParams    *chaincfg.Params
 	progressLogger *blockProgressLogger
-	msgChan        chan interface{}
+	msgChan        chan any
 	wg             sync.WaitGroup
 	quit           chan struct{}
 
@@ -563,7 +564,7 @@ func (sm *SyncManager) isSyncCandidate(peer *peerpkg.Peer) bool {
 // also starts syncing if needed.  It is invoked from the syncHandler goroutine.
 func (sm *SyncManager) handleNewPeerMsg(peer *peerpkg.Peer) {
 	// Ignore if in the process of shutting down.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 
@@ -589,7 +590,7 @@ func (sm *SyncManager) handleNewPeerMsg(peer *peerpkg.Peer) {
 // the current time, and disconnecting the peer if we stalled before reaching
 // their highest advertised block.
 func (sm *SyncManager) handleStallSample() {
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 	for peer, state := range sm.peerStates {
@@ -636,11 +637,7 @@ func (sm *SyncManager) shouldDCStalledSyncPeer() bool {
 	startHeight := sm.syncPeer.StartingHeight()
 
 	var peerHeight int32
-	if lastBlock > startHeight {
-		peerHeight = lastBlock
-	} else {
-		peerHeight = startHeight
-	}
+	peerHeight = max(lastBlock, startHeight)
 
 	// If we've stalled out yet the sync peer reports having more blocks for
 	// us we will disconnect them. This allows us at tip to not disconnect
@@ -1256,10 +1253,7 @@ func (sm *SyncManager) handleHeadersMsg(hmsg *headersMsg) {
 	}
 
 	bestHash, bestHeight := sm.chain.BestHeader()
-	targetHeaderHeight := peer.LastBlock()
-	if bestHeight > targetHeaderHeight {
-		targetHeaderHeight = bestHeight
-	}
+	targetHeaderHeight := max(bestHeight, peer.LastBlock())
 	sm.progressLogger.LogHeaderProgress(
 		numHeaders, bestHeight, targetHeaderHeight,
 	)
@@ -1398,7 +1392,7 @@ func (sm *SyncManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 		// two outputs where one is some form of "pay-to-somebody-else"
 		// and the other is a change output.
 		prevOut := wire.OutPoint{Hash: invVect.Hash}
-		for i := uint32(0); i < 2; i++ {
+		for i := range uint32(2) {
 			prevOut.Index = i
 			entry, err := sm.chain.FetchUtxoEntry(prevOut)
 			if err != nil {
@@ -1438,8 +1432,8 @@ func (sm *SyncManager) handleInvMsg(imsg *invMsg) {
 	// not be one.
 	lastBlock := -1
 	invVects := imsg.inv.InvVects()
-	for i := len(invVects) - 1; i >= 0; i-- {
-		if invVects[i].Type == wire.InvTypeBlock {
+	for i, invVect := range slices.Backward(invVects) {
+		if invVect.Type == wire.InvTypeBlock {
 			lastBlock = i
 			break
 		}
@@ -1913,7 +1907,7 @@ func (sm *SyncManager) handleBlockchainNotification(notification *blockchain.Not
 // NewPeer informs the sync manager of a newly active peer.
 func (sm *SyncManager) NewPeer(peer *peerpkg.Peer) {
 	// Ignore if we are shutting down.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 	sm.msgChan <- &newPeerMsg{peer: peer}
@@ -1924,7 +1918,7 @@ func (sm *SyncManager) NewPeer(peer *peerpkg.Peer) {
 // processed.
 func (sm *SyncManager) QueueTx(tx *hnsutil.Tx, peer *peerpkg.Peer, done chan struct{}) {
 	// Don't accept more transactions if we're shutting down.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		done <- struct{}{}
 		return
 	}
@@ -1936,7 +1930,7 @@ func (sm *SyncManager) QueueTx(tx *hnsutil.Tx, peer *peerpkg.Peer, done chan str
 func (sm *SyncManager) QueueCoinbaseProof(hash *chainhash.Hash,
 	peer *peerpkg.Peer) {
 
-	if atomic.LoadInt32(&sm.shutdown) != 0 || hash == nil {
+	if sm.shutdown.Load() != 0 || hash == nil {
 		return
 	}
 
@@ -1948,7 +1942,7 @@ func (sm *SyncManager) QueueCoinbaseProof(hash *chainhash.Hash,
 // processed.
 func (sm *SyncManager) QueueBlock(block *hnsutil.Block, peer *peerpkg.Peer, done chan struct{}) {
 	// Don't accept more blocks if we're shutting down.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		done <- struct{}{}
 		return
 	}
@@ -1960,7 +1954,7 @@ func (sm *SyncManager) QueueBlock(block *hnsutil.Block, peer *peerpkg.Peer, done
 func (sm *SyncManager) QueueInv(inv *wire.HnsMsgInv, peer *peerpkg.Peer) {
 	// No channel handling here because peers do not need to block on inv
 	// messages.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 
@@ -1972,7 +1966,7 @@ func (sm *SyncManager) QueueInv(inv *wire.HnsMsgInv, peer *peerpkg.Peer) {
 func (sm *SyncManager) QueueHeaders(headers *wire.HnsMsgHeaders, peer *peerpkg.Peer) {
 	// No channel handling here because peers do not need to block on
 	// headers messages.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 
@@ -1984,7 +1978,7 @@ func (sm *SyncManager) QueueHeaders(headers *wire.HnsMsgHeaders, peer *peerpkg.P
 func (sm *SyncManager) QueueNotFound(notFound *wire.HnsMsgNotFound, peer *peerpkg.Peer) {
 	// No channel handling here because peers do not need to block on
 	// reject messages.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 
@@ -1994,7 +1988,7 @@ func (sm *SyncManager) QueueNotFound(notFound *wire.HnsMsgNotFound, peer *peerpk
 // DonePeer informs the blockmanager that a peer has disconnected.
 func (sm *SyncManager) DonePeer(peer *peerpkg.Peer) {
 	// Ignore if we are shutting down.
-	if atomic.LoadInt32(&sm.shutdown) != 0 {
+	if sm.shutdown.Load() != 0 {
 		return
 	}
 
@@ -2004,7 +1998,7 @@ func (sm *SyncManager) DonePeer(peer *peerpkg.Peer) {
 // Start begins the core block handler which processes block and inv messages.
 func (sm *SyncManager) Start() {
 	// Already started?
-	if atomic.AddInt32(&sm.started, 1) != 1 {
+	if sm.started.Add(1) != 1 {
 		return
 	}
 
@@ -2016,7 +2010,7 @@ func (sm *SyncManager) Start() {
 // Stop gracefully shuts down the sync manager by stopping all asynchronous
 // handlers and waiting for them to finish.
 func (sm *SyncManager) Stop() error {
-	if atomic.AddInt32(&sm.shutdown, 1) != 1 {
+	if sm.shutdown.Add(1) != 1 {
 		log.Warnf("Sync manager is already in the process of " +
 			"shutting down")
 		return nil
@@ -2078,7 +2072,7 @@ func New(config *Config) (*SyncManager, error) {
 		requestedProofs:            make(map[chainhash.Hash]struct{}),
 		peerStates:                 make(map[*peerpkg.Peer]*peerSyncState),
 		progressLogger:             newBlockProgressLogger("Processed", log),
-		msgChan:                    make(chan interface{}, config.MaxPeers*3),
+		msgChan:                    make(chan any, config.MaxPeers*3),
 		quit:                       make(chan struct{}),
 		feeEstimator:               config.FeeEstimator,
 	}

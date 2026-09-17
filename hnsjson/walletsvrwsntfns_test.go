@@ -23,17 +23,17 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		newNtfn      func() (interface{}, error)
-		staticNtfn   func() interface{}
+		newNtfn      func() (any, error)
+		staticNtfn   func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "accountbalance",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("accountbalance", "acct", 1.25, true)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewAccountBalanceNtfn("acct", 1.25, true)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"accountbalance","params":["acct",1.25,true],"id":null}`,
@@ -45,10 +45,10 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "btcdconnected",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("btcdconnected", true)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewBtcdConnectedNtfn(true)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"btcdconnected","params":[true],"id":null}`,
@@ -58,10 +58,10 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "walletlockstate",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("walletlockstate", true)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				return hnsjson.NewWalletLockStateNtfn(true)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"walletlockstate","params":[true],"id":null}`,
@@ -71,10 +71,10 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 		},
 		{
 			name: "newtx",
-			newNtfn: func() (interface{}, error) {
+			newNtfn: func() (any, error) {
 				return hnsjson.NewCmd("newtx", "acct", `{"account":"acct","address":"1Address","category":"send","amount":1.5,"bip125-replaceable":"unknown","fee":0.0001,"confirmations":1,"trusted":true,"txid":"456","walletconflicts":[],"time":12345678,"timereceived":12345876,"vout":789,"otheraccount":"otheracct"}`)
 			},
-			staticNtfn: func() interface{} {
+			staticNtfn: func() any {
 				result := hnsjson.ListTransactionsResult{
 					Abandoned:         false,
 					Account:           "acct",

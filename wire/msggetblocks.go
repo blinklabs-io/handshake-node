@@ -76,7 +76,7 @@ func (msg *MsgGetBlocks) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding
 	// reduce the number of allocations.
 	locatorHashes := make([]chainhash.Hash, count)
 	msg.BlockLocatorHashes = make([]*chainhash.Hash, 0, count)
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		hash := &locatorHashes[i]
 		_, err := io.ReadFull(r, hash[:])
 		if err != nil {

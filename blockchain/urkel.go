@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
@@ -250,10 +251,7 @@ func (b urkelBits) has(key []byte, depth int) bool {
 func (b urkelBits) count(key []byte, depth int) int {
 	remainingPrefix := b.size
 	remainingKey := len(key)*8 - depth
-	limit := remainingPrefix
-	if remainingKey < limit {
-		limit = remainingKey
-	}
+	limit := min(remainingKey, remainingPrefix)
 
 	var matched int
 	for matched < limit {
@@ -273,10 +271,7 @@ func (b urkelBits) collide(key []byte, depth int) urkelBits {
 func (b urkelBits) countFrom(index int, key []byte, depth int) int {
 	remainingPrefix := b.size - index
 	remainingKey := len(key)*8 - depth
-	limit := remainingPrefix
-	if remainingKey < limit {
-		limit = remainingKey
-	}
+	limit := min(remainingKey, remainingPrefix)
 
 	var matched int
 	for matched < limit {
@@ -301,7 +296,7 @@ func (b urkelBits) slice(start, end int) urkelBits {
 	out := urkelBits{
 		size: size,
 	}
-	for i := 0; i < size; i++ {
+	for i := range size {
 		if b.get(start+i) != 0 {
 			urkelSetBit(out.data[:], i)
 		}
@@ -402,7 +397,7 @@ func DecodeUrkelProof(serialized []byte) (*UrkelProof, error) {
 	offset += bitMapSize
 
 	proof.nodes = make([]urkelProofNode, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		node := urkelProofNode{}
 		if urkelHasBit(bitMap, i) != 0 {
 			var err error
@@ -677,8 +672,7 @@ func (p *UrkelProof) Verify(root, key chainhash.Hash) ([]byte, bool, error) {
 	}
 
 	depth := p.depth
-	for i := len(p.nodes) - 1; i >= 0; i-- {
-		node := p.nodes[i]
+	for _, node := range slices.Backward(p.nodes) {
 		if depth < node.prefix.size+1 {
 			return nil, false, errors.New("urkel proof depth underflow")
 		}

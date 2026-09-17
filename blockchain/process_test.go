@@ -24,7 +24,7 @@ func chainedHeaders(parent *wire.BlockHeader, chainParams *chaincfg.Params,
 	headers := make([]*wire.BlockHeader, 0, numHeaders)
 	tip := parent
 
-	for i := 0; i < numHeaders; i++ {
+	for i := range numHeaders {
 		blockHeight := parentHeight + int32(i) + 1
 
 		// Use a timestamp that is one second after the previous block unless

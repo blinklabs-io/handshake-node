@@ -565,8 +565,8 @@ func encodeDomainName(w io.Writer, name string) error {
 	trimmed := strings.TrimSuffix(name, ".")
 	var total int
 	if trimmed != "" {
-		labels := strings.Split(trimmed, ".")
-		for _, label := range labels {
+		labels := strings.SplitSeq(trimmed, ".")
+		for label := range labels {
 			if len(label) == 0 {
 				return messageError("encodeDomainName",
 					"empty label in name")
@@ -603,7 +603,7 @@ func domainNameSerializeSize(name string) int {
 		return 1 // just the terminator
 	}
 	n := 1 // terminator
-	for _, label := range strings.Split(trimmed, ".") {
+	for label := range strings.SplitSeq(trimmed, ".") {
 		n += 1 + len(label)
 	}
 	return n

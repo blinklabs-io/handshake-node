@@ -159,7 +159,7 @@ type GetTransactionResult struct {
 }
 
 type ScanningOrFalse struct {
-	Value interface{}
+	Value any
 }
 
 type ScanProgress struct {
@@ -174,7 +174,7 @@ func (h ScanningOrFalse) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface
 func (h *ScanningOrFalse) UnmarshalJSON(data []byte) error {
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (h *ScanningOrFalse) UnmarshalJSON(data []byte) error {
 	switch v := unmarshalled.(type) {
 	case bool:
 		h.Value = v
-	case map[string]interface{}:
+	case map[string]any:
 		h.Value = ScanProgress{
 			Duration: int(v["duration"].(float64)),
 			Progress: v["progress"].(float64),
