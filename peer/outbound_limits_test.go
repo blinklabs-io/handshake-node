@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,10 +110,7 @@ func (c *partialWriteConn) Write(data []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.writes++
-	written := len(data)
-	if written > c.maxChunk {
-		written = c.maxChunk
-	}
+	written := min(len(data), c.maxChunk)
 	c.written = append(c.written, data[:written]...)
 	return written, nil
 }
@@ -159,7 +155,7 @@ func startOutboundLimitTestPeerWithConfig(conn net.Conn, cfg Config) *Peer {
 	p := newPeerBase(&cfg, true)
 	p.conn = conn
 	p.addr = conn.RemoteAddr().String()
-	atomic.StoreInt32(&p.connected, 1)
+	p.connected.Store(1)
 	go p.queueHandler()
 	go p.outHandler()
 	return p
@@ -267,7 +263,7 @@ func TestOutboundQueueExactSerializedByteBoundary(t *testing.T) {
 	p.maxQueuedBytes = 2 * pingBytes
 	p.conn = conn
 	p.addr = conn.RemoteAddr().String()
-	atomic.StoreInt32(&p.connected, 1)
+	p.connected.Store(1)
 	go p.queueHandler()
 	go p.outHandler()
 
@@ -323,10 +319,10 @@ func TestValidSmallResponseBatchesRemainQueued(t *testing.T) {
 	}
 
 	p.QueueMessage(&wire.HnsMsgMerkleBlock{}, nil)
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		p.QueueMessage(&wire.HnsMsgTx{}, nil)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p.QueueMessage(&wire.HnsMsgProof{Proof: make([]byte, 64)}, nil)
 	}
 	wantBytes := outboundLimitTestMessageBytes(t, wire.NewHnsMsgPing(0)) +
@@ -406,7 +402,7 @@ func TestSaturatedPeerDoesNotBlockOtherPeerPreparation(t *testing.T) {
 		}, true)
 		p.conn = conn
 		p.addr = address
-		atomic.StoreInt32(&p.connected, 1)
+		p.connected.Store(1)
 		return p
 	}
 	drainPeer := func(p *Peer) {
@@ -502,7 +498,7 @@ func TestRejectedLocatorRequestDoesNotPoisonDuplicateFilter(t *testing.T) {
 			}, true)
 			p.conn = conn
 			p.addr = conn.RemoteAddr().String()
-			atomic.StoreInt32(&p.connected, 1)
+			p.connected.Store(1)
 			if err := p.TryQueueMessage(wire.NewHnsMsgPing(1), nil); err != nil {
 				t.Fatalf("fill peer queue: %v", err)
 			}
@@ -544,11 +540,11 @@ func TestOutboundInventoryQueueBound(t *testing.T) {
 	p.flagsMtx.Lock()
 	p.versionKnown = true
 	p.flagsMtx.Unlock()
-	atomic.StoreInt32(&p.connected, 1)
+	p.connected.Store(1)
 	go p.queueHandler()
 	go p.outHandler()
 
-	for i := byte(0); i < 3; i++ {
+	for i := range byte(3) {
 		hash := chaincfg.RegressionNetParams.GenesisHash
 		copyHash := *hash
 		copyHash[0] = i
@@ -580,14 +576,14 @@ func TestOutboundInventoryDeduplicatesPendingAnnouncements(t *testing.T) {
 	p.flagsMtx.Lock()
 	p.versionKnown = true
 	p.flagsMtx.Unlock()
-	atomic.StoreInt32(&p.connected, 1)
+	p.connected.Store(1)
 	go p.queueHandler()
 	go p.outHandler()
 
 	inv := wire.NewInvVect(
 		wire.InvTypeTx, chaincfg.RegressionNetParams.GenesisHash,
 	)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p.QueueInventory(inv)
 	}
 	waitForOutboundQueueState(t, p, 0, 1,
@@ -737,7 +733,7 @@ func TestPerPeerDataQueueReservesMandatoryControlMessageSlot(t *testing.T) {
 	if dataMessages != 4 {
 		t.Fatalf("ordinary message capacity = %d, want 4", dataMessages)
 	}
-	for i := 0; i < dataMessages; i++ {
+	for i := range dataMessages {
 		if err := p.TryQueueMessage(&wire.HnsMsgHeaders{}, nil); err != nil {
 			t.Fatalf("queue data message %d: %v", i, err)
 		}
@@ -951,7 +947,7 @@ func TestBrontideTransientCopiesAreQueueAccounted(t *testing.T) {
 	p.SetBrontideConnection(true)
 	p.conn = conn
 	p.addr = conn.RemoteAddr().String()
-	atomic.StoreInt32(&p.connected, 1)
+	p.connected.Store(1)
 	go p.queueHandler()
 	go p.outHandler()
 
@@ -987,7 +983,7 @@ func TestMixedOutboundEnqueueMakesProgress(t *testing.T) {
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
@@ -1022,7 +1018,7 @@ func TestMixedOutboundEnqueueMakesProgress(t *testing.T) {
 }
 
 func TestConcurrentEnqueueAndDisconnectReleasesAccounting(t *testing.T) {
-	for iteration := 0; iteration < 20; iteration++ {
+	for iteration := range 20 {
 		conn := newBlockingWriteConn()
 		budget := NewOutboundQueueBudget(maxQueuedOutboundBytes)
 		p := startOutboundLimitTestPeer(conn, time.Hour, budget)
@@ -1035,13 +1031,11 @@ func TestConcurrentEnqueueAndDisconnectReleasesAccounting(t *testing.T) {
 
 		start := make(chan struct{})
 		var wg sync.WaitGroup
-		for i := 0; i < 64; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 64 {
+			wg.Go(func() {
 				<-start
 				p.QueueMessage(&wire.HnsMsgHeaders{}, nil)
-			}()
+			})
 		}
 		close(start)
 		p.Disconnect()

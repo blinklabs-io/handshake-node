@@ -84,7 +84,7 @@ func TestCipherStateRotatesAtHsdInterval(t *testing.T) {
 	send := newTestCipher(t)
 	recv := newTestCipher(t)
 
-	for i := 0; i < RotationInterval; i++ {
+	for i := range RotationInterval {
 		plaintext := []byte{byte(i)}
 		ciphertext, tag, err := send.Encrypt(plaintext, nil)
 		if err != nil {

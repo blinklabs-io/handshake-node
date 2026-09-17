@@ -20,7 +20,7 @@ func TestBtcdExtCustomResults(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		result   interface{}
+		result   any
 		expected string
 	}{
 		{

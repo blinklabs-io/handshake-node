@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"runtime"
@@ -101,9 +102,7 @@ func (c *p2pMessageCounters) snapshot() map[p2pMessageKey]uint64 {
 	defer c.mtx.RUnlock()
 
 	result := make(map[p2pMessageKey]uint64, len(c.counts))
-	for key, count := range c.counts {
-		result[key] = count
-	}
+	maps.Copy(result, c.counts)
 	return result
 }
 
@@ -160,16 +159,13 @@ func (m *metricsServer) Start() {
 		return
 	}
 	for _, listener := range m.listeners {
-		listener := listener
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
+		m.wg.Go(func() {
 			err := m.httpServer.Serve(listener)
 			if err != nil && err != http.ErrServerClosed {
 				srvrLog.Warnf("Metrics listener %s stopped: %v",
 					listener.Addr(), err)
 			}
-		}()
+		})
 		srvrLog.Infof("Prometheus metrics listening on %s", listener.Addr())
 	}
 }

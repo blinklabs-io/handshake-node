@@ -19,7 +19,7 @@ type recordingLogger struct {
 	entries []string
 }
 
-func (l *recordingLogger) append(format string, params ...interface{}) {
+func (l *recordingLogger) append(format string, params ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = append(l.entries, fmt.Sprintf(format, params...))
@@ -34,24 +34,24 @@ func (l *recordingLogger) last() string {
 	return l.entries[len(l.entries)-1]
 }
 
-func (l *recordingLogger) Tracef(string, ...interface{}) {}
-func (l *recordingLogger) Debugf(string, ...interface{}) {}
-func (l *recordingLogger) Infof(format string, params ...interface{}) {
+func (l *recordingLogger) Tracef(string, ...any) {}
+func (l *recordingLogger) Debugf(string, ...any) {}
+func (l *recordingLogger) Infof(format string, params ...any) {
 	l.append(format, params...)
 }
-func (l *recordingLogger) Warnf(string, ...interface{})     {}
-func (l *recordingLogger) Errorf(string, ...interface{})    {}
-func (l *recordingLogger) Criticalf(string, ...interface{}) {}
-func (l *recordingLogger) Trace(...interface{})             {}
-func (l *recordingLogger) Debug(...interface{})             {}
-func (l *recordingLogger) Info(v ...interface{}) {
+func (l *recordingLogger) Warnf(string, ...any)     {}
+func (l *recordingLogger) Errorf(string, ...any)    {}
+func (l *recordingLogger) Criticalf(string, ...any) {}
+func (l *recordingLogger) Trace(...any)             {}
+func (l *recordingLogger) Debug(...any)             {}
+func (l *recordingLogger) Info(v ...any) {
 	l.append(strings.Repeat("%v ", len(v)), v...)
 }
-func (l *recordingLogger) Warn(...interface{})     {}
-func (l *recordingLogger) Error(...interface{})    {}
-func (l *recordingLogger) Critical(...interface{}) {}
-func (l *recordingLogger) Level() btclog.Level     { return btclog.LevelInfo }
-func (l *recordingLogger) SetLevel(btclog.Level)   {}
+func (l *recordingLogger) Warn(...any)           {}
+func (l *recordingLogger) Error(...any)          {}
+func (l *recordingLogger) Critical(...any)       {}
+func (l *recordingLogger) Level() btclog.Level   { return btclog.LevelInfo }
+func (l *recordingLogger) SetLevel(btclog.Level) {}
 
 func TestLogHeaderProgressIncludesIBDStats(t *testing.T) {
 	logger := &recordingLogger{}

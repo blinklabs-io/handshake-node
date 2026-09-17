@@ -50,7 +50,7 @@ func newConfig(nodeDir, certFile, keyFile string, extra []string,
 		var err error
 		nodePath, err = execPath()
 		if err != nil {
-			nodePath = "handshake-node"
+			return nil, err
 		}
 	}
 

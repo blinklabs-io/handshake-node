@@ -105,7 +105,7 @@ const (
 type jsonRequest struct {
 	id             uint64
 	method         string
-	cmd            interface{}
+	cmd            any
 	marshalledJSON []byte
 	responseChan   chan *Response
 }
@@ -123,7 +123,7 @@ type jsonRequest struct {
 // the returned future will block until the result is available if it's not
 // already.
 type Client struct {
-	id uint64 // atomic, so must stay 64-bit aligned
+	id atomic.Uint64 // atomic, so must stay 64-bit aligned
 
 	// config holds the connection configuration associated with this client.
 	config *ConnConfig
@@ -186,7 +186,7 @@ type Client struct {
 // this function should be used to ensure the ID is unique amongst all requests
 // being made.
 func (c *Client) NextID() uint64 {
-	return atomic.AddUint64(&c.id, 1)
+	return c.id.Add(1)
 }
 
 // addRequest associates the passed jsonRequest with its id.  This allows the
@@ -266,7 +266,7 @@ func (c *Client) removeAllRequests() {
 // trackRegisteredNtfns examines the passed command to see if it is one of
 // the notification commands and updates the notification state that is used
 // to automatically re-establish registered notifications on reconnects.
-func (c *Client) trackRegisteredNtfns(cmd interface{}) {
+func (c *Client) trackRegisteredNtfns(cmd any) {
 	// Nothing to do if the caller is not interested in notifications.
 	if c.ntfnHandlers == nil {
 		return
@@ -347,7 +347,7 @@ func (r FutureGetBulkResult) Receive() (BulkResult, error) {
 // IndividualBulkResult represents one result
 // from a bulk json rpc api
 type IndividualBulkResult struct {
-	Result interface{}       `json:"result"`
+	Result any               `json:"result"`
 	Error  *hnsjson.RPCError `json:"error"`
 	Id     uint64            `json:"id"`
 }
@@ -762,10 +762,7 @@ out:
 				// retries so there is a backoff up to a max
 				// of 1 minute.
 				scaledInterval := connectionRetryInterval.Nanoseconds() * c.retryCount
-				scaledDuration := time.Duration(scaledInterval)
-				if scaledDuration > time.Minute {
-					scaledDuration = time.Minute
-				}
+				scaledDuration := min(time.Duration(scaledInterval), time.Minute)
 				log.Infof("Retrying connection to %s in "+
 					"%s", c.config.Host, scaledDuration)
 				time.Sleep(scaledDuration)
@@ -827,7 +824,7 @@ func (c *Client) handleSendPostMessage(jReq *jsonRequest) {
 	}
 
 	tries := 10
-	for i := 0; i < tries; i++ {
+	for i := range tries {
 		var httpReq *http.Request
 
 		bodyReader := bytes.NewReader(jReq.marshalledJSON)
@@ -864,10 +861,7 @@ func (c *Client) handleSendPostMessage(jReq *jsonRequest) {
 		lastErr = err
 
 		// Backoff sleep otherwise.
-		backoff = requestRetryInterval * time.Duration(i+1)
-		if backoff > time.Minute {
-			backoff = time.Minute
-		}
+		backoff = min(requestRetryInterval*time.Duration(i+1), time.Minute)
 		log.Debugf("Failed command [%s] with id %d attempt %d."+
 			" Retrying in %v... \n", jReq.method, jReq.id,
 			i, backoff)
@@ -1057,7 +1051,7 @@ func (c *Client) sendRequest(jReq *jsonRequest) {
 // response channel on which the reply will be delivered at some point in the
 // future.  It handles both websocket and HTTP POST mode depending on the
 // configuration of the client.
-func (c *Client) SendCmd(cmd interface{}) chan *Response {
+func (c *Client) SendCmd(cmd any) chan *Response {
 	rpcVersion := hnsjson.RpcVersion1
 	if c.batch {
 		rpcVersion = hnsjson.RpcVersion2
@@ -1093,7 +1087,7 @@ func (c *Client) SendCmd(cmd interface{}) chan *Response {
 // sendCmdAndWait sends the passed command to the associated server, waits
 // for the reply, and returns the result from it.  It will return the error
 // field in the reply if there is one.
-func (c *Client) sendCmdAndWait(cmd interface{}) (interface{}, error) {
+func (c *Client) sendCmdAndWait(cmd any) (any, error) {
 	// Marshal the command to JSON-RPC, send it to the connected server, and
 	// wait for a response on the returned channel.
 	return ReceiveFuture(c.SendCmd(cmd))
@@ -1641,10 +1635,7 @@ func (c *Client) Connect(tries int) error {
 		var wsConn *websocket.Conn
 		wsConn, err = dial(c.config)
 		if err != nil {
-			backoff = connectionRetryInterval * time.Duration(i+1)
-			if backoff > time.Minute {
-				backoff = time.Minute
-			}
+			backoff = min(connectionRetryInterval*time.Duration(i+1), time.Minute)
 			time.Sleep(backoff)
 			continue
 		}

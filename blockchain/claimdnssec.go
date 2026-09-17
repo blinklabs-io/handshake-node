@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 
@@ -365,8 +366,7 @@ func canonicalEd25519Point(encoded []byte) bool {
 		prime[i] = 0xff
 	}
 	prime[len(prime)-1] = 0x7f
-	for i := len(encoded) - 1; i >= 0; i-- {
-		value := encoded[i]
+	for i, value := range slices.Backward(encoded) {
 		if i == len(encoded)-1 {
 			value &= 0x7f
 		}
@@ -394,7 +394,7 @@ func canonicalEd448Point(encoded []byte) bool {
 	// Reject y >= p, where p = 2^448 - 2^224 - 1. The sign bit is in the
 	// otherwise-unused high byte and is therefore outside this comparison.
 	prime := [cryptobined448.PublicKeySize]byte{}
-	for i := 0; i < len(prime)-1; i++ {
+	for i := range len(prime) - 1 {
 		prime[i] = 0xff
 	}
 	prime[28] = 0xfe

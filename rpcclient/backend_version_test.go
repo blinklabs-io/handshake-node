@@ -64,7 +64,6 @@ func TestParseBitcoindVersion(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			version := parseBitcoindVersion(tc.rpcVersion)
@@ -101,7 +100,6 @@ func TestParseBtcdVersion(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			version := parseBtcdVersion(tc.rpcVersion)
@@ -143,7 +141,6 @@ func TestParseGetInfoBackendVersion(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			version := parseGetInfoBackendVersion(tc.rpcVersion,

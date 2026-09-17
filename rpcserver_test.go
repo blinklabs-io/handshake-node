@@ -14,11 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,18 +111,15 @@ func TestChainMutationRPCAuthorization(t *testing.T) {
 	// rejected before dispatch.
 	originalHandlers := make(map[string]commandHandler, len(methods))
 	for _, method := range methods {
-		method := method
 		originalHandlers[method] = rpcHandlers[method]
-		rpcHandlers[method] = func(*rpcServer, interface{}, <-chan struct{}) (
-			interface{}, error) {
+		rpcHandlers[method] = func(*rpcServer, any, <-chan struct{}) (
+			any, error) {
 
 			return "authorized:" + method, nil
 		}
 	}
 	defer func() {
-		for method, handler := range originalHandlers {
-			rpcHandlers[method] = handler
-		}
+		maps.Copy(rpcHandlers, originalHandlers)
 	}()
 
 	originalCfg := cfg
@@ -379,8 +378,8 @@ func TestRPCServerStopClosesHijackedHTTPConnection(t *testing.T) {
 
 	originalHandler := rpcHandlers["help"]
 	handlerStarted := make(chan struct{})
-	rpcHandlers["help"] = func(_ *rpcServer, _ interface{},
-		closeChan <-chan struct{}) (interface{}, error) {
+	rpcHandlers["help"] = func(_ *rpcServer, _ any,
+		closeChan <-chan struct{}) (any, error) {
 
 		close(handlerStarted)
 		<-closeChan
@@ -431,7 +430,7 @@ func TestRPCServerStopClosesHijackedHTTPConnection(t *testing.T) {
 	})
 
 	rpcRequest, err := hnsjson.NewRequest(hnsjson.RpcVersion1, 1, "help",
-		[]interface{}{})
+		[]any{})
 	if err != nil {
 		t.Fatalf("create help request: %v", err)
 	}
@@ -626,7 +625,7 @@ func TestRPCServerStopDrainsWebsocketHandlers(t *testing.T) {
 	}()
 
 	request, err := hnsjson.NewRequest(hnsjson.RpcVersion1, 1, "session",
-		[]interface{}{})
+		[]any{})
 	if err != nil {
 		t.Fatalf("create session request: %v", err)
 	}
@@ -673,7 +672,7 @@ func testRPCAuthHash(user, pass string) [sha256.Size]byte {
 func chainMutationAuthTestRequest(t *testing.T, method string) *hnsjson.Request {
 	t.Helper()
 	request, err := hnsjson.NewRequest(hnsjson.RpcVersion1, 1, method,
-		[]interface{}{strings.Repeat("0", chainhash.MaxHashStringSize)})
+		[]any{strings.Repeat("0", chainhash.MaxHashStringSize)})
 	if err != nil {
 		t.Fatalf("create %s request: %v", method, err)
 	}
@@ -1214,11 +1213,11 @@ func (m *testRPCConnManager) NetTotals() (uint64, uint64)                { retur
 func (m *testRPCConnManager) ConnectedPeers() []rpcserverPeer            { return nil }
 func (m *testRPCConnManager) PersistentPeers() []rpcserverPeer           { return nil }
 func (m *testRPCConnManager) BroadcastMessage(msg wire.HandshakeMessage) {}
-func (m *testRPCConnManager) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
+func (m *testRPCConnManager) AddRebroadcastInventory(iv *wire.InvVect, data any) {
 }
-func (m *testRPCConnManager) RelayInventory(iv *wire.InvVect, data interface{}) {}
-func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc)          {}
-func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2               { return nil }
+func (m *testRPCConnManager) RelayInventory(iv *wire.InvVect, data any) {}
+func (m *testRPCConnManager) RelayTransactions(txns []*mempool.TxDesc)  {}
+func (m *testRPCConnManager) NodeAddresses() []*wire.NetAddressV2       { return nil }
 func (m *testRPCConnManager) LocalAddresses() []rpcserverLocalAddress {
 	return m.localAddresses
 }
@@ -1428,12 +1427,7 @@ func solveGBTTestBlock(t *testing.T, msgBlock *wire.MsgBlock) {
 }
 
 func hasString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 
 func requireMutableField(t *testing.T, fields []string, want string) {
@@ -1879,7 +1873,6 @@ func TestHandleTestMempoolAcceptFailDecode(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -2104,7 +2097,6 @@ func TestValidateFeeRate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -2182,7 +2174,6 @@ func TestHandleTestMempoolAcceptFees(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)

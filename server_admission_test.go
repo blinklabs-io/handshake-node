@@ -220,7 +220,7 @@ func TestInboundAdmissionLimitsSingleIP(t *testing.T) {
 	}
 
 	clients := make([]net.Conn, 0, defaultMaxInboundPerIP)
-	for i := 0; i < defaultMaxInboundPerIP; i++ {
+	for i := range defaultMaxInboundPerIP {
 		client := startStalledInboundPeerFrom(t, s,
 			&net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 12038 + i})
 		t.Cleanup(func() { _ = client.Close() })

@@ -90,7 +90,6 @@ func TestHandshakeDeploymentsMatchHsd(t *testing.T) {
 	}
 
 	for _, params := range []*Params{&MainNetParams, &RegressionNetParams} {
-		params := params
 		t.Run(params.Name, func(t *testing.T) {
 			t.Parallel()
 

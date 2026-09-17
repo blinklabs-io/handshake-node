@@ -15,7 +15,7 @@ func TestProofRequestWindowLimit(t *testing.T) {
 	window := newProofRequestWindow(4)
 	now := time.Unix(1, 0)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !window.allow(now) {
 			t.Fatalf("request %d was rejected below the limit", i+1)
 		}
@@ -43,7 +43,7 @@ func TestProofRequestWindowWeightsPreviousBucket(t *testing.T) {
 	window := newProofRequestWindow(5)
 	start := time.Unix(1, 0)
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if !window.allow(start) {
 			t.Fatalf("initial request %d was rejected", i+1)
 		}
@@ -60,7 +60,7 @@ func TestProofRequestWindowResetsAfterIdlePeriod(t *testing.T) {
 	window := newProofRequestWindow(3)
 	start := time.Unix(1, 0)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if !window.allow(start) {
 			t.Fatalf("request %d was rejected below the limit", i+1)
 		}
@@ -77,14 +77,12 @@ func TestProofRequestWindowConcurrentLimit(t *testing.T) {
 
 	var allowed atomic.Uint32
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 100 {
+		wg.Go(func() {
 			if window.allow(now) {
 				allowed.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

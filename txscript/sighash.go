@@ -139,7 +139,7 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 		txCopy.TxOut = txCopy.TxOut[:idx+1]
 
 		// All but current output get zeroed out.
-		for i := 0; i < idx; i++ {
+		for i := range idx {
 			txCopy.TxOut[i].Value = -1
 			txCopy.TxOut[i].Address = wire.Address{}
 			txCopy.TxOut[i].Covenant = wire.Covenant{}
@@ -155,7 +155,7 @@ func calcSignatureHash(sigScript []byte, hashType SigHashType, tx *wire.MsgTx, i
 	case SigHashSingleReverse:
 		txCopy.TxOut = txCopy.TxOut[:idx+1]
 		outputIdx := len(tx.TxOut) - 1 - idx
-		for i := 0; i < idx; i++ {
+		for i := range idx {
 			txCopy.TxOut[i].Value = -1
 			txCopy.TxOut[i].Address = wire.Address{}
 			txCopy.TxOut[i].Covenant = wire.Covenant{}

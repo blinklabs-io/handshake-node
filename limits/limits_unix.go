@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build !windows && !plan9
-// +build !windows,!plan9
 
 package limits
 
@@ -34,11 +33,7 @@ func SetLimits() error {
 			fileLimitMin)
 		return err
 	}
-	if rLimit.Max < fileLimitWant {
-		rLimit.Cur = rLimit.Max
-	} else {
-		rLimit.Cur = fileLimitWant
-	}
+	rLimit.Cur = min(rLimit.Max, fileLimitWant)
 	err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 	if err != nil {
 		// try min value

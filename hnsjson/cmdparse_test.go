@@ -20,9 +20,9 @@ func TestAssignField(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		dest     interface{}
-		src      interface{}
-		expected interface{}
+		dest     any
+		src      any
+		expected any
 	}{
 		{
 			name:     "same types",
@@ -33,7 +33,7 @@ func TestAssignField(t *testing.T) {
 		{
 			name: "same types - more source pointers",
 			dest: int8(0),
-			src: func() interface{} {
+			src: func() any {
 				i := int8(100)
 				return &i
 			}(),
@@ -41,7 +41,7 @@ func TestAssignField(t *testing.T) {
 		},
 		{
 			name: "same types - more dest pointers",
-			dest: func() interface{} {
+			dest: func() any {
 				i := int8(0)
 				return &i
 			}(),
@@ -51,7 +51,7 @@ func TestAssignField(t *testing.T) {
 		{
 			name: "convertible types - more source pointers",
 			dest: int16(0),
-			src: func() interface{} {
+			src: func() any {
 				i := int8(100)
 				return &i
 			}(),
@@ -59,11 +59,11 @@ func TestAssignField(t *testing.T) {
 		},
 		{
 			name: "convertible types - both pointers",
-			dest: func() interface{} {
+			dest: func() any {
 				i := int8(0)
 				return &i
 			}(),
-			src: func() interface{} {
+			src: func() any {
 				i := int16(100)
 				return &i
 			}(),
@@ -132,7 +132,7 @@ func TestAssignField(t *testing.T) {
 		{
 			name: "convertible types - typecase string -> string",
 			dest: "",
-			src: func() interface{} {
+			src: func() any {
 				type foo string
 				return foo("foo")
 			}(),
@@ -216,8 +216,8 @@ func TestAssignFieldErrors(t *testing.T) {
 
 	tests := []struct {
 		name string
-		dest interface{}
-		src  interface{}
+		dest any
+		src  any
 		err  hnsjson.Error
 	}{
 		{
@@ -353,7 +353,7 @@ func TestAssignFieldErrors(t *testing.T) {
 		dst := reflect.New(reflect.TypeOf(test.dest)).Elem()
 		src := reflect.ValueOf(test.src)
 		err := hnsjson.TstAssignField(1, "testField", dst, src)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
+		if reflect.TypeOf(err) != reflect.TypeFor[hnsjson.Error]() {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%[3]v), "+
 				"want %T", i, test.name, err, test.err)
 			continue
@@ -375,31 +375,31 @@ func TestNewCmdErrors(t *testing.T) {
 	tests := []struct {
 		name   string
 		method string
-		args   []interface{}
+		args   []any
 		err    hnsjson.Error
 	}{
 		{
 			name:   "unregistered command",
 			method: "boguscommand",
-			args:   []interface{}{},
+			args:   []any{},
 			err:    hnsjson.Error{ErrorCode: hnsjson.ErrUnregisteredMethod},
 		},
 		{
 			name:   "too few parameters to command with required + optional",
 			method: "getblock",
-			args:   []interface{}{},
+			args:   []any{},
 			err:    hnsjson.Error{ErrorCode: hnsjson.ErrNumParams},
 		},
 		{
 			name:   "too many parameters to command with no optional",
 			method: "getblockcount",
-			args:   []interface{}{"123"},
+			args:   []any{"123"},
 			err:    hnsjson.Error{ErrorCode: hnsjson.ErrNumParams},
 		},
 		{
 			name:   "incorrect parameter type",
 			method: "getblock",
-			args:   []interface{}{1},
+			args:   []any{1},
 			err:    hnsjson.Error{ErrorCode: hnsjson.ErrInvalidType},
 		},
 	}
@@ -407,7 +407,7 @@ func TestNewCmdErrors(t *testing.T) {
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
 		_, err := hnsjson.NewCmd(test.method, test.args...)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
+		if reflect.TypeOf(err) != reflect.TypeFor[hnsjson.Error]() {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%v), "+
 				"want %T", i, test.name, err, err, test.err)
 			continue
@@ -428,8 +428,8 @@ func TestMarshalCmd(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		id       interface{}
-		cmd      interface{}
+		id       any
+		cmd      any
 		expected string
 	}{
 		{
@@ -481,8 +481,8 @@ func TestMarshalCmdErrors(t *testing.T) {
 
 	tests := []struct {
 		name string
-		id   interface{}
-		cmd  interface{}
+		id   any
+		cmd  any
 		err  hnsjson.Error
 	}{
 		{
@@ -508,7 +508,7 @@ func TestMarshalCmdErrors(t *testing.T) {
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
 		_, err := hnsjson.MarshalCmd(hnsjson.RpcVersion1, test.id, test.cmd)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
+		if reflect.TypeOf(err) != reflect.TypeFor[hnsjson.Error]() {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%v), "+
 				"want %T", i, test.name, err, err, test.err)
 			continue
@@ -577,7 +577,7 @@ func TestUnmarshalCmdErrors(t *testing.T) {
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
 		_, err := hnsjson.UnmarshalCmd(&test.request)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
+		if reflect.TypeOf(err) != reflect.TypeFor[hnsjson.Error]() {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%v), "+
 				"want %T", i, test.name, err, err, test.err)
 			continue

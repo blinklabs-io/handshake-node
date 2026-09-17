@@ -807,7 +807,7 @@ func NewWalletPassphraseChangeCmd(oldPassphrase, newPassphrase string) *WalletPa
 // NOTE: Interpretation of the timestamp value depends upon the specific
 // JSON-RPC command, where it is used.
 type TimestampOrNow struct {
-	Value interface{}
+	Value any
 }
 
 // MarshalJSON implements the json.Marshaler interface for TimestampOrNow
@@ -817,7 +817,7 @@ func (t TimestampOrNow) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface for TimestampOrNow
 func (t *TimestampOrNow) UnmarshalJSON(data []byte) error {
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}
@@ -845,7 +845,7 @@ type ScriptPubKeyAddress struct {
 // ScriptPubKey represents a script (as a string) or an address
 // (as a ScriptPubKeyAddress).
 type ScriptPubKey struct {
-	Value interface{}
+	Value any
 }
 
 // MarshalJSON implements the json.Marshaler interface for ScriptPubKey
@@ -855,7 +855,7 @@ func (s ScriptPubKey) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface for ScriptPubKey
 func (s *ScriptPubKey) UnmarshalJSON(data []byte) error {
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}
@@ -863,7 +863,7 @@ func (s *ScriptPubKey) UnmarshalJSON(data []byte) error {
 	switch v := unmarshalled.(type) {
 	case string:
 		s.Value = v
-	case map[string]interface{}:
+	case map[string]any:
 		s.Value = ScriptPubKeyAddress{Address: v["address"].(string)}
 	default:
 		return fmt.Errorf("invalid scriptPubKey value: %v", unmarshalled)
@@ -881,7 +881,7 @@ func (s *ScriptPubKey) UnmarshalJSON(data []byte) error {
 // The value can be an int to specify the end of the range, or the range
 // itself, as []int{begin, end}.
 type DescriptorRange struct {
-	Value interface{}
+	Value any
 }
 
 // MarshalJSON implements the json.Marshaler interface for DescriptorRange
@@ -891,7 +891,7 @@ func (r DescriptorRange) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface for DescriptorRange
 func (r *DescriptorRange) UnmarshalJSON(data []byte) error {
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}
@@ -899,7 +899,7 @@ func (r *DescriptorRange) UnmarshalJSON(data []byte) error {
 	switch v := unmarshalled.(type) {
 	case float64:
 		r.Value = int(v)
-	case []interface{}:
+	case []any:
 		if len(v) != 2 {
 			return fmt.Errorf("expected [begin,end] integer range, got: %v", unmarshalled)
 		}
@@ -1017,7 +1017,7 @@ type PsbtInput struct {
 
 // PsbtOutput represents an output to include in the PSBT created by the
 // WalletCreateFundedPsbtCmd command.
-type PsbtOutput map[string]interface{}
+type PsbtOutput map[string]any
 
 // NewPsbtOutput returns a new instance of a PSBT output to use with the
 // WalletCreateFundedPsbtCmd command.

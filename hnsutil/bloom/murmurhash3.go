@@ -30,7 +30,7 @@ func MurmurHash3(seed uint32, data []byte) uint32 {
 	numBlocks := dataLen / 4
 
 	// Calculate the hash in 4-byte chunks.
-	for i := uint32(0); i < numBlocks; i++ {
+	for i := range numBlocks {
 		k = binary.LittleEndian.Uint32(data[i*4:])
 		k *= murmurC1
 		k = (k << murmurR1) | (k >> (32 - murmurR1))

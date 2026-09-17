@@ -18,7 +18,7 @@ func TestIsValidIDType(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		id      interface{}
+		id      any
 		isValid bool
 	}{
 		{"int", int(1), true},
@@ -60,7 +60,7 @@ func TestMarshalResponse(t *testing.T) {
 	testID := 1
 	tests := []struct {
 		name     string
-		result   interface{}
+		result   any
 		jsonErr  *hnsjson.RPCError
 		expected []byte
 	}{
@@ -104,7 +104,7 @@ func TestMiscErrors(t *testing.T) {
 
 	// Force an error in NewRequest by giving it a parameter type that is
 	// not supported.
-	_, err := hnsjson.NewRequest(hnsjson.RpcVersion1, nil, "test", []interface{}{make(chan int)})
+	_, err := hnsjson.NewRequest(hnsjson.RpcVersion1, nil, "test", []any{make(chan int)})
 	if err == nil {
 		t.Error("NewRequest: did not receive error")
 		return

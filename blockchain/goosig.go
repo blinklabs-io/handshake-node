@@ -322,10 +322,7 @@ func (d *gooDRBG) generate(size int) []byte {
 	out := make([]byte, 0, size)
 	for len(out) < size {
 		d.v = gooHMAC(d.k, d.v)
-		left := size - len(out)
-		if left > len(d.v) {
-			left = len(d.v)
-		}
+		left := min(size-len(out), len(d.v))
 		out = append(out, d.v[:left]...)
 	}
 	d.update(nil)
@@ -448,7 +445,7 @@ func gooMillerRabin(x *big.Int, key []byte, reps int, force2 bool) bool {
 	prng := newGooDRBG(key, gooPRNGPrimality)
 
 next:
-	for i := 0; i < reps; i++ {
+	for i := range reps {
 		var base *big.Int
 		if i == reps-1 && force2 {
 			base = big.NewInt(2)

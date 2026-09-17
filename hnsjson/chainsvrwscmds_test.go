@@ -25,17 +25,17 @@ func TestChainSvrWsCmds(t *testing.T) {
 	testID := int(1)
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "authenticate",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("authenticate", "user", "pass")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewAuthenticateCmd("user", "pass")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"authenticate","params":["user","pass"],"id":1}`,
@@ -43,10 +43,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifyblocks",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifyblocks")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNotifyBlocksCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"notifyblocks","params":[],"id":1}`,
@@ -54,10 +54,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "stopnotifyblocks",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("stopnotifyblocks")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewStopNotifyBlocksCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"stopnotifyblocks","params":[],"id":1}`,
@@ -65,10 +65,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifynames",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifynames")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNotifyNamesCmd(nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"notifynames","params":[],"id":1}`,
@@ -79,10 +79,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifynames optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifynames", `["example"]`, `["0000000000000000000000000000000000000000000000000000000000000001"]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				names := []string{"example"}
 				nameHashes := []string{"0000000000000000000000000000000000000000000000000000000000000001"}
 				return hnsjson.NewNotifyNamesCmd(&names, &nameHashes)
@@ -95,10 +95,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "stopnotifynames",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("stopnotifynames")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewStopNotifyNamesCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"stopnotifynames","params":[],"id":1}`,
@@ -106,10 +106,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifynewtransactions",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifynewtransactions")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNotifyNewTransactionsCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"notifynewtransactions","params":[],"id":1}`,
@@ -119,10 +119,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifynewtransactions optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifynewtransactions", true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNotifyNewTransactionsCmd(hnsjson.Bool(true))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"notifynewtransactions","params":[true],"id":1}`,
@@ -132,10 +132,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "stopnotifynewtransactions",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("stopnotifynewtransactions")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewStopNotifyNewTransactionsCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"stopnotifynewtransactions","params":[],"id":1}`,
@@ -143,10 +143,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifyreceived",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifyreceived", []string{"1Address"})
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNotifyReceivedCmd([]string{"1Address"})
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"notifyreceived","params":[["1Address"]],"id":1}`,
@@ -156,10 +156,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "stopnotifyreceived",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("stopnotifyreceived", []string{"1Address"})
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewStopNotifyReceivedCmd([]string{"1Address"})
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"stopnotifyreceived","params":[["1Address"]],"id":1}`,
@@ -169,10 +169,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "notifyspent",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("notifyspent", `[{"hash":"123","index":0}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				ops := []hnsjson.OutPoint{{Hash: "123", Index: 0}}
 				return hnsjson.NewNotifySpentCmd(ops)
 			},
@@ -183,10 +183,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "stopnotifyspent",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("stopnotifyspent", `[{"hash":"123","index":0}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				ops := []hnsjson.OutPoint{{Hash: "123", Index: 0}}
 				return hnsjson.NewStopNotifySpentCmd(ops)
 			},
@@ -197,10 +197,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "rescan",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("rescan", "123", `["1Address"]`, `[{"hash":"0000000000000000000000000000000000000000000000000000000000000123","index":0}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				addrs := []string{"1Address"}
 				ops := []hnsjson.OutPoint{{
 					Hash:  "0000000000000000000000000000000000000000000000000000000000000123",
@@ -218,10 +218,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "rescan optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("rescan", "123", `["1Address"]`, `[{"hash":"123","index":0}]`, "456")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				addrs := []string{"1Address"}
 				ops := []hnsjson.OutPoint{{Hash: "123", Index: 0}}
 				return hnsjson.NewRescanCmd("123", addrs, ops, hnsjson.String("456"))
@@ -236,10 +236,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "loadtxfilter",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("loadtxfilter", false, `["1Address"]`, `[{"hash":"0000000000000000000000000000000000000000000000000000000000000123","index":0}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				addrs := []string{"1Address"}
 				ops := []hnsjson.OutPoint{{
 					Hash:  "0000000000000000000000000000000000000000000000000000000000000123",
@@ -256,10 +256,10 @@ func TestChainSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "rescanblocks",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("rescanblocks", `["0000000000000000000000000000000000000000000000000000000000000123"]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				blockhashes := []string{"0000000000000000000000000000000000000000000000000000000000000123"}
 				return hnsjson.NewRescanBlocksCmd(blockhashes)
 			},

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"text/template"
@@ -19,22 +20,20 @@ type ScriptTemplateOption func(*templateConfig)
 
 // templateConfig holds the configuration for the script template.
 type templateConfig struct {
-	params map[string]interface{}
+	params map[string]any
 
 	customFuncs template.FuncMap
 }
 
 // WithScriptTemplateParams adds parameters to the script template.
-func WithScriptTemplateParams(params map[string]interface{}) ScriptTemplateOption {
+func WithScriptTemplateParams(params map[string]any) ScriptTemplateOption {
 	return func(cfg *templateConfig) {
-		for k, v := range params {
-			cfg.params[k] = v
-		}
+		maps.Copy(cfg.params, params)
 	}
 }
 
 // WithCustomTemplateFunc adds a custom function to the template.
-func WithCustomTemplateFunc(name string, fn interface{}) ScriptTemplateOption {
+func WithCustomTemplateFunc(name string, fn any) ScriptTemplateOption {
 	return func(cfg *templateConfig) {
 		cfg.customFuncs[name] = fn
 	}
@@ -58,7 +57,7 @@ func WithCustomTemplateFunc(name string, fn interface{}) ScriptTemplateOption {
 // storing a computed public key.
 func ScriptTemplate(scriptTmpl string, opts ...ScriptTemplateOption) ([]byte, error) {
 	cfg := &templateConfig{
-		params:      make(map[string]interface{}),
+		params:      make(map[string]any),
 		customFuncs: make(template.FuncMap),
 	}
 
@@ -73,9 +72,7 @@ func ScriptTemplate(scriptTmpl string, opts ...ScriptTemplateOption) ([]byte, er
 		"range_iter": rangeIter,
 	}
 
-	for k, v := range cfg.customFuncs {
-		funcMap[k] = v
-	}
+	maps.Copy(funcMap, cfg.customFuncs)
 
 	tmpl, err := template.New("script").Funcs(funcMap).Parse(scriptTmpl)
 	if err != nil {
@@ -219,7 +216,7 @@ func ExampleScriptTemplate() {
 		{{- range $i := range_iter 0 3 }}
 			{{ add 10 $i }} OP_ADD
 		{{- end }}`,
-		WithScriptTemplateParams(map[string]interface{}{
+		WithScriptTemplateParams(map[string]any{
 			"LocalPubkeyHash": localPubkey,
 			"Timeout":         1,
 		}),

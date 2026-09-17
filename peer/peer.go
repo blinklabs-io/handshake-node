@@ -120,7 +120,7 @@ const MinimumBrontideOutboundQueueBudget = (1+brontideTransientCopies)*(wire.Hns
 var (
 	// nodeCount is the total number of peer connections made since startup
 	// and is used to assign an id to a peer.
-	nodeCount int32
+	nodeCount atomic.Int32
 
 	// zeroHash is the zero value hash (all zeros).  It is defined as a
 	// convenience.
@@ -636,12 +636,12 @@ type HostToNetAddrFunc func(host string, port uint16,
 // provided as a convenience.
 type Peer struct {
 	// The following variables must only be used atomically.
-	bytesReceived uint64
-	bytesSent     uint64
-	lastRecv      int64
-	lastSend      int64
-	connected     int32
-	disconnect    int32
+	bytesReceived atomic.Uint64
+	bytesSent     atomic.Uint64
+	lastRecv      atomic.Int64
+	lastSend      atomic.Int64
+	connected     atomic.Int32
+	disconnect    atomic.Int32
 	brontide      atomic.Bool
 
 	conn         net.Conn
@@ -952,14 +952,14 @@ func (p *Peer) LastBlock() int32 {
 //
 // This function is safe for concurrent access.
 func (p *Peer) LastSend() time.Time {
-	return time.Unix(atomic.LoadInt64(&p.lastSend), 0)
+	return time.Unix(p.lastSend.Load(), 0)
 }
 
 // LastRecv returns the last recv time of the peer.
 //
 // This function is safe for concurrent access.
 func (p *Peer) LastRecv() time.Time {
-	return time.Unix(atomic.LoadInt64(&p.lastRecv), 0)
+	return time.Unix(p.lastRecv.Load(), 0)
 }
 
 // LocalAddr returns the local address of the connection.
@@ -967,7 +967,7 @@ func (p *Peer) LastRecv() time.Time {
 // This function is safe for concurrent access.
 func (p *Peer) LocalAddr() net.Addr {
 	var localAddr net.Addr
-	if atomic.LoadInt32(&p.connected) != 0 {
+	if p.connected.Load() != 0 {
 		localAddr = p.conn.LocalAddr()
 	}
 	return localAddr
@@ -977,14 +977,14 @@ func (p *Peer) LocalAddr() net.Addr {
 //
 // This function is safe for concurrent access.
 func (p *Peer) BytesSent() uint64 {
-	return atomic.LoadUint64(&p.bytesSent)
+	return p.bytesSent.Load()
 }
 
 // BytesReceived returns the total number of bytes received by the peer.
 //
 // This function is safe for concurrent access.
 func (p *Peer) BytesReceived() uint64 {
-	return atomic.LoadUint64(&p.bytesReceived)
+	return p.bytesReceived.Load()
 }
 
 // TimeConnected returns the time at which the peer connected.
@@ -1069,7 +1069,7 @@ func (p *Peer) PushAddrMsg(addresses []*wire.NetAddress) ([]*wire.NetAddress, er
 	// Randomize the addresses sent if there are more than the maximum allowed.
 	if addressCount > wire.MaxAddrPerMsg {
 		// Shuffle the address list.
-		for i := 0; i < wire.MaxAddrPerMsg; i++ {
+		for i := range wire.MaxAddrPerMsg {
 			j := i + rand.Intn(addressCount-i)
 			addrList[i], addrList[j] = addrList[j], addrList[i]
 		}
@@ -1289,7 +1289,7 @@ func (p *Peer) readMessage(encoding wire.MessageEncoding, partial bool) (
 
 	n, msg, buf, err = wire.ReadHandshakeMessageN(p.conn, p.cfg.ChainParams.Net)
 
-	atomic.AddUint64(&p.bytesReceived, uint64(n))
+	p.bytesReceived.Add(uint64(n))
 	if p.cfg.Listeners.OnRead != nil {
 		p.cfg.Listeners.OnRead(p, n, msg, err)
 	}
@@ -1332,7 +1332,7 @@ func (p *Peer) writeEncodedMessage(msg wire.HandshakeMessage,
 	msgType wire.HnsMsgType, encoded []byte) error {
 
 	// Don't do anything if we're disconnecting.
-	if atomic.LoadInt32(&p.disconnect) != 0 {
+	if p.disconnect.Load() != 0 {
 		return nil
 	}
 
@@ -1375,7 +1375,7 @@ func (p *Peer) writeEncodedMessage(msg wire.HandshakeMessage,
 			return spew.Sdump(msg)
 		}))
 	}
-	atomic.AddUint64(&p.bytesSent, uint64(written))
+	p.bytesSent.Add(uint64(written))
 	if p.cfg.Listeners.OnWrite != nil {
 		p.cfg.Listeners.OnWrite(p, written, msg, err)
 	}
@@ -1784,7 +1784,7 @@ func (p *Peer) isAllowedReadError(err error) bool {
 func (p *Peer) shouldHandleReadError(err error) bool {
 	// No logging or reject message when the peer is being forcibly
 	// disconnected.
-	if atomic.LoadInt32(&p.disconnect) != 0 {
+	if p.disconnect.Load() != 0 {
 		return false
 	}
 
@@ -2023,7 +2023,7 @@ func (p *Peer) inHandler() {
 	}()
 
 out:
-	for atomic.LoadInt32(&p.disconnect) == 0 {
+	for p.disconnect.Load() == 0 {
 		// Read a message and stop the idle timer as soon as the read
 		// is done.  The timer is reset below for the next iteration if
 		// needed.
@@ -2082,7 +2082,7 @@ out:
 			}
 			break out
 		}
-		atomic.StoreInt64(&p.lastRecv, time.Now().Unix())
+		p.lastRecv.Store(time.Now().Unix())
 		if !p.sendStallControl(stallControlMsg{sccReceiveMessage, rmsg}) {
 			break out
 		}
@@ -2377,7 +2377,7 @@ out:
 			// Don't send anything if we're disconnecting or there
 			// is no queued inventory.
 			// version is known if send queue has any entries.
-			if atomic.LoadInt32(&p.disconnect) != 0 ||
+			if p.disconnect.Load() != 0 ||
 				invSendQueue.Len() == 0 {
 				continue
 			}
@@ -2465,7 +2465,7 @@ cleanup:
 // should be logged.
 func (p *Peer) shouldLogWriteError(err error) bool {
 	// No logging when the peer is being forcibly disconnected.
-	if atomic.LoadInt32(&p.disconnect) != 0 {
+	if p.disconnect.Load() != 0 {
 		return false
 	}
 
@@ -2534,7 +2534,7 @@ out:
 			// message that it has been sent (if requested), and
 			// signal the send queue to the deliver the next queued
 			// message.
-			atomic.StoreInt64(&p.lastSend, time.Now().Unix())
+			p.lastSend.Store(time.Now().Unix())
 			signalMessageDone(msg.doneChan)
 			p.sendDoneQueue <- struct{}{}
 
@@ -2708,8 +2708,8 @@ func (p *Peer) QueueInventory(invVect *wire.InvVect) {
 //
 // This function is safe for concurrent access.
 func (p *Peer) Connected() bool {
-	return atomic.LoadInt32(&p.connected) != 0 &&
-		atomic.LoadInt32(&p.disconnect) == 0
+	return p.connected.Load() != 0 &&
+		p.disconnect.Load() == 0
 }
 
 // SetBrontideConnection records whether the underlying transport was upgraded
@@ -2733,7 +2733,7 @@ func (p *Peer) recoverFromPanic() {
 // function when the peer is already disconnected or in the process of
 // disconnecting will have no effect.
 func (p *Peer) Disconnect() {
-	if atomic.AddInt32(&p.disconnect, 1) != 1 {
+	if p.disconnect.Add(1) != 1 {
 		return
 	}
 
@@ -2741,7 +2741,7 @@ func (p *Peer) Disconnect() {
 	defer p.lifecycleMtx.Unlock()
 
 	log.Tracef("Disconnecting %s", p)
-	if atomic.LoadInt32(&p.connected) != 0 {
+	if p.connected.Load() != 0 {
 		p.conn.Close()
 	}
 	close(p.quit)
@@ -2761,11 +2761,9 @@ func (p *Peer) sendStallControl(msg stallControlMsg) bool {
 // launchGoroutine starts a peer-owned goroutine and tracks it for
 // WaitForDisconnect.
 func (p *Peer) launchGoroutine(f func()) {
-	p.lifecycleWg.Add(1)
-	go func() {
-		defer p.lifecycleWg.Done()
+	p.lifecycleWg.Go(func() {
 		f()
-	}()
+	})
 }
 
 // readRemoteVersionMsg waits for the next message to arrive from the remote
@@ -2832,7 +2830,7 @@ func (p *Peer) processRemoteVersionMsg(msg *wire.HnsMsgVersion) error {
 	// Set the peer's ID, user agent, and potentially the flag which
 	// specifies the witness support is enabled.
 	p.flagsMtx.Lock()
-	p.id = atomic.AddInt32(&nodeCount, 1)
+	p.id = nodeCount.Add(1)
 	p.userAgent = msg.Agent
 
 	// Determine if the peer would like to receive witness data with
@@ -3160,14 +3158,14 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 
 	// A connection associated after shutdown cannot be serviced.  Close it so
 	// the caller does not leak the transport.
-	if atomic.LoadInt32(&p.disconnect) != 0 {
+	if p.disconnect.Load() != 0 {
 		p.lifecycleMtx.Unlock()
 		_ = conn.Close()
 		return
 	}
 
 	// Already connected?
-	if atomic.LoadInt32(&p.connected) != 0 {
+	if p.connected.Load() != 0 {
 		p.lifecycleMtx.Unlock()
 		return
 	}
@@ -3199,7 +3197,7 @@ func (p *Peer) AssociateConnection(conn net.Conn) {
 
 	// Publish the connection only after all fields used by concurrent callers
 	// have been initialized.
-	atomic.StoreInt32(&p.connected, 1)
+	p.connected.Store(1)
 	p.launchGoroutine(func() {
 		if err := p.start(); err != nil {
 			log.Debugf("Cannot start peer %v: %v", p, err)

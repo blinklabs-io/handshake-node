@@ -78,7 +78,7 @@ func TestHasCanonicalPush(t *testing.T) {
 	t.Parallel()
 
 	const scriptVersion = 0
-	for i := 0; i < 65535; i++ {
+	for i := range 65535 {
 		script, err := NewScriptBuilder().AddInt64(int64(i)).Script()
 		if err != nil {
 			t.Errorf("Script: test #%d unexpected error: %v\n", i, err)

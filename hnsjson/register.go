@@ -154,7 +154,7 @@ func isAcceptableKind(kind reflect.Kind) bool {
 // passed struct, so it does not need to be an actual instance.  Therefore, it
 // is recommended to simply pass a nil pointer cast to the appropriate type.
 // For example, (*FooCmd)(nil).
-func RegisterCmd(method string, cmd interface{}, flags UsageFlag) error {
+func RegisterCmd(method string, cmd any, flags UsageFlag) error {
 	registerLock.Lock()
 	defer registerLock.Unlock()
 
@@ -188,7 +188,7 @@ func RegisterCmd(method string, cmd interface{}, flags UsageFlag) error {
 	numFields := rt.NumField()
 	numOptFields := 0
 	defaults := make(map[int]reflect.Value)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		rtf := rt.Field(i)
 		if rtf.Anonymous {
 			str := fmt.Sprintf("embedded fields are not supported "+
@@ -269,7 +269,7 @@ func RegisterCmd(method string, cmd interface{}, flags UsageFlag) error {
 // MustRegisterCmd performs the same function as RegisterCmd except it panics
 // if there is an error.  This should only be called from package init
 // functions.
-func MustRegisterCmd(method string, cmd interface{}, flags UsageFlag) {
+func MustRegisterCmd(method string, cmd any, flags UsageFlag) {
 	if err := RegisterCmd(method, cmd, flags); err != nil {
 		panic(fmt.Sprintf("failed to register type %q: %v\n", method,
 			err))

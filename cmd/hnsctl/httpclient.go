@@ -98,13 +98,15 @@ func sendPostRequest(marshalledJSON []byte, cfg *config) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		_ = httpResponse.Body.Close()
+	}()
 
-	// Read the raw bytes and close the response.
+	// Read the raw response before checking its status so server error bodies
+	// remain available to the caller.
 	respBytes, err := io.ReadAll(httpResponse.Body)
-	httpResponse.Body.Close()
 	if err != nil {
-		err = fmt.Errorf("error reading json reply: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("error reading json reply: %w", err)
 	}
 
 	// Handle unsuccessful HTTP responses

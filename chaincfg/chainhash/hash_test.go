@@ -234,7 +234,6 @@ func TestNewHashFromStrStrict(t *testing.T) {
 
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
-		test := test
 
 		t.Run(test.name, func(t *testing.T) {
 			result, err := NewHashFromStrStrict(test.in)
@@ -296,7 +295,6 @@ func TestDecodeStrict(t *testing.T) {
 
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
-		test := test
 
 		t.Run(test.name, func(t *testing.T) {
 			var result Hash
@@ -338,7 +336,6 @@ func TestDecodeErrorPreservesDestination(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 
 		t.Run(test.name, func(t *testing.T) {
 			got := mainNetGenesisHash

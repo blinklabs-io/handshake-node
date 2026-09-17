@@ -430,7 +430,7 @@ func TestTargetOutbound(t *testing.T) {
 		t.Fatalf("New error: %v", err)
 	}
 	cmgr.Start()
-	for i := uint32(0); i < targetOutbound; i++ {
+	for range targetOutbound {
 		<-connected
 	}
 
@@ -478,7 +478,7 @@ func TestTargetOutboundComposition(t *testing.T) {
 			}
 
 			connectPermanent := func() {
-				for i := uint64(0); i < permanentPeers; i++ {
+				for i := range permanentPeers {
 					go cmgr.Connect(&ConnReq{
 						Addr: &net.TCPAddr{
 							IP:   net.ParseIP("127.0.0.1"),
@@ -491,7 +491,7 @@ func TestTargetOutboundComposition(t *testing.T) {
 
 			if permanentBeforeStart {
 				connectPermanent()
-				for atomic.LoadUint64(&cmgr.connReqCount) < permanentPeers {
+				for cmgr.connReqCount.Load() < permanentPeers {
 					runtime.Gosched()
 				}
 			}
@@ -521,7 +521,7 @@ func TestTargetOutboundComposition(t *testing.T) {
 			}
 
 			var automaticCount, permanentCount int
-			for i := 0; i < int(targetOutbound)+int(permanentPeers); i++ {
+			for range int(targetOutbound) + int(permanentPeers) {
 				connReq := waitForConnection()
 				if connReq.Permanent {
 					permanentCount++
@@ -556,12 +556,12 @@ func TestRetryPermanent(t *testing.T) {
 	disconnected := make(chan disconnectionEvent)
 	retryDialStarted := make(chan struct{})
 	releaseRetryDial := make(chan struct{})
-	var dialCount uint32
+	var dialCount atomic.Uint32
 	cmgr, err := New(&Config{
 		RetryDuration:  time.Millisecond,
 		TargetOutbound: 1,
 		Dial: func(addr net.Addr) (net.Conn, error) {
-			if atomic.AddUint32(&dialCount, 1) == 2 {
+			if dialCount.Add(1) == 2 {
 				close(retryDialStarted)
 				<-releaseRetryDial
 			}
@@ -699,9 +699,9 @@ func TestMaxRetryDuration(t *testing.T) {
 // TestNetworkFailure tests that the connection manager handles a network
 // failure gracefully.
 func TestNetworkFailure(t *testing.T) {
-	var dials uint32
+	var dials atomic.Uint32
 	errDialer := func(net net.Addr) (net.Conn, error) {
-		atomic.AddUint32(&dials, 1)
+		dials.Add(1)
 		return nil, errors.New("network down")
 	}
 	cmgr, err := New(&Config{
@@ -725,9 +725,9 @@ func TestNetworkFailure(t *testing.T) {
 	time.AfterFunc(10*time.Millisecond, cmgr.Stop)
 	cmgr.Wait()
 	wantMaxDials := uint32(75)
-	if atomic.LoadUint32(&dials) > wantMaxDials {
+	if dials.Load() > wantMaxDials {
 		t.Fatalf("network failure: unexpected number of dials - got %v, want < %v",
-			atomic.LoadUint32(&dials), wantMaxDials)
+			dials.Load(), wantMaxDials)
 	}
 }
 
@@ -753,9 +753,9 @@ func TestStopFailed(t *testing.T) {
 	cmgr.Start()
 	go func() {
 		<-done
-		atomic.StoreInt32(&cmgr.stop, 1)
+		cmgr.stop.Store(1)
 		time.Sleep(2 * time.Millisecond)
-		atomic.StoreInt32(&cmgr.stop, 0)
+		cmgr.stop.Store(0)
 		cmgr.Stop()
 	}()
 	cr := &ConnReq{
@@ -1055,7 +1055,7 @@ func TestListenerPreflightBoundsAcceptedCallbacks(t *testing.T) {
 		listener.provideConn <- connections[i]
 	}
 
-	for i := 0; i < maxAccepted; i++ {
+	for range maxAccepted {
 		select {
 		case <-accepted:
 		case <-time.After(time.Second):

@@ -48,7 +48,7 @@ func TestMerkleBlock(t *testing.T) {
 
 	// Load maxTxPerBlock hashes
 	data := make([]byte, 32)
-	for i := 0; i < maxTxPerBlock; i++ {
+	for range maxTxPerBlock {
 		rand.Read(data)
 		hash, err := chainhash.NewHash(data)
 		if err != nil {

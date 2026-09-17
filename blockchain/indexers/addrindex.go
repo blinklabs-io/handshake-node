@@ -326,15 +326,12 @@ func dbFetchAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte,
 
 	// Limit the number to load based on the number of available entries,
 	// the number to skip, and the number requested.
-	numToLoad := numEntries - numToSkip
-	if numToLoad > numRequested {
-		numToLoad = numRequested
-	}
+	numToLoad := min(numEntries-numToSkip, numRequested)
 
 	// Start the offset after all skipped entries and load the calculated
 	// number.
 	results := make([]database.BlockRegion, numToLoad)
-	for i := uint32(0); i < numToLoad; i++ {
+	for i := range numToLoad {
 		// Calculate the read offset according to the reverse flag.
 		var offset uint32
 		if reverse {

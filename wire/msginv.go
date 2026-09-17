@@ -64,7 +64,7 @@ func (msg *MsgInv) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) erro
 	// order to reduce the number of allocations.
 	invList := make([]InvVect, count)
 	msg.InvList = make([]*InvVect, 0, count)
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		iv := &invList[i]
 		err := readInvVectBuf(r, pver, iv, buf)
 		if err != nil {

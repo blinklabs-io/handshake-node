@@ -43,7 +43,7 @@ func TestBlock(t *testing.T) {
 	}
 
 	// Request the hash multiple times to test generation and caching.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		hash := b.Hash()
 		if !hash.IsEqual(wantHash) {
 			t.Errorf("Hash #%d mismatched hash - got %v, want %v",
@@ -71,7 +71,7 @@ func TestBlock(t *testing.T) {
 
 		// Request the hash multiple times to test generation and
 		// caching.
-		for j := 0; j < 2; j++ {
+		for j := range 2 {
 			tx, err := b.Tx(i)
 			if err != nil {
 				t.Errorf("Tx #%d: %v", i, err)
@@ -92,7 +92,7 @@ func TestBlock(t *testing.T) {
 
 	// Request slice of all transactions multiple times to test generation
 	// and caching.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		transactions := b.Transactions()
 
 		// Ensure we get the expected number of transactions.
@@ -129,7 +129,7 @@ func TestBlock(t *testing.T) {
 
 	// Request serialized bytes multiple times to test generation and
 	// caching.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		serializedBytes, err := b.Bytes()
 		if err != nil {
 			t.Errorf("Bytes: %v", err)

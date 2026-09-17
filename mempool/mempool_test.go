@@ -183,7 +183,7 @@ func (p *poolHarness) CreateCoinbaseTx(blockHeight int32, numOutputs uint32) (*h
 	totalInput := blockchain.CalcBlockSubsidy(blockHeight, p.chainParams)
 	amountPerOutput := totalInput / int64(numOutputs)
 	remainder := totalInput - amountPerOutput*int64(numOutputs)
-	for i := uint32(0); i < numOutputs; i++ {
+	for i := range numOutputs {
 		// Ensure the final output accounts for any remainder that might
 		// be left from splitting the input amount.
 		amount := amountPerOutput
@@ -228,7 +228,7 @@ func (p *poolHarness) CreateSignedTx(inputs []spendableOutput,
 			Sequence:         sequence,
 		})
 	}
-	for i := uint32(0); i < numOutputs; i++ {
+	for i := range numOutputs {
 		// Ensure the final output accounts for any remainder that might
 		// be left from splitting the input amount.
 		amount := amountPerOutput
@@ -309,7 +309,7 @@ func (p *poolHarness) CreateTxChain(firstOutput spendableOutput, numTxns uint32)
 	txChain := make([]*hnsutil.Tx, 0, numTxns)
 	prevOutPoint := firstOutput.outPoint
 	spendableAmount := firstOutput.amount
-	for i := uint32(0); i < numTxns; i++ {
+	for range numTxns {
 		// Create the transaction using the previous transaction output
 		// and paying the full amount to the payment address associated
 		// with the harness.
@@ -426,7 +426,7 @@ func newPoolHarness(chainParams *chaincfg.Params) (*poolHarness, []spendableOutp
 		return nil, nil, err
 	}
 	harness.chain.utxos.AddTxOuts(coinbase, curHeight+1)
-	for i := uint32(0); i < numOutputs; i++ {
+	for i := range numOutputs {
 		outputs = append(outputs, txOutToSpendableOut(coinbase, i))
 	}
 	harness.chain.SetHeight(int32(chainParams.CoinbaseMaturity) + curHeight)
@@ -621,7 +621,7 @@ func TestMempoolAcceptanceRejectsContextFreeSanityFailure(t *testing.T) {
 	}
 
 	msgTx := wire.NewMsgTx(wire.TxVersion)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		msgTx.AddTxOut(&wire.TxOut{
 			Value:   1000,
 			Address: harness.payWireAddr,
@@ -1816,7 +1816,7 @@ func TestOrphanReject(t *testing.T) {
 				"%v when allow orphans flag is false", tx.Hash())
 		}
 		expectedErr := RuleError{}
-		if reflect.TypeOf(err) != reflect.TypeOf(expectedErr) {
+		if reflect.TypeOf(err) != reflect.TypeFor[RuleError]() {
 			t.Fatalf("ProcessTransaction: wrong error got: <%T> %v, "+
 				"want: <%T>", err, err, expectedErr)
 		}
@@ -2768,7 +2768,7 @@ func TestMempoolAncestorLimit(t *testing.T) {
 	ctx := &testContext{t, harness}
 
 	spend := outputs[0]
-	for i := 0; i < MaxMempoolAncestors; i++ {
+	for range MaxMempoolAncestors {
 		tx := ctx.addSignedTx(
 			[]spendableOutput{spend}, 1, hnsutil.DooPerHNS,
 			false, false,
@@ -3228,7 +3228,7 @@ func TestRBF(t *testing.T) {
 				coinbaseOuts := make(
 					[]spendableOutput, numDescendants,
 				)
-				for i := 0; i < numDescendants; i++ {
+				for i := range numDescendants {
 					tx := ctx.addCoinbaseTx(1)
 					coinbaseOuts[i] = txOutToSpendableOut(tx, 0)
 				}
@@ -3239,7 +3239,7 @@ func TestRBF(t *testing.T) {
 
 				// We'll then spend each output of the parent
 				// transaction with a distinct transaction.
-				for i := uint32(0); i < numDescendants; i++ {
+				for i := range uint32(numDescendants) {
 					out := txOutToSpendableOut(parent, i)
 					outs := []spendableOutput{out}
 					ctx.addSignedTx(

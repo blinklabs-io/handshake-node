@@ -443,10 +443,7 @@ func (b *BlockChain) calcSequenceLock(node *blockNode, tx *hnsutil.Tx, utxoView 
 			// which this input was included within so we can
 			// compute the past median time for the block prior to
 			// the one which included this referenced output.
-			prevInputHeight := inputHeight - 1
-			if prevInputHeight < 0 {
-				prevInputHeight = 0
-			}
+			prevInputHeight := max(inputHeight-1, 0)
 			blockNode := node.Ancestor(prevInputHeight)
 			medianTime := CalcPastMedianTime(blockNode)
 
@@ -1970,7 +1967,7 @@ func (b *BlockChain) locateBlocks(locator BlockLocator, hashStop *chainhash.Hash
 
 	// Populate and return the found hashes.
 	hashes := make([]chainhash.Hash, 0, total)
-	for i := uint32(0); i < total; i++ {
+	for range total {
 		hashes = append(hashes, node.hash)
 		node = b.bestChain.Next(node)
 	}
@@ -2015,7 +2012,7 @@ func (b *BlockChain) locateHeaders(locator BlockLocator, hashStop *chainhash.Has
 
 	// Populate and return the found headers.
 	headers := make([]wire.BlockHeader, 0, total)
-	for i := uint32(0); i < total; i++ {
+	for range total {
 		headers = append(headers, node.Header())
 		node = b.bestChain.Next(node)
 	}

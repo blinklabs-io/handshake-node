@@ -630,8 +630,7 @@ func (c *dbCache) flushWithPruneWriter(usePruneWriter bool) error {
 		err = c.commitTreaps(cachedKeys, cachedRemove)
 	}
 	if err != nil {
-		var constructionErr *metadataBatchConstructionError
-		if errors.As(err, &constructionErr) {
+		if _, ok := errors.AsType[*metadataBatchConstructionError](err); ok {
 			return err
 		}
 		if errors.Is(err, syscall.ENOSPC) {
@@ -721,8 +720,7 @@ func (c *dbCache) commitTx(tx *transaction) error {
 		// Perform all LevelDB updates using an atomic write-ahead-log batch.
 		err := c.commitTreaps(tx.pendingKeys, tx.pendingRemove)
 		if err != nil {
-			var constructionErr *metadataBatchConstructionError
-			if errors.As(err, &constructionErr) {
+			if _, ok := errors.AsType[*metadataBatchConstructionError](err); ok {
 				return err
 			}
 			if errors.Is(err, syscall.ENOSPC) {

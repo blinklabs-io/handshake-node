@@ -66,7 +66,7 @@ func TestImmutableSequential(t *testing.T) {
 	for i := 0; i < numItems/keyCount; i++ {
 		keys := make([][]byte, 0, keyCount)
 		kvPairs := make([]KVPair, 0, keyCount)
-		for j := 0; j < keyCount; j++ {
+		for j := range keyCount {
 			n := i*keyCount + j
 			key := serializeUint32(uint32(n))
 			keys = append(keys, key)
@@ -133,7 +133,7 @@ func TestImmutableSequential(t *testing.T) {
 
 	// Delete the keys one-by-one while checking several of the treap
 	// functions work as expected.
-	for i := 0; i < numItems; i++ {
+	for i := range numItems {
 		key := serializeUint32(uint32(i))
 		testTreap = testTreap.Delete(key)
 
@@ -178,7 +178,7 @@ func TestImmutableReverseSequential(t *testing.T) {
 	for i := 0; i < numItems/keyCount; i++ {
 		keys := make([][]byte, 0, keyCount)
 		kvPairs := make([]KVPair, 0, keyCount)
-		for j := 0; j < keyCount; j++ {
+		for j := range keyCount {
 			n := numItems - (i * keyCount) - j - 1
 			key := serializeUint32(uint32(n))
 			keys = append(keys, key)
@@ -245,7 +245,7 @@ func TestImmutableReverseSequential(t *testing.T) {
 
 	// Delete the keys one-by-one while checking several of the treap
 	// functions work as expected.
-	for i := 0; i < numItems; i++ {
+	for i := range numItems {
 		// Intentionally use the reverse order they were inserted here.
 		key := serializeUint32(uint32(i))
 		testTreap = testTreap.Delete(key)
@@ -292,7 +292,7 @@ func TestImmutableUnordered(t *testing.T) {
 		// Hash the serialized int to generate out-of-order keys.
 		keys := make([][]byte, 0, keyCount)
 		kvPairs := make([]KVPair, 0, keyCount)
-		for j := 0; j < keyCount; j++ {
+		for j := range keyCount {
 			n := i*keyCount + j
 			hash := sha256.Sum256(serializeUint32(uint32(n)))
 			key := hash[:]
@@ -333,7 +333,7 @@ func TestImmutableUnordered(t *testing.T) {
 
 	// Delete the keys one-by-one while checking several of the treap
 	// functions work as expected.
-	for i := 0; i < numItems; i++ {
+	for i := range numItems {
 		// Hash the serialized int to generate out-of-order keys.
 		hash := sha256.Sum256(serializeUint32(uint32(i)))
 		key := hash[:]
@@ -380,7 +380,7 @@ func TestImmutableDuplicatePut(t *testing.T) {
 	for i := 0; i < numItems/keyCount; i++ {
 		keys := make([][]byte, 0, keyCount)
 		kvPairs := make([]KVPair, 0, keyCount)
-		for j := 0; j < keyCount; j++ {
+		for j := range keyCount {
 			n := i*keyCount + j
 			key := serializeUint32(uint32(n))
 			keys = append(keys, key)
@@ -458,7 +458,7 @@ func TestImmutableForEachStopIterator(t *testing.T) {
 	numItems := 10
 	testTreap := NewImmutable()
 	kvPairs := make([]KVPair, 0, numItems)
-	for i := 0; i < numItems; i++ {
+	for i := range numItems {
 		key := serializeUint32(uint32(i))
 		kvPairs = append(kvPairs, KVPair{key, key})
 	}
@@ -493,7 +493,7 @@ func TestImmutableSnapshot(t *testing.T) {
 
 		keys := make([][]byte, 0, keyCount)
 		kvPairs := make([]KVPair, 0, keyCount)
-		for j := 0; j < keyCount; j++ {
+		for j := range keyCount {
 			n := i*keyCount + j
 			key := serializeUint32(uint32(n))
 			keys = append(keys, key)
@@ -534,7 +534,7 @@ func TestImmutableSnapshot(t *testing.T) {
 
 	// Delete the keys one-by-one while checking several of the treap
 	// functions work as expected.
-	for i := 0; i < numItems; i++ {
+	for i := range numItems {
 		treapSnap := testTreap
 
 		key := serializeUint32(uint32(i))

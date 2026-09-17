@@ -26,7 +26,7 @@ func solveImportTestBlock(t *testing.T, header *wire.BlockHeader,
 
 	t.Helper()
 	target := blockchain.CompactToBig(params.PowLimitBits)
-	for nonce := uint32(0); nonce < math.MaxUint32; nonce++ {
+	for nonce := range uint32(math.MaxUint32) {
 		header.Nonce = nonce
 		hash := header.BlockHash()
 		if blockchain.HashToBig(&hash).Cmp(target) <= 0 {

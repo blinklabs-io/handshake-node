@@ -92,7 +92,7 @@ func TestMapRPCErr(t *testing.T) {
 
 	// Get all known bitcoind errors.
 	bitcoindErrors := make([]error, 0, errSentinel)
-	for i := uint32(0); i < uint32(errSentinel); i++ {
+	for i := range uint32(errSentinel) {
 		err := BitcoindRPCErr(i)
 		bitcoindErrors = append(bitcoindErrors, err)
 	}
@@ -125,7 +125,7 @@ func TestBitcoindErrorSentinel(t *testing.T) {
 
 	rt := require.New(t)
 
-	for i := uint32(0); i < uint32(errSentinel); i++ {
+	for i := range uint32(errSentinel) {
 		err := BitcoindRPCErr(i)
 		rt.NotEqualf(err.Error(), "unknown error", "error code %d is "+
 			"not defined, make sure to update it inside the Error "+

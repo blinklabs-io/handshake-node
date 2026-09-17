@@ -16,6 +16,7 @@ import (
 	"math"
 	"net"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,7 +184,7 @@ type broadcastInventoryDel *wire.InvVect
 // inventory so the relay has access to that information.
 type relayMsg struct {
 	invVect *wire.InvVect
-	data    interface{}
+	data    any
 }
 
 // updatePeerHeightsMsg is a message sent from the blockmanager to the server
@@ -268,11 +269,11 @@ type server struct {
 	stratumServer        *stratum.Server
 	brontideIdentity     *btcec.PrivateKey
 	brontideStaticKey    [brontide.PublicKeySize]byte
-	modifyRebroadcastInv chan interface{}
+	modifyRebroadcastInv chan any
 	newPeers             chan *serverPeer
 	donePeers            chan *serverPeer
 	banPeers             chan *serverPeer
-	query                chan interface{}
+	query                chan any
 	relayInv             chan relayMsg
 	broadcast            chan broadcastMsg
 	peerHeightsUpdate    chan updatePeerHeightsMsg
@@ -1461,7 +1462,7 @@ func randomUint16Number(max uint16) uint16 {
 
 // AddRebroadcastInventory adds 'iv' to the list of inventories to be
 // rebroadcasted at random intervals until they show up in a block.
-func (s *server) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
+func (s *server) AddRebroadcastInventory(iv *wire.InvVect, data any) {
 	// Ignore if shutting down.
 	if atomic.LoadInt32(&s.shutdown) != 0 {
 		return
@@ -1966,10 +1967,8 @@ func (s *server) handleBroadcastMsg(state *peerState, bmsg *broadcastMsg) {
 			return
 		}
 
-		for _, ep := range bmsg.excludePeers {
-			if sp == ep {
-				return
-			}
+		if slices.Contains(bmsg.excludePeers, sp) {
+			return
 		}
 
 		sp.QueueMessage(bmsg.message, nil)
@@ -2011,7 +2010,7 @@ type removeNodeMsg struct {
 
 // handleQuery is the central handler for all queries and commands from other
 // goroutines related to peer state.
-func (s *server) handleQuery(state *peerState, querymsg interface{}) {
+func (s *server) handleQuery(state *peerState, querymsg any) {
 	switch msg := querymsg.(type) {
 	case getConnCountMsg:
 		nconnected := int32(0)
@@ -2569,7 +2568,7 @@ func (s *server) BanPeer(sp *serverPeer) {
 
 // RelayInventory relays the passed inventory vector to all connected peers
 // that are not already known to have it.
-func (s *server) RelayInventory(invVect *wire.InvVect, data interface{}) {
+func (s *server) RelayInventory(invVect *wire.InvVect, data any) {
 	s.relayInv <- relayMsg{invVect: invVect, data: data}
 }
 
@@ -2636,7 +2635,7 @@ func (s *server) UpdatePeerHeights(latestBlkHash *chainhash.Hash, latestHeight i
 func (s *server) rebroadcastHandler() {
 	// Wait 5 min before first tx rebroadcast.
 	timer := time.NewTimer(5 * time.Minute)
-	pendingInvs := make(map[wire.InvVect]interface{})
+	pendingInvs := make(map[wire.InvVect]any)
 
 out:
 	for {
@@ -3091,11 +3090,11 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		newPeers:             make(chan *serverPeer, cfg.MaxPeers),
 		donePeers:            make(chan *serverPeer, cfg.MaxPeers),
 		banPeers:             make(chan *serverPeer, cfg.MaxPeers),
-		query:                make(chan interface{}),
+		query:                make(chan any),
 		relayInv:             make(chan relayMsg, cfg.MaxPeers),
 		broadcast:            make(chan broadcastMsg, cfg.MaxPeers),
 		quit:                 make(chan struct{}),
-		modifyRebroadcastInv: make(chan interface{}),
+		modifyRebroadcastInv: make(chan any),
 		peerHeightsUpdate:    make(chan updatePeerHeightsMsg),
 		nat:                  nat,
 		db:                   db,
@@ -3300,7 +3299,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 	var newAddressFunc func() (net.Addr, error)
 	if automaticOutbound && targetOutbound > 0 {
 		newAddressFunc = func() (net.Addr, error) {
-			for tries := 0; tries < 100; tries++ {
+			for tries := range 100 {
 				addr := s.addrManager.GetAddress()
 				if addr == nil {
 					break

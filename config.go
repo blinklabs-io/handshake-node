@@ -254,7 +254,7 @@ func applyConfigEnvOverrides(cfg *config,
 
 	rv := reflect.ValueOf(cfg).Elem()
 	rt := rv.Type()
-	durationType := reflect.TypeOf(time.Duration(0))
+	durationType := reflect.TypeFor[time.Duration]()
 	for i := 0; i < rt.NumField(); i++ {
 		fieldType := rt.Field(i)
 		option := fieldType.Tag.Get("long")
@@ -401,7 +401,7 @@ func parseAndSetDebugLevels(debugLevel string) error {
 
 	// Split the specified string into subsystem/level pairs while detecting
 	// issues and update the log levels accordingly.
-	for _, logLevelPair := range strings.Split(debugLevel, ",") {
+	for logLevelPair := range strings.SplitSeq(debugLevel, ",") {
 		if !strings.Contains(logLevelPair, "=") {
 			str := "The specified debug level contains an invalid " +
 				"subsystem/level pair [%v]"
@@ -436,20 +436,6 @@ func validDbType(dbType string) bool {
 	return slices.Contains(knownDbTypes, dbType)
 }
 
-// removeDuplicateAddresses returns a new slice with all duplicate entries in
-// addrs removed.
-func removeDuplicateAddresses(addrs []string) []string {
-	result := make([]string, 0, len(addrs))
-	seen := map[string]struct{}{}
-	for _, val := range addrs {
-		if _, ok := seen[val]; !ok {
-			result = append(result, val)
-			seen[val] = struct{}{}
-		}
-	}
-	return result
-}
-
 // normalizeAddress returns addr with the passed default port appended if
 // there is not already a port specified.
 func normalizeAddress(addr, defaultPort string) string {
@@ -463,11 +449,17 @@ func normalizeAddress(addr, defaultPort string) string {
 // normalizeAddresses returns a new slice with all the passed peer addresses
 // normalized with the given default port, and all duplicates removed.
 func normalizeAddresses(addrs []string, defaultPort string) []string {
-	for i, addr := range addrs {
-		addrs[i] = normalizeAddress(addr, defaultPort)
+	result := make([]string, 0, len(addrs))
+	seen := make(map[string]struct{}, len(addrs))
+	for _, addr := range addrs {
+		addr = normalizeAddress(addr, defaultPort)
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		result = append(result, addr)
+		seen[addr] = struct{}{}
 	}
-
-	return removeDuplicateAddresses(addrs)
+	return result
 }
 
 func isLoopbackListener(addr string) bool {
@@ -708,8 +700,7 @@ func loadConfig() (*config, []string, error) {
 		if err != nil && (!os.IsNotExist(err) ||
 			preCfg.ConfigFile != defaultConfigFile) {
 
-			var pathErr *os.PathError
-			if errors.As(err, &pathErr) {
+			if _, ok := errors.AsType[*os.PathError](err); ok {
 				fmt.Fprintf(os.Stderr, "Error loading config "+
 					"file: %v\n", err)
 			} else {

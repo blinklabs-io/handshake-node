@@ -13,11 +13,11 @@ import (
 )
 
 // makeParams creates a slice of interface values for the given struct.
-func makeParams(rt reflect.Type, rv reflect.Value) []interface{} {
+func makeParams(rt reflect.Type, rv reflect.Value) []any {
 	numFields := rt.NumField()
-	params := make([]interface{}, 0, numFields)
+	params := make([]any, 0, numFields)
 	lastParam := -1
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		rtf := rt.Field(i)
 		rvf := rv.Field(i)
 		params = append(params, rvf.Interface())
@@ -36,7 +36,7 @@ func makeParams(rt reflect.Type, rv reflect.Value) []interface{} {
 // is suitable for transmission to an RPC server.  The provided command type
 // must be a registered type.  All commands provided by this package are
 // registered by default.
-func MarshalCmd(rpcVersion RPCVersion, id interface{}, cmd interface{}) ([]byte, error) {
+func MarshalCmd(rpcVersion RPCVersion, id any, cmd any) ([]byte, error) {
 	// Look up the cmd type and error out if not registered.
 	rt := reflect.TypeOf(cmd)
 	registerLock.RLock()
@@ -108,7 +108,7 @@ func populateDefaults(numParams int, info *methodInfo, rv reflect.Value) {
 // UnmarshalCmd unmarshals a JSON-RPC request into a suitable concrete command
 // so long as the method type contained within the marshalled request is
 // registered.
-func UnmarshalCmd(r *Request) (interface{}, error) {
+func UnmarshalCmd(r *Request) (any, error) {
 	registerLock.RLock()
 	rtp, ok := methodToConcreteType[r.Method]
 	info := methodToInfo[r.Method]
@@ -129,7 +129,7 @@ func UnmarshalCmd(r *Request) (interface{}, error) {
 
 	// Loop through each of the struct fields and unmarshal the associated
 	// parameter into them.
-	for i := 0; i < numParams; i++ {
+	for i := range numParams {
 		rvf := rv.Field(i)
 		// Unmarshal the parameter into the struct field.
 		concreteVal := rvf.Addr().Interface()
@@ -268,7 +268,7 @@ func assignField(paramNum int, fieldName string, dest reflect.Value, src reflect
 	destIndirectsRemaining := destIndirects
 	if destIndirects > srcIndirects {
 		indirectDiff := destIndirects - srcIndirects
-		for i := 0; i < indirectDiff; i++ {
+		for range indirectDiff {
 			dest.Set(reflect.New(dest.Type().Elem()))
 			dest = dest.Elem()
 			destIndirectsRemaining--
@@ -514,7 +514,7 @@ func assignField(paramNum int, fieldName string, dest reflect.Value, src reflect
 //   - Conversion from string to arrays, slices, structs, and maps by treating
 //     the string as marshalled JSON and calling json.Unmarshal into the
 //     destination field
-func NewCmd(method string, args ...interface{}) (interface{}, error) {
+func NewCmd(method string, args ...any) (any, error) {
 	// Look up details about the provided method.  Any methods that aren't
 	// registered are an error.
 	registerLock.RLock()
@@ -541,7 +541,7 @@ func NewCmd(method string, args ...interface{}) (interface{}, error) {
 
 	// Loop through each of the struct fields and assign the associated
 	// parameter into them after checking its type validity.
-	for i := 0; i < numParams; i++ {
+	for i := range numParams {
 		// Attempt to assign each of the arguments to the according
 		// struct field.
 		rvf := rv.Field(i)

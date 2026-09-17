@@ -519,7 +519,7 @@ func MapRPCErr(rpcErr error) error {
 	}
 
 	// If not found, try to match it against bitcoind's error.
-	for i := uint32(0); i < uint32(errSentinel); i++ {
+	for i := range uint32(errSentinel) {
 		err := BitcoindRPCErr(i)
 		if matchErrStr(rpcErr, err.Error()) {
 			return err

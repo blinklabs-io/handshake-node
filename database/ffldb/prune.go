@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"sort"
+	"slices"
 
 	"github.com/blinklabs-io/handshake-node/database"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -133,9 +133,7 @@ func mergePruneFileNums(existing []uint32, pending []uint32) []uint32 {
 	merged := make([]uint32, 0, len(existing)+len(pending))
 	merged = append(merged, existing...)
 	merged = append(merged, pending...)
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i] < merged[j]
-	})
+	slices.Sort(merged)
 
 	result := merged[:0]
 	for _, fileNum := range merged {

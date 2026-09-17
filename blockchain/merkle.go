@@ -19,10 +19,6 @@ const (
 	CoinbaseWitnessDataLen = 32
 )
 
-func hashPtr(hash chainhash.Hash) *chainhash.Hash {
-	return &hash
-}
-
 // HashMerkleEmpty returns the hsd mrkl sentinel hash for empty leaves and
 // missing right branches.
 func HashMerkleEmpty() chainhash.Hash {
@@ -78,7 +74,7 @@ func HashMerkleBranches(left, right *chainhash.Hash) chainhash.Hash {
 // using witness transaction id's rather than regular transaction id's.
 func BuildMerkleTreeStore(transactions []*hnsutil.Tx, witness bool) []*chainhash.Hash {
 	if len(transactions) == 0 {
-		return []*chainhash.Hash{hashPtr(HashMerkleEmpty())}
+		return []*chainhash.Hash{new(HashMerkleEmpty())}
 	}
 
 	merkles := make([]*chainhash.Hash, 0, len(transactions)*2)
@@ -89,7 +85,7 @@ func BuildMerkleTreeStore(transactions []*hnsutil.Tx, witness bool) []*chainhash
 		} else {
 			txHash = *tx.Hash()
 		}
-		merkles = append(merkles, hashPtr(HashMerkleLeaf(&txHash)))
+		merkles = append(merkles, new(HashMerkleLeaf(&txHash)))
 	}
 
 	sentinel := HashMerkleEmpty()
@@ -102,7 +98,7 @@ func BuildMerkleTreeStore(transactions []*hnsutil.Tx, witness bool) []*chainhash
 			if i+1 < size {
 				right = merkles[offset+i+1]
 			}
-			merkles = append(merkles, hashPtr(HashMerkleBranches(left, right)))
+			merkles = append(merkles, new(HashMerkleBranches(left, right)))
 		}
 		offset += size
 		size = (size + 1) / 2

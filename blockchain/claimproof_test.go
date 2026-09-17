@@ -460,7 +460,7 @@ func TestVerifyOwnershipRSAAcceptsShortSignature(t *testing.T) {
 		SignerName:  name,
 	}
 
-	for i := 0; i < 4096; i++ {
+	for i := range 4096 {
 		rr.Txt = []string{fmt.Sprintf("hns-claim:short-rsa-%d", i)}
 		if err := sig.Sign(signer, rrset); err != nil {
 			t.Fatalf("RRSIG.Sign: %v", err)

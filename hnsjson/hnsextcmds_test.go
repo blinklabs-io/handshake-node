@@ -25,17 +25,17 @@ func TestHnsExtCmds(t *testing.T) {
 	testID := int(1)
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "debuglevel",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("debuglevel", "trace")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewDebugLevelCmd("trace")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"debuglevel","params":["trace"],"id":1}`,
@@ -45,10 +45,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "node",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("node", hnsjson.NRemove, "1.1.1.1")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNodeCmd("remove", "1.1.1.1", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"node","params":["remove","1.1.1.1"],"id":1}`,
@@ -59,10 +59,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "node",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("node", hnsjson.NDisconnect, "1.1.1.1")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNodeCmd("disconnect", "1.1.1.1", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"node","params":["disconnect","1.1.1.1"],"id":1}`,
@@ -73,10 +73,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "node",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("node", hnsjson.NConnect, "1.1.1.1", "perm")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNodeCmd("connect", "1.1.1.1", hnsjson.String("perm"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"node","params":["connect","1.1.1.1","perm"],"id":1}`,
@@ -88,10 +88,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "node",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("node", hnsjson.NConnect, "1.1.1.1", "temp")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewNodeCmd("connect", "1.1.1.1", hnsjson.String("temp"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"node","params":["connect","1.1.1.1","temp"],"id":1}`,
@@ -103,10 +103,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "generate",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("generate", 1)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGenerateCmd(1)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"generate","params":[1],"id":1}`,
@@ -116,10 +116,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "generatetoaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("generatetoaddress", 1, "1Address")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGenerateToAddressCmd(1, "1Address", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"generatetoaddress","params":[1,"1Address"],"id":1}`,
@@ -134,10 +134,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "getbestblock",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getbestblock")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetBestBlockCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getbestblock","params":[],"id":1}`,
@@ -145,10 +145,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "getcurrentnet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getcurrentnet")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetCurrentNetCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getcurrentnet","params":[],"id":1}`,
@@ -156,10 +156,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "getheaders",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getheaders", []string{}, "")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetHeadersCmd(
 					[]string{},
 					"",
@@ -173,10 +173,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "getheaders - with arguments",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getheaders", []string{"000000000000000001f1739002418e2f9a84c47a4fd2a0eb7a787a6b7dc12f16", "0000000000000000026f4b7f56eef057b32167eb5ad9ff62006f1807b7336d10"}, "000000000000000000ba33b33e1fad70b69e234fc24414dd47113bff38f523f7")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetHeadersCmd(
 					[]string{
 						"000000000000000001f1739002418e2f9a84c47a4fd2a0eb7a787a6b7dc12f16",
@@ -196,10 +196,10 @@ func TestHnsExtCmds(t *testing.T) {
 		},
 		{
 			name: "version",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("version")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewVersionCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"version","params":[],"id":1}`,

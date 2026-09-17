@@ -1121,7 +1121,7 @@ var helpDescsEnUS = map[string]string{
 // rpcResultTypes specifies the result types that each RPC command can return.
 // This information is used to generate the help.  Each result type must be a
 // pointer to the type (or nil to indicate no return value).
-var rpcResultTypes = map[string][]interface{}{
+var rpcResultTypes = map[string][]any{
 	"addnode":                nil,
 	"createbid":              {(*string)(nil)},
 	"createfinalize":         {(*string)(nil)},

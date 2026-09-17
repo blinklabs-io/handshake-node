@@ -311,7 +311,7 @@ func TestFilterMatchTxAndUpdate(t *testing.T) {
 			t.Fatal("native address hash did not match")
 		}
 
-		for i := uint32(0); i < 2; i++ {
+		for i := range uint32(2) {
 			outpoint := wire.NewOutPoint(multiOutputTx.Hash(), i)
 			if !f.MatchesOutPoint(outpoint) {
 				t.Fatalf("matched output %d outpoint was not added", i)

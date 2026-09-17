@@ -42,7 +42,7 @@ func genTestTx() (*wire.MsgTx, *MultiPrevOutFetcher, error) {
 	prevOuts := NewMultiPrevOutFetcher(nil)
 
 	numTxins := 1 + rand.Intn(11)
-	for i := 0; i < numTxins; i++ {
+	for range numTxins {
 		randTxIn := wire.TxIn{
 			PreviousOutPoint: wire.OutPoint{
 				Index: uint32(rand.Int31()),
@@ -62,7 +62,7 @@ func genTestTx() (*wire.MsgTx, *MultiPrevOutFetcher, error) {
 	}
 
 	numTxouts := 1 + rand.Intn(11)
-	for i := 0; i < numTxouts; i++ {
+	for range numTxouts {
 		randHash := make([]byte, 20)
 		if _, err := rand.Read(randHash); err != nil {
 			return nil, nil, err
@@ -96,7 +96,7 @@ func TestHashCacheAddContainsHashes(t *testing.T) {
 	// tests.
 	const numTxns = 10
 	txns := make([]*wire.MsgTx, numTxns)
-	for i := 0; i < numTxns; i++ {
+	for i := range numTxns {
 		txns[i], randPrevOuts, err = genTestTx()
 		if err != nil {
 			t.Fatalf("unable to generate test tx: %v", err)
@@ -185,7 +185,7 @@ func TestHashCachePurge(t *testing.T) {
 	// First we'll start by inserting numTxns transactions into the hash cache.
 	const numTxns = 10
 	txns := make([]*wire.MsgTx, numTxns)
-	for i := 0; i < numTxns; i++ {
+	for i := range numTxns {
 		txns[i], randPrevOuts, err = genTestTx()
 		if err != nil {
 			t.Fatalf("unable to generate test tx: %v", err)
@@ -353,7 +353,7 @@ func TestHashCacheConcurrentSameTx(t *testing.T) {
 
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
-	for i := 0; i < numCallers; i++ {
+	for i := range numCallers {
 		select {
 		case <-entered:
 		case <-timer.C:
@@ -444,7 +444,7 @@ func TestHashCacheConcurrentBound(t *testing.T) {
 			defer wg.Done()
 			<-start
 			txid := tx.TxHash()
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				sigHashes := cache.GetOrAddSigHashes(tx, prevOuts)
 				if sigHashes == nil || *sigHashes != wantHashes[i] {
 					badResult <- i

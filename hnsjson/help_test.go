@@ -28,14 +28,14 @@ func TestHelpReflectInternals(t *testing.T) {
 	}{
 		{
 			name:        "int",
-			reflectType: reflect.TypeOf(int(0)),
+			reflectType: reflect.TypeFor[int](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "*int",
-			reflectType: reflect.TypeOf((*int)(nil)),
+			reflectType: reflect.TypeFor[*int](),
 			key:         "json-type-value",
 			examples:    []string{"n"},
 			help:        "n (json-type-value) fdk",
@@ -43,105 +43,105 @@ func TestHelpReflectInternals(t *testing.T) {
 		},
 		{
 			name:        "int8",
-			reflectType: reflect.TypeOf(int8(0)),
+			reflectType: reflect.TypeFor[int8](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "int16",
-			reflectType: reflect.TypeOf(int16(0)),
+			reflectType: reflect.TypeFor[int16](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "int32",
-			reflectType: reflect.TypeOf(int32(0)),
+			reflectType: reflect.TypeFor[int32](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "int64",
-			reflectType: reflect.TypeOf(int64(0)),
+			reflectType: reflect.TypeFor[int64](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "uint",
-			reflectType: reflect.TypeOf(uint(0)),
+			reflectType: reflect.TypeFor[uint](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "uint8",
-			reflectType: reflect.TypeOf(uint8(0)),
+			reflectType: reflect.TypeFor[uint8](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "uint16",
-			reflectType: reflect.TypeOf(uint16(0)),
+			reflectType: reflect.TypeFor[uint16](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "uint32",
-			reflectType: reflect.TypeOf(uint32(0)),
+			reflectType: reflect.TypeFor[uint32](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "uint64",
-			reflectType: reflect.TypeOf(uint64(0)),
+			reflectType: reflect.TypeFor[uint64](),
 			key:         "json-type-numeric",
 			examples:    []string{"n"},
 			help:        "n (json-type-numeric) fdk",
 		},
 		{
 			name:        "float32",
-			reflectType: reflect.TypeOf(float32(0)),
+			reflectType: reflect.TypeFor[float32](),
 			key:         "json-type-numeric",
 			examples:    []string{"n.nnn"},
 			help:        "n.nnn (json-type-numeric) fdk",
 		},
 		{
 			name:        "float64",
-			reflectType: reflect.TypeOf(float64(0)),
+			reflectType: reflect.TypeFor[float64](),
 			key:         "json-type-numeric",
 			examples:    []string{"n.nnn"},
 			help:        "n.nnn (json-type-numeric) fdk",
 		},
 		{
 			name:        "string",
-			reflectType: reflect.TypeOf(""),
+			reflectType: reflect.TypeFor[string](),
 			key:         "json-type-string",
 			examples:    []string{`"json-example-string"`},
 			help:        "\"json-example-string\" (json-type-string) fdk",
 		},
 		{
 			name:        "bool",
-			reflectType: reflect.TypeOf(true),
+			reflectType: reflect.TypeFor[bool](),
 			key:         "json-type-bool",
 			examples:    []string{"json-example-bool"},
 			help:        "json-example-bool (json-type-bool) fdk",
 		},
 		{
 			name:        "array of int",
-			reflectType: reflect.TypeOf([1]int{0}),
+			reflectType: reflect.TypeFor[[1]int](),
 			key:         "json-type-arrayjson-type-numeric",
 			examples:    []string{"[n,...]"},
 			help:        "[n,...] (json-type-arrayjson-type-numeric) fdk",
 		},
 		{
 			name:        "slice of int",
-			reflectType: reflect.TypeOf([]int{0}),
+			reflectType: reflect.TypeFor[[]int](),
 			key:         "json-type-arrayjson-type-numeric",
 			examples:    []string{"[n,...]"},
 			help:        "[n,...] (json-type-arrayjson-type-numeric) fdk",
@@ -174,7 +174,7 @@ func TestHelpReflectInternals(t *testing.T) {
 				type s struct {
 					field int
 				}
-				return reflect.TypeOf([]s{})
+				return reflect.TypeFor[[]s]()
 			}(),
 			key: "json-type-arrayjson-type-object",
 			examples: []string{
@@ -193,7 +193,7 @@ func TestHelpReflectInternals(t *testing.T) {
 				type s struct {
 					field int
 				}
-				return reflect.TypeOf([]s{})
+				return reflect.TypeFor[[]s]()
 			}(),
 			indentLevel: 1,
 			key:         "json-type-arrayjson-type-object",
@@ -208,7 +208,7 @@ func TestHelpReflectInternals(t *testing.T) {
 		},
 		{
 			name:        "map",
-			reflectType: reflect.TypeOf(map[string]string{}),
+			reflectType: reflect.TypeFor[map[string]string](),
 			key:         "json-type-object",
 			examples: []string{"{",
 				" \"fdk--key\": fdk--value, (json-type-object) fdk--desc",
@@ -222,7 +222,7 @@ func TestHelpReflectInternals(t *testing.T) {
 		},
 		{
 			name:        "complex",
-			reflectType: reflect.TypeOf(complex64(0)),
+			reflectType: reflect.TypeFor[complex64](),
 			key:         "json-type-value",
 			examples:    []string{"json-example-unknown"},
 			help:        "json-example-unknown (json-type-value) fdk",
@@ -300,7 +300,7 @@ func TestResultStructHelp(t *testing.T) {
 			name: "empty struct",
 			reflectType: func() reflect.Type {
 				type s struct{}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: nil,
 		},
@@ -310,7 +310,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					field int
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: []string{
 				"\"field\": n,\t(json-type-numeric)\ts-field",
@@ -322,7 +322,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					Field int `json:"f"`
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: []string{
 				"\"f\": n,\t(json-type-numeric)\ts-f",
@@ -334,7 +334,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					Field int `json:"-"`
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: nil,
 		},
@@ -344,7 +344,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					field []int
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: []string{
 				"\"field\": [n,...],\t(json-type-arrayjson-type-numeric)\ts-field",
@@ -359,7 +359,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					field s2
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: []string{
 				"\"field\": {\t(json-type-object)\ts-field",
@@ -377,7 +377,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					field *s2
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: []string{
 				"\"field\": {\t(json-type-object)\ts-field",
@@ -395,7 +395,7 @@ func TestResultStructHelp(t *testing.T) {
 				type s struct {
 					field []s2
 				}
-				return reflect.TypeOf(s{})
+				return reflect.TypeFor[s]()
 			}(),
 			expected: []string{
 				"\"field\": [{\t(json-type-arrayjson-type-object)\ts-field",
@@ -447,7 +447,7 @@ func TestHelpArgInternals(t *testing.T) {
 			method: "test",
 			reflectType: func() reflect.Type {
 				type s struct{}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help:     "",
@@ -459,7 +459,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Field int
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help:     "1. field (json-type-numeric, help-required) test-field\n",
@@ -471,7 +471,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Optional *int
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help:     "1. optional (json-type-numeric, help-optional) test-optional\n",
@@ -483,7 +483,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Optional *string
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: func() map[int]reflect.Value {
 				defVal := "test"
@@ -503,7 +503,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Field s2
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help: "1. field (json-type-object, help-required) test-field\n" +
@@ -518,7 +518,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Field map[string]float64
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help: "1. field (json-type-object, help-required) test-field\n" +
@@ -534,7 +534,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Field []int64
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help:     "1. field (json-type-arrayjson-type-numeric, help-required) test-field\n",
@@ -549,7 +549,7 @@ func TestHelpArgInternals(t *testing.T) {
 				type s struct {
 					Field []s2
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			defaults: nil,
 			help: "1. field (json-type-arrayjson-type-object, help-required) test-field\n" +
@@ -585,7 +585,7 @@ func TestMethodHelp(t *testing.T) {
 		method      string
 		reflectType reflect.Type
 		defaults    map[int]reflect.Value
-		resultTypes []interface{}
+		resultTypes []any
 		help        string
 	}{
 		{
@@ -593,7 +593,7 @@ func TestMethodHelp(t *testing.T) {
 			method: "test",
 			reflectType: func() reflect.Type {
 				type s struct{}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			help: "test\n\ntest--synopsis\n\n" +
 				"help-arguments:\nhelp-arguments-none\n\n" +
@@ -604,9 +604,9 @@ func TestMethodHelp(t *testing.T) {
 			method: "test",
 			reflectType: func() reflect.Type {
 				type s struct{}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
-			resultTypes: []interface{}{(*int64)(nil)},
+			resultTypes: []any{(*int64)(nil)},
 			help: "test\n\ntest--synopsis\n\n" +
 				"help-arguments:\nhelp-arguments-none\n\n" +
 				"help-result:\nn (json-type-numeric) test--result0\n",
@@ -616,9 +616,9 @@ func TestMethodHelp(t *testing.T) {
 			method: "test",
 			reflectType: func() reflect.Type {
 				type s struct{}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
-			resultTypes: []interface{}{(*int64)(nil), nil},
+			resultTypes: []any{(*int64)(nil), nil},
 			help: "test\n\ntest--synopsis\n\n" +
 				"help-arguments:\nhelp-arguments-none\n\n" +
 				"help-result (test--condition0):\nn (json-type-numeric) test--result0\n\n" +
@@ -631,7 +631,7 @@ func TestMethodHelp(t *testing.T) {
 				type s struct {
 					Field bool
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			help: "test field\n\ntest--synopsis\n\n" +
 				"help-arguments:\n1. field (json-type-bool, help-required) test-field\n\n" +
@@ -644,7 +644,7 @@ func TestMethodHelp(t *testing.T) {
 				type s struct {
 					Field *bool
 				}
-				return reflect.TypeOf((*s)(nil))
+				return reflect.TypeFor[*s]()
 			}(),
 			help: "test (field)\n\ntest--synopsis\n\n" +
 				"help-arguments:\n1. field (json-type-bool, help-optional) test-field\n\n" +
@@ -676,7 +676,7 @@ func TestGenerateHelpErrors(t *testing.T) {
 	tests := []struct {
 		name        string
 		method      string
-		resultTypes []interface{}
+		resultTypes []any
 		err         hnsjson.Error
 	}{
 		{
@@ -687,19 +687,19 @@ func TestGenerateHelpErrors(t *testing.T) {
 		{
 			name:        "non-pointer result type",
 			method:      "help",
-			resultTypes: []interface{}{0},
+			resultTypes: []any{0},
 			err:         hnsjson.Error{ErrorCode: hnsjson.ErrInvalidType},
 		},
 		{
 			name:        "invalid result type",
 			method:      "help",
-			resultTypes: []interface{}{(*complex64)(nil)},
+			resultTypes: []any{(*complex64)(nil)},
 			err:         hnsjson.Error{ErrorCode: hnsjson.ErrInvalidType},
 		},
 		{
 			name:        "missing description",
 			method:      "help",
-			resultTypes: []interface{}{(*string)(nil), nil},
+			resultTypes: []any{(*string)(nil), nil},
 			err:         hnsjson.Error{ErrorCode: hnsjson.ErrMissingDescription},
 		},
 	}
@@ -708,7 +708,7 @@ func TestGenerateHelpErrors(t *testing.T) {
 	for i, test := range tests {
 		_, err := hnsjson.GenerateHelp(test.method, nil,
 			test.resultTypes...)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
+		if reflect.TypeOf(err) != reflect.TypeFor[hnsjson.Error]() {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%v), "+
 				"want %T", i, test.name, err, err, test.err)
 			continue

@@ -127,7 +127,7 @@ func TestAddrManagerSerialization(t *testing.T) {
 	const numAddrs = 5
 
 	expectedAddrs := make(map[string]*wire.NetAddressV2, numAddrs)
-	for i := 0; i < numAddrs; i++ {
+	for range numAddrs {
 		addr := routableRandAddr(t)
 		expectedAddrs[NetAddressKey(addr)] = addr
 		addrMgr.AddAddress(addr, routableRandAddr(t))
@@ -243,7 +243,7 @@ func TestAddrManagerV1ToV2(t *testing.T) {
 	const numAddrs = 5
 
 	expectedAddrs := make(map[string]*wire.NetAddressV2, numAddrs)
-	for i := 0; i < numAddrs; i++ {
+	for range numAddrs {
 		addr := routableRandAddr(t)
 		expectedAddrs[NetAddressKey(addr)] = addr
 		addrMgr.AddAddress(addr, routableRandAddr(t))

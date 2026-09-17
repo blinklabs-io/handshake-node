@@ -1299,7 +1299,7 @@ func testFetchBlockIO(tc *testContext, tx database.Tx) bool {
 			"%d, want %d", len(blockData), len(allBlockBytes))
 		return false
 	}
-	for i := 0; i < len(blockData); i++ {
+	for i := range blockData {
 		blockHash := allBlockHashes[i]
 		wantBlockBytes := allBlockBytes[i]
 		gotBlockBytes := blockData[i]
@@ -1324,7 +1324,7 @@ func testFetchBlockIO(tc *testContext, tx database.Tx) bool {
 			len(allBlockBytes))
 		return false
 	}
-	for i := 0; i < len(blockHeaderData); i++ {
+	for i := range blockHeaderData {
 		blockHash := allBlockHashes[i]
 		wantHeaderBytes := allBlockBytes[i][0:wire.MaxBlockHeaderPayload]
 		gotHeaderBytes := blockHeaderData[i]
@@ -1960,10 +1960,10 @@ func testConcurrecy(tc *testContext) bool {
 	// Start up several concurrent readers for the same block and wait for
 	// the results.
 	startTime = time.Now()
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		go reader(0)
 	}
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		if result := <-resultChan; !result {
 			return false
 		}
@@ -1983,10 +1983,10 @@ func testConcurrecy(tc *testContext) bool {
 	// Start up several concurrent readers for different blocks and wait for
 	// the results.
 	startTime = time.Now()
-	for i := 0; i < numReaders; i++ {
+	for i := range numReaders {
 		go reader(i)
 	}
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		if result := <-resultChan; !result {
 			return false
 		}
@@ -2034,10 +2034,10 @@ func testConcurrecy(tc *testContext) bool {
 		}
 		resultChan <- true
 	}
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		go reader(0)
 	}
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		<-started
 	}
 
@@ -2054,7 +2054,7 @@ func testConcurrecy(tc *testContext) bool {
 	close(writeComplete)
 
 	// Wait for reader results.
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		if result := <-resultChan; !result {
 			return false
 		}
@@ -2078,10 +2078,10 @@ func testConcurrecy(tc *testContext) bool {
 	}
 	numWriters := 3
 	startTime = time.Now()
-	for i := 0; i < numWriters; i++ {
+	for range numWriters {
 		go writer()
 	}
-	for i := 0; i < numWriters; i++ {
+	for range numWriters {
 		if result := <-resultChan; !result {
 			return false
 		}
@@ -2109,17 +2109,17 @@ func testConcurrentClose(tc *testContext) bool {
 	// Start up a few readers and wait for them to acquire views.  Each
 	// reader waits for a signal to complete to ensure the transactions stay
 	// open until they are explicitly signalled to be closed.
-	var activeReaders int32
+	var activeReaders atomic.Int32
 	numReaders := 3
 	started := make(chan struct{})
 	finishReaders := make(chan struct{})
 	resultChan := make(chan bool, numReaders+1)
 	reader := func() {
 		err := tc.db.View(func(tx database.Tx) error {
-			atomic.AddInt32(&activeReaders, 1)
+			activeReaders.Add(1)
 			started <- struct{}{}
 			<-finishReaders
-			atomic.AddInt32(&activeReaders, -1)
+			activeReaders.Add(-1)
 			return nil
 		})
 		if err != nil {
@@ -2129,10 +2129,10 @@ func testConcurrentClose(tc *testContext) bool {
 		}
 		resultChan <- true
 	}
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		go reader()
 	}
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		<-started
 	}
 
@@ -2158,7 +2158,7 @@ func testConcurrentClose(tc *testContext) bool {
 	// active readers open.
 	time.AfterFunc(time.Millisecond*250, func() { close(finishReaders) })
 	<-dbClosed
-	if nr := atomic.LoadInt32(&activeReaders); nr != 0 {
+	if nr := activeReaders.Load(); nr != 0 {
 		tc.t.Errorf("Close did not appear to block with active "+
 			"readers: %d active", nr)
 		return false

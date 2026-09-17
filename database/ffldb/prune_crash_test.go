@@ -198,20 +198,14 @@ func TestPruneCrashHelper(t *testing.T) {
 
 	dbPath := os.Getenv(pruneCrashDBPathEnv)
 	wantStage := pruneStage(os.Getenv(pruneCrashStageEnv))
-	knownStage := false
-	for _, stage := range []pruneStage{
+	knownStage := slices.Contains([]pruneStage{
 		pruneStageBlocksSynced,
 		pruneStageMetadataCommitted,
 		pruneStageFileDeleted,
 		pruneStageDeletionsComplete,
 		pruneStageDirectorySynced,
 		pruneStageTombstoneCleared,
-	} {
-		if wantStage == stage {
-			knownStage = true
-			break
-		}
-	}
+	}, wantStage)
 	if !knownStage {
 		t.Fatalf("unknown prune crash stage %q", wantStage)
 	}

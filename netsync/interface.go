@@ -6,9 +6,9 @@ package netsync
 
 import (
 	"github.com/blinklabs-io/handshake-node/blockchain"
-	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/chaincfg"
 	"github.com/blinklabs-io/handshake-node/chaincfg/chainhash"
+	"github.com/blinklabs-io/handshake-node/hnsutil"
 	"github.com/blinklabs-io/handshake-node/mempool"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/wire"
@@ -22,7 +22,7 @@ type PeerNotifier interface {
 
 	UpdatePeerHeights(latestBlkHash *chainhash.Hash, latestHeight int32, updateSource *peer.Peer)
 
-	RelayInventory(invVect *wire.InvVect, data interface{})
+	RelayInventory(invVect *wire.InvVect, data any)
 
 	TransactionConfirmed(tx *hnsutil.Tx)
 }

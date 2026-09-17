@@ -13,7 +13,7 @@ import (
 // CmdMethod returns the method for the passed command.  The provided command
 // type must be a registered type.  All commands provided by this package are
 // registered by default.
-func CmdMethod(cmd interface{}) (string, error) {
+func CmdMethod(cmd any) (string, error) {
 	// Look up the cmd type and error out if not registered.
 	rt := reflect.TypeOf(cmd)
 	registerLock.RLock()
@@ -54,8 +54,7 @@ func MethodUsageFlags(method string) (UsageFlag, error) {
 func subStructUsage(structType reflect.Type) string {
 	numFields := structType.NumField()
 	fieldUsages := make([]string, 0, numFields)
-	for i := 0; i < structType.NumField(); i++ {
-		rtf := structType.Field(i)
+	for rtf := range structType.Fields() {
 
 		// When the field has a jsonrpcusage struct tag specified use
 		// that instead of automatically generating it.
@@ -101,13 +100,13 @@ func subStructUsage(structType reflect.Type) string {
 func subArrayUsage(arrayType reflect.Type, fieldName string) string {
 	// Convert plural field names to singular.  Only works for English.
 	singularFieldName := fieldName
-	if strings.HasSuffix(fieldName, "ies") {
-		singularFieldName = strings.TrimSuffix(fieldName, "ies")
+	if before, ok := strings.CutSuffix(fieldName, "ies"); ok {
+		singularFieldName = before
 		singularFieldName = singularFieldName + "y"
-	} else if strings.HasSuffix(fieldName, "es") {
-		singularFieldName = strings.TrimSuffix(fieldName, "es")
-	} else if strings.HasSuffix(fieldName, "s") {
-		singularFieldName = strings.TrimSuffix(fieldName, "s")
+	} else if before, ok := strings.CutSuffix(fieldName, "es"); ok {
+		singularFieldName = before
+	} else if before, ok := strings.CutSuffix(fieldName, "s"); ok {
+		singularFieldName = before
 	}
 
 	elemType := arrayType.Elem()
@@ -185,7 +184,7 @@ func methodUsageText(rtp reflect.Type, defaults map[int]reflect.Value, method st
 	numFields := rt.NumField()
 	reqFieldUsages := make([]string, 0, numFields)
 	optFieldUsages := make([]string, 0, numFields)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		rtf := rt.Field(i)
 		var isOptional bool
 		if kind := rtf.Type.Kind(); kind == reflect.Ptr {

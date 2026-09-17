@@ -24,17 +24,17 @@ func TestWalletSvrWsCmds(t *testing.T) {
 	testID := int(1)
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "createencryptedwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createencryptedwallet", "pass")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateEncryptedWalletCmd("pass")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"createencryptedwallet","params":["pass"],"id":1}`,
@@ -42,10 +42,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "exportwatchingwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("exportwatchingwallet")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewExportWatchingWalletCmd(nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"exportwatchingwallet","params":[],"id":1}`,
@@ -56,10 +56,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "exportwatchingwallet optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("exportwatchingwallet", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewExportWatchingWalletCmd(hnsjson.String("acct"), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"exportwatchingwallet","params":["acct"],"id":1}`,
@@ -70,10 +70,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "exportwatchingwallet optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("exportwatchingwallet", "acct", true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewExportWatchingWalletCmd(hnsjson.String("acct"),
 					hnsjson.Bool(true))
 			},
@@ -85,10 +85,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "getunconfirmedbalance",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getunconfirmedbalance")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetUnconfirmedBalanceCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getunconfirmedbalance","params":[],"id":1}`,
@@ -98,10 +98,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "getunconfirmedbalance optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getunconfirmedbalance", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetUnconfirmedBalanceCmd(hnsjson.String("acct"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getunconfirmedbalance","params":["acct"],"id":1}`,
@@ -111,10 +111,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "listaddresstransactions",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listaddresstransactions", `["1Address"]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAddressTransactionsCmd([]string{"1Address"}, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listaddresstransactions","params":[["1Address"]],"id":1}`,
@@ -125,10 +125,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "listaddresstransactions optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listaddresstransactions", `["1Address"]`, "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAddressTransactionsCmd([]string{"1Address"},
 					hnsjson.String("acct"))
 			},
@@ -140,10 +140,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "listalltransactions",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listalltransactions")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAllTransactionsCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listalltransactions","params":[],"id":1}`,
@@ -153,10 +153,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "listalltransactions optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listalltransactions", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAllTransactionsCmd(hnsjson.String("acct"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listalltransactions","params":["acct"],"id":1}`,
@@ -166,10 +166,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "recoveraddresses",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("recoveraddresses", "acct", 10)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewRecoverAddressesCmd("acct", 10)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"recoveraddresses","params":["acct",10],"id":1}`,
@@ -180,10 +180,10 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		},
 		{
 			name: "walletislocked",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("walletislocked")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewWalletIsLockedCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"walletislocked","params":[],"id":1}`,

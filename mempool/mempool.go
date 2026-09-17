@@ -268,7 +268,7 @@ type orphanTx struct {
 // peers.
 type TxPool struct {
 	// The following variables must only be used atomically.
-	lastUpdated int64 // last time pool was updated
+	lastUpdated atomic.Int64 // last time pool was updated
 
 	mtx                     sync.RWMutex
 	cfg                     Config
@@ -695,7 +695,7 @@ func (mp *TxPool) removeTransaction(tx *hnsutil.Tx, removeRedeemers bool) {
 		mp.subtractMemoryUsage(txDesc.memoryUsage)
 		delete(mp.pool, *txHash)
 		mp.removeNameOperationIndexes(txDesc.Tx)
-		atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+		mp.lastUpdated.Store(time.Now().Unix())
 	}
 }
 
@@ -784,7 +784,7 @@ func (mp *TxPool) addTransaction(utxoView *blockchain.UtxoViewpoint, tx *hnsutil
 		mp.outpoints[txIn.PreviousOutPoint] = tx
 	}
 	mp.addNameOperationIndexes(tx)
-	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+	mp.lastUpdated.Store(time.Now().Unix())
 
 	// Add unconfirmed address index entries associated with the transaction
 	// if enabled.
@@ -857,7 +857,7 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 					"coinbase proof evicted because the mempool is full",
 				)
 			}
-			atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+			mp.lastUpdated.Store(time.Now().Unix())
 			return hash, nil
 		}
 	}
@@ -887,7 +887,7 @@ func (mp *TxPool) AddCoinbaseProof(proof mining.CoinbaseProof) (
 			"coinbase proof evicted because the mempool is full",
 		)
 	}
-	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+	mp.lastUpdated.Store(time.Now().Unix())
 	return hash, nil
 }
 
@@ -922,7 +922,7 @@ func (mp *TxPool) removeCoinbaseProofAt(i int) {
 	for j := i; j < len(mp.coinbaseProofs); j++ {
 		mp.coinbaseProofsByWitness[mp.coinbaseProofs[j].witnessHash] = j
 	}
-	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
+	mp.lastUpdated.Store(time.Now().Unix())
 }
 
 // RemoveCoinbaseProofs removes claim and airdrop proofs consumed by the passed
@@ -1131,13 +1131,13 @@ func coinbaseProofErrorPrunable(err error) bool {
 	return ok && policyErr.prunable
 }
 
-func coinbaseProofReject(format string, args ...interface{}) error {
+func coinbaseProofReject(format string, args ...any) error {
 	return &coinbaseProofPolicyError{
 		msg: fmt.Sprintf(format, args...),
 	}
 }
 
-func coinbaseProofPrune(format string, args ...interface{}) error {
+func coinbaseProofPrune(format string, args ...any) error {
 	return &coinbaseProofPolicyError{
 		msg:      fmt.Sprintf(format, args...),
 		prunable: true,
@@ -2751,7 +2751,7 @@ func (mp *TxPool) RawMempoolVerbose() map[string]*hnsjson.GetRawMempoolVerboseRe
 //
 // This function is safe for concurrent access.
 func (mp *TxPool) LastUpdated() time.Time {
-	return time.Unix(atomic.LoadInt64(&mp.lastUpdated), 0)
+	return time.Unix(mp.lastUpdated.Load(), 0)
 }
 
 // MemoryUsage returns the aggregate retained-memory estimate and configured

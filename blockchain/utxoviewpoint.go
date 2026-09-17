@@ -429,7 +429,7 @@ func (view *UtxoViewpoint) connectTransactions(block *hnsutil.Block, stxos *[]Sp
 func (view *UtxoViewpoint) fetchEntryByHash(db database.DB, hash *chainhash.Hash) (*UtxoEntry, error) {
 	// First attempt to find a utxo with the provided hash in the view.
 	prevOut := wire.OutPoint{Hash: *hash}
-	for idx := uint32(0); idx < MaxOutputsPerBlock; idx++ {
+	for idx := range uint32(MaxOutputsPerBlock) {
 		prevOut.Index = idx
 		entry := view.LookupEntry(prevOut)
 		if entry != nil {

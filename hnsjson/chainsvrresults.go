@@ -437,7 +437,7 @@ func (h StringOrArray) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (h *StringOrArray) UnmarshalJSON(data []byte) error {
-	var unmarshalled interface{}
+	var unmarshalled any
 	if err := json.Unmarshal(data, &unmarshalled); err != nil {
 		return err
 	}
@@ -446,7 +446,7 @@ func (h *StringOrArray) UnmarshalJSON(data []byte) error {
 	case string:
 		*h = []string{v}
 
-	case []interface{}:
+	case []any:
 		s := make([]string, len(v))
 		for i, e := range v {
 			str, ok := e.(string)

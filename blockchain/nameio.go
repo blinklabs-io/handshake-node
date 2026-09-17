@@ -283,7 +283,7 @@ func dbDeserializeNameLeaves(serialized []byte) ([]urkelLeaf, error) {
 	}
 
 	leaves := make([]urkelLeaf, 0, int(count))
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		var leaf urkelLeaf
 		if _, err := io.ReadFull(r, leaf.key[:]); err != nil {
 			return nil, err
@@ -417,7 +417,7 @@ func dbDeserializeNameUndo(serialized []byte) ([]nameUndoEntry, error) {
 	}
 
 	entries := make([]nameUndoEntry, 0, count)
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		var entry nameUndoEntry
 		if _, err := io.ReadFull(r, entry.nameHash[:]); err != nil {
 			return nil, err

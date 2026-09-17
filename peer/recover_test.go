@@ -5,7 +5,6 @@
 package peer
 
 import (
-	"sync/atomic"
 	"testing"
 )
 
@@ -32,7 +31,7 @@ func TestRecoverFromPanic(t *testing.T) {
 	<-done
 
 	// After recovery, the disconnect flag must be set.
-	if atomic.LoadInt32(&p.disconnect) == 0 {
+	if p.disconnect.Load() == 0 {
 		t.Fatal("expected disconnect flag to be set " +
 			"after panic recovery")
 	}

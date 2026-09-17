@@ -86,7 +86,7 @@ func resultStructHelp(xT descLookupFunc, rt reflect.Type, indentLevel int) []str
 	// Generate the help for each of the fields in the result struct.
 	numField := rt.NumField()
 	results := make([]string, 0, numField)
-	for i := 0; i < numField; i++ {
+	for i := range numField {
 		rtf := rt.Field(i)
 		if strings.Split(rtf.Tag.Get("json"), ",")[0] == "-" {
 			continue
@@ -340,7 +340,7 @@ func argHelp(xT descLookupFunc, rtp reflect.Type, defaults map[int]reflect.Value
 	// simplifying assumptions are made here because the RegisterCmd
 	// function has already rigorously enforced the layout.
 	args := make([]string, 0, numFields)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		rtf := rt.Field(i)
 		var defaultVal *reflect.Value
 		if defVal, ok := defaults[i]; ok {
@@ -396,17 +396,17 @@ func argHelp(xT descLookupFunc, rtp reflect.Type, defaults map[int]reflect.Value
 // methodHelp generates and returns the help output for the provided command
 // and method info.  This is the main work horse for the exported MethodHelp
 // function.
-func methodHelp(xT descLookupFunc, rtp reflect.Type, defaults map[int]reflect.Value, method string, resultTypes []interface{}) string {
+func methodHelp(xT descLookupFunc, rtp reflect.Type, defaults map[int]reflect.Value, method string, resultTypes []any) string {
 	// Start off with the method usage and help synopsis.
-	help := fmt.Sprintf("%s\n\n%s\n", methodUsageText(rtp, defaults, method),
+	var help strings.Builder
+	fmt.Fprintf(&help, "%s\n\n%s\n", methodUsageText(rtp, defaults, method),
 		xT(method+"--synopsis"))
 
 	// Generate the help for each argument in the command.
 	if argText := argHelp(xT, rtp, defaults, method); argText != "" {
-		help += fmt.Sprintf("\n%s:\n%s", xT("help-arguments"),
-			argText)
+		fmt.Fprintf(&help, "\n%s:\n%s", xT("help-arguments"), argText)
 	} else {
-		help += fmt.Sprintf("\n%s:\n%s\n", xT("help-arguments"),
+		fmt.Fprintf(&help, "\n%s:\n%s\n", xT("help-arguments"),
 			xT("help-arguments-none"))
 	}
 
@@ -430,17 +430,17 @@ func methodHelp(xT descLookupFunc, rtp reflect.Type, defaults map[int]reflect.Va
 	if len(resultTexts) > 1 {
 		for i, resultText := range resultTexts {
 			condKey := fmt.Sprintf("%s--condition%d", method, i)
-			help += fmt.Sprintf("\n%s (%s):\n%s\n",
+			fmt.Fprintf(&help, "\n%s (%s):\n%s\n",
 				xT("help-result"), xT(condKey), resultText)
 		}
 	} else if len(resultTexts) > 0 {
-		help += fmt.Sprintf("\n%s:\n%s\n", xT("help-result"),
+		fmt.Fprintf(&help, "\n%s:\n%s\n", xT("help-result"),
 			resultTexts[0])
 	} else {
-		help += fmt.Sprintf("\n%s:\n%s\n", xT("help-result"),
+		fmt.Fprintf(&help, "\n%s:\n%s\n", xT("help-result"),
 			xT("help-result-nothing"))
 	}
-	return help
+	return help.String()
 }
 
 // isValidResultType returns whether the passed reflect kind is one of the
@@ -507,7 +507,7 @@ func isValidResultType(kind reflect.Kind) bool {
 //	"help--condition1": "command specified"
 //	"help--result0":    "List of commands"
 //	"help--result1":    "Help for specified command"
-func GenerateHelp(method string, descs map[string]string, resultTypes ...interface{}) (string, error) {
+func GenerateHelp(method string, descs map[string]string, resultTypes ...any) (string, error) {
 	// Look up details about the provided method and error out if not
 	// registered.
 	registerLock.RLock()

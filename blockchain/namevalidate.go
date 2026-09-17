@@ -1314,10 +1314,7 @@ func (v *nameBlockView) verifyNameRenewalHash(dbTx database.Tx,
 		return false, nil
 	}
 
-	minHeight := int64(height) - int64(v.chain.chainParams.NameRenewalPeriod)
-	if minHeight < 0 {
-		minHeight = 0
-	}
+	minHeight := max(int64(height)-int64(v.chain.chainParams.NameRenewalPeriod), 0)
 	return int64(blockHeight) >= minHeight, nil
 }
 

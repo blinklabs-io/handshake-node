@@ -165,7 +165,7 @@ func (c *Covenant) Decode(r io.Reader) error {
 	}
 
 	c.Items = make([][]byte, itemCount)
-	for i := uint64(0); i < itemCount; i++ {
+	for i := range itemCount {
 		item, err := ReadVarBytes(r, 0, maxCovenantItemSize,
 			"covenant item")
 		if err != nil {

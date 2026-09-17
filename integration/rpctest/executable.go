@@ -52,11 +52,12 @@ func execPath() (string, error) {
 		outputPath += ".exe"
 	}
 	cmd := exec.Command(
-		"go", "build", "-o", outputPath, "github.com/blinklabs-io/handshake-node",
+		"go", "build", "-buildvcs=false", "-o", outputPath,
+		"github.com/blinklabs-io/handshake-node",
 	)
-	err = cmd.Run()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("Failed to build handshake-node: %v", err)
+		return "", fmt.Errorf("build handshake-node: %w: %s", err, output)
 	}
 
 	// Save executable path so future calls do not recompile.

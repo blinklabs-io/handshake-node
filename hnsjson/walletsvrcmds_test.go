@@ -25,17 +25,17 @@ func TestWalletSvrCmds(t *testing.T) {
 	testID := int(1)
 	tests := []struct {
 		name         string
-		newCmd       func() (interface{}, error)
-		staticCmd    func() interface{}
+		newCmd       func() (any, error)
+		staticCmd    func() any
 		marshalled   string
-		unmarshalled interface{}
+		unmarshalled any
 	}{
 		{
 			name: "addmultisigaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("addmultisigaddress", 2, []string{"031234", "035678"})
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				keys := []string{"031234", "035678"}
 				return hnsjson.NewAddMultisigAddressCmd(2, keys, nil)
 			},
@@ -48,10 +48,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "addmultisigaddress optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("addmultisigaddress", 2, []string{"031234", "035678"}, "test")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				keys := []string{"031234", "035678"}
 				return hnsjson.NewAddMultisigAddressCmd(2, keys, hnsjson.String("test"))
 			},
@@ -64,10 +64,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "createwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createwallet", "mywallet", true, true, "secret", true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateWalletCmd("mywallet",
 					hnsjson.Bool(true), hnsjson.Bool(true),
 					hnsjson.String("secret"), hnsjson.Bool(true))
@@ -83,10 +83,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "createwallet - optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createwallet", "mywallet")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateWalletCmd("mywallet",
 					nil, nil, nil, nil)
 			},
@@ -101,10 +101,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "createwallet - optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createwallet", "mywallet", "null", "null", "secret")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewCreateWalletCmd("mywallet",
 					nil, nil, hnsjson.String("secret"), nil)
 			},
@@ -119,10 +119,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "addwitnessaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("addwitnessaddress", "1address")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewAddWitnessAddressCmd("1address")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"addwitnessaddress","params":["1address"],"id":1}`,
@@ -132,10 +132,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "backupwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("backupwallet", "backup.dat")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewBackupWalletCmd("backup.dat")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"backupwallet","params":["backup.dat"],"id":1}`,
@@ -143,10 +143,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "loadwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("loadwallet", "wallet.dat")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewLoadWalletCmd("wallet.dat")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"loadwallet","params":["wallet.dat"],"id":1}`,
@@ -154,20 +154,20 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "unloadwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("unloadwallet", "default")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewUnloadWalletCmd(hnsjson.String("default"))
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"unloadwallet","params":["default"],"id":1}`,
 			unmarshalled: &hnsjson.UnloadWalletCmd{WalletName: hnsjson.String("default")},
 		},
 		{name: "unloadwallet - nil arg",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("unloadwallet")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewUnloadWalletCmd(nil)
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"unloadwallet","params":[],"id":1}`,
@@ -175,10 +175,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "createmultisig",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("createmultisig", 2, []string{"031234", "035678"})
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				keys := []string{"031234", "035678"}
 				return hnsjson.NewCreateMultisigCmd(2, keys)
 			},
@@ -190,10 +190,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "dumpprivkey",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("dumpprivkey", "1Address")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewDumpPrivKeyCmd("1Address")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"dumpprivkey","params":["1Address"],"id":1}`,
@@ -203,10 +203,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "encryptwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("encryptwallet", "pass")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewEncryptWalletCmd("pass")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"encryptwallet","params":["pass"],"id":1}`,
@@ -216,10 +216,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "estimatefee",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("estimatefee", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewEstimateFeeCmd(6)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"estimatefee","params":[6],"id":1}`,
@@ -229,10 +229,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "estimatesmartfee - no mode",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("estimatesmartfee", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewEstimateSmartFeeCmd(6, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"estimatesmartfee","params":[6],"id":1}`,
@@ -243,10 +243,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "estimatesmartfee - economical mode",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("estimatesmartfee", 6, hnsjson.EstimateModeEconomical)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewEstimateSmartFeeCmd(6, &hnsjson.EstimateModeEconomical)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"estimatesmartfee","params":[6,"ECONOMICAL"],"id":1}`,
@@ -257,10 +257,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "estimatepriority",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("estimatepriority", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewEstimatePriorityCmd(6)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"estimatepriority","params":[6],"id":1}`,
@@ -270,10 +270,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getaccount", "1Address")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetAccountCmd("1Address")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getaccount","params":["1Address"],"id":1}`,
@@ -283,10 +283,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getaccountaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getaccountaddress", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetAccountAddressCmd("acct")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getaccountaddress","params":["acct"],"id":1}`,
@@ -296,10 +296,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getaddressesbyaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getaddressesbyaccount", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetAddressesByAccountCmd("acct")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getaddressesbyaccount","params":["acct"],"id":1}`,
@@ -309,10 +309,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getaddressinfo",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getaddressinfo", "1234")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetAddressInfoCmd("1234")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getaddressinfo","params":["1234"],"id":1}`,
@@ -322,10 +322,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getbalance",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getbalance")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetBalanceCmd(nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getbalance","params":[],"id":1}`,
@@ -336,10 +336,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getbalance optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getbalance", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetBalanceCmd(hnsjson.String("acct"), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getbalance","params":["acct"],"id":1}`,
@@ -350,10 +350,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getbalance optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getbalance", "acct", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetBalanceCmd(hnsjson.String("acct"), hnsjson.Int(6))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getbalance","params":["acct",6],"id":1}`,
@@ -364,10 +364,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getbalances",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getbalances")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetBalancesCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getbalances","params":[],"id":1}`,
@@ -375,10 +375,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getnewaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnewaddress")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNewAddressCmd(nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getnewaddress","params":[],"id":1}`,
@@ -389,10 +389,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getnewaddress optional acct",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnewaddress", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNewAddressCmd(hnsjson.String("acct"), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getnewaddress","params":["acct"],"id":1}`,
@@ -403,10 +403,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getnewaddress optional acct and type",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getnewaddress", "acct", "legacy")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetNewAddressCmd(hnsjson.String("acct"), hnsjson.String("legacy"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getnewaddress","params":["acct","legacy"],"id":1}`,
@@ -417,10 +417,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getrawchangeaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getrawchangeaddress")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetRawChangeAddressCmd(nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getrawchangeaddress","params":[],"id":1}`,
@@ -431,10 +431,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getrawchangeaddress optional acct",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getrawchangeaddress", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetRawChangeAddressCmd(hnsjson.String("acct"), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getrawchangeaddress","params":["acct"],"id":1}`,
@@ -445,10 +445,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getrawchangeaddress optional acct and type",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getrawchangeaddress", "acct", "legacy")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetRawChangeAddressCmd(hnsjson.String("acct"), hnsjson.String("legacy"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getrawchangeaddress","params":["acct","legacy"],"id":1}`,
@@ -459,10 +459,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getreceivedbyaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getreceivedbyaccount", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetReceivedByAccountCmd("acct", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getreceivedbyaccount","params":["acct"],"id":1}`,
@@ -473,10 +473,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getreceivedbyaccount optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getreceivedbyaccount", "acct", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetReceivedByAccountCmd("acct", hnsjson.Int(6))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getreceivedbyaccount","params":["acct",6],"id":1}`,
@@ -487,10 +487,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getreceivedbyaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getreceivedbyaddress", "1Address")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetReceivedByAddressCmd("1Address", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getreceivedbyaddress","params":["1Address"],"id":1}`,
@@ -501,10 +501,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getreceivedbyaddress optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getreceivedbyaddress", "1Address", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetReceivedByAddressCmd("1Address", hnsjson.Int(6))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getreceivedbyaddress","params":["1Address",6],"id":1}`,
@@ -515,10 +515,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "gettransaction",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("gettransaction", "123")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetTransactionCmd("123", nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"gettransaction","params":["123"],"id":1}`,
@@ -529,10 +529,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "gettransaction optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("gettransaction", "123", true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetTransactionCmd("123", hnsjson.Bool(true))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"gettransaction","params":["123",true],"id":1}`,
@@ -543,10 +543,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "getwalletinfo",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("getwalletinfo")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewGetWalletInfoCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"getwalletinfo","params":[],"id":1}`,
@@ -554,10 +554,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importprivkey",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importprivkey", "abc")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportPrivKeyCmd("abc", nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importprivkey","params":["abc"],"id":1}`,
@@ -569,10 +569,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importprivkey optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importprivkey", "abc", "label")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportPrivKeyCmd("abc", hnsjson.String("label"), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importprivkey","params":["abc","label"],"id":1}`,
@@ -584,10 +584,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importprivkey optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("importprivkey", "abc", "label", false)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewImportPrivKeyCmd("abc", hnsjson.String("label"), hnsjson.Bool(false))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"importprivkey","params":["abc","label",false],"id":1}`,
@@ -599,10 +599,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "keypoolrefill",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("keypoolrefill")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewKeyPoolRefillCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"keypoolrefill","params":[],"id":1}`,
@@ -612,10 +612,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "keypoolrefill optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("keypoolrefill", 200)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewKeyPoolRefillCmd(hnsjson.Uint(200))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"keypoolrefill","params":[200],"id":1}`,
@@ -625,10 +625,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listaccounts",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listaccounts")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAccountsCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listaccounts","params":[],"id":1}`,
@@ -638,10 +638,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listaccounts optional",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listaccounts", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAccountsCmd(hnsjson.Int(6))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listaccounts","params":[6],"id":1}`,
@@ -651,10 +651,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listaddressgroupings",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listaddressgroupings")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListAddressGroupingsCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"listaddressgroupings","params":[],"id":1}`,
@@ -662,10 +662,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listlockunspent",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listlockunspent")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListLockUnspentCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"listlockunspent","params":[],"id":1}`,
@@ -673,10 +673,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaccount")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAccountCmd(nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaccount","params":[],"id":1}`,
@@ -688,10 +688,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaccount optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaccount", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAccountCmd(hnsjson.Int(6), nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaccount","params":[6],"id":1}`,
@@ -703,10 +703,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaccount optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaccount", 6, true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAccountCmd(hnsjson.Int(6), hnsjson.Bool(true), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaccount","params":[6,true],"id":1}`,
@@ -718,10 +718,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaccount optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaccount", 6, true, false)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAccountCmd(hnsjson.Int(6), hnsjson.Bool(true), hnsjson.Bool(false))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaccount","params":[6,true,false],"id":1}`,
@@ -733,10 +733,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaddress")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAddressCmd(nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaddress","params":[],"id":1}`,
@@ -748,10 +748,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaddress optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaddress", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAddressCmd(hnsjson.Int(6), nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaddress","params":[6],"id":1}`,
@@ -763,10 +763,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaddress optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaddress", 6, true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAddressCmd(hnsjson.Int(6), hnsjson.Bool(true), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaddress","params":[6,true],"id":1}`,
@@ -778,10 +778,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listreceivedbyaddress optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listreceivedbyaddress", 6, true, false)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListReceivedByAddressCmd(hnsjson.Int(6), hnsjson.Bool(true), hnsjson.Bool(false))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listreceivedbyaddress","params":[6,true,false],"id":1}`,
@@ -793,10 +793,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listsinceblock",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listsinceblock")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListSinceBlockCmd(nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listsinceblock","params":[],"id":1}`,
@@ -808,10 +808,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listsinceblock optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listsinceblock", "123")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListSinceBlockCmd(hnsjson.String("123"), nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listsinceblock","params":["123"],"id":1}`,
@@ -823,10 +823,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listsinceblock optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listsinceblock", "123", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListSinceBlockCmd(hnsjson.String("123"), hnsjson.Int(6), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listsinceblock","params":["123",6],"id":1}`,
@@ -838,10 +838,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listsinceblock optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listsinceblock", "123", 6, true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListSinceBlockCmd(hnsjson.String("123"), hnsjson.Int(6), hnsjson.Bool(true))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listsinceblock","params":["123",6,true],"id":1}`,
@@ -853,10 +853,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listsinceblock pad null",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listsinceblock", "null", 1, false)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListSinceBlockCmd(nil, hnsjson.Int(1), hnsjson.Bool(false))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listsinceblock","params":[null,1,false],"id":1}`,
@@ -868,10 +868,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listtransactions",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listtransactions")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListTransactionsCmd(nil, nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listtransactions","params":[],"id":1}`,
@@ -884,10 +884,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listtransactions optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listtransactions", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListTransactionsCmd(hnsjson.String("acct"), nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listtransactions","params":["acct"],"id":1}`,
@@ -900,10 +900,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listtransactions optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listtransactions", "acct", 20)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListTransactionsCmd(hnsjson.String("acct"), hnsjson.Int(20), nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listtransactions","params":["acct",20],"id":1}`,
@@ -916,10 +916,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listtransactions optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listtransactions", "acct", 20, 1)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListTransactionsCmd(hnsjson.String("acct"), hnsjson.Int(20),
 					hnsjson.Int(1), nil)
 			},
@@ -933,10 +933,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listtransactions optional4",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listtransactions", "acct", 20, 1, true)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListTransactionsCmd(hnsjson.String("acct"), hnsjson.Int(20),
 					hnsjson.Int(1), hnsjson.Bool(true))
 			},
@@ -950,10 +950,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listunspent",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listunspent")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListUnspentCmd(nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listunspent","params":[],"id":1}`,
@@ -965,10 +965,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listunspent optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listunspent", 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListUnspentCmd(hnsjson.Int(6), nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listunspent","params":[6],"id":1}`,
@@ -980,10 +980,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listunspent optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listunspent", 6, 100)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListUnspentCmd(hnsjson.Int(6), hnsjson.Int(100), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listunspent","params":[6,100],"id":1}`,
@@ -995,10 +995,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "listunspent optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("listunspent", 6, 100, []string{"1Address", "1Address2"})
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewListUnspentCmd(hnsjson.Int(6), hnsjson.Int(100),
 					&[]string{"1Address", "1Address2"})
 			},
@@ -1011,10 +1011,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "lockunspent",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("lockunspent", true, `[{"txid":"123","vout":1}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.TransactionInput{
 					{Txid: "123", Vout: 1},
 				}
@@ -1030,10 +1030,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "move",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("move", "from", "to", 0.5)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewMoveCmd("from", "to", 0.5, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"move","params":["from","to",0.5],"id":1}`,
@@ -1047,10 +1047,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "move optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("move", "from", "to", 0.5, 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewMoveCmd("from", "to", 0.5, hnsjson.Int(6), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"move","params":["from","to",0.5,6],"id":1}`,
@@ -1064,10 +1064,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "move optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("move", "from", "to", 0.5, 6, "comment")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewMoveCmd("from", "to", 0.5, hnsjson.Int(6), hnsjson.String("comment"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"move","params":["from","to",0.5,6,"comment"],"id":1}`,
@@ -1081,10 +1081,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendfrom",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendfrom", "from", "1Address", 0.5)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSendFromCmd("from", "1Address", 0.5, nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"sendfrom","params":["from","1Address",0.5],"id":1}`,
@@ -1099,10 +1099,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendfrom optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendfrom", "from", "1Address", 0.5, 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSendFromCmd("from", "1Address", 0.5, hnsjson.Int(6), nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"sendfrom","params":["from","1Address",0.5,6],"id":1}`,
@@ -1117,10 +1117,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendfrom optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendfrom", "from", "1Address", 0.5, 6, "comment")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSendFromCmd("from", "1Address", 0.5, hnsjson.Int(6),
 					hnsjson.String("comment"), nil)
 			},
@@ -1136,10 +1136,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendfrom optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendfrom", "from", "1Address", 0.5, 6, "comment", "commentto")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSendFromCmd("from", "1Address", 0.5, hnsjson.Int(6),
 					hnsjson.String("comment"), hnsjson.String("commentto"))
 			},
@@ -1155,10 +1155,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendmany",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendmany", "from", `{"1Address":0.5}`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				amounts := map[string]float64{"1Address": 0.5}
 				return hnsjson.NewSendManyCmd("from", amounts, nil, nil)
 			},
@@ -1172,10 +1172,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendmany optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendmany", "from", `{"1Address":0.5}`, 6)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				amounts := map[string]float64{"1Address": 0.5}
 				return hnsjson.NewSendManyCmd("from", amounts, hnsjson.Int(6), nil)
 			},
@@ -1189,10 +1189,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendmany optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendmany", "from", `{"1Address":0.5}`, 6, "comment")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				amounts := map[string]float64{"1Address": 0.5}
 				return hnsjson.NewSendManyCmd("from", amounts, hnsjson.Int(6), hnsjson.String("comment"))
 			},
@@ -1206,10 +1206,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendtoaddress",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendtoaddress", "1Address", 0.5)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSendToAddressCmd("1Address", 0.5, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"sendtoaddress","params":["1Address",0.5],"id":1}`,
@@ -1222,10 +1222,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "sendtoaddress optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("sendtoaddress", "1Address", 0.5, "comment", "commentto")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSendToAddressCmd("1Address", 0.5, hnsjson.String("comment"),
 					hnsjson.String("commentto"))
 			},
@@ -1239,10 +1239,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "setaccount",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("setaccount", "1Address", "acct")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSetAccountCmd("1Address", "acct")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"setaccount","params":["1Address","acct"],"id":1}`,
@@ -1253,10 +1253,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "settxfee",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("settxfee", 0.0001)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSetTxFeeCmd(0.0001)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"settxfee","params":[0.0001],"id":1}`,
@@ -1266,10 +1266,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signmessage",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signmessage", "1Address", "message")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSignMessageCmd("1Address", "message")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"signmessage","params":["1Address","message"],"id":1}`,
@@ -1280,10 +1280,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransaction",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransaction", "001122")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSignRawTransactionCmd("001122", nil, nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"signrawtransaction","params":["001122"],"id":1}`,
@@ -1296,10 +1296,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransaction optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransaction", "001122", `[{"txid":"123","vout":1,"scriptPubKey":"00","redeemScript":"01"}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.RawTxInput{
 					{
 						Txid:         "123",
@@ -1328,10 +1328,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransaction optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransaction", "001122", `[]`, `["abc"]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.RawTxInput{}
 				privKeys := []string{"abc"}
 				return hnsjson.NewSignRawTransactionCmd("001122", &txInputs, &privKeys, nil)
@@ -1346,10 +1346,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransaction optional3",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransaction", "001122", `[]`, `[]`, "ALL")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.RawTxInput{}
 				privKeys := []string{}
 				return hnsjson.NewSignRawTransactionCmd("001122", &txInputs, &privKeys,
@@ -1365,10 +1365,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransactionwithwallet",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransactionwithwallet", "001122")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewSignRawTransactionWithWalletCmd("001122", nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"signrawtransactionwithwallet","params":["001122"],"id":1}`,
@@ -1380,10 +1380,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransactionwithwallet optional1",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransactionwithwallet", "001122", `[{"txid":"123","vout":1,"scriptPubKey":"00","redeemScript":"01","witnessScript":"02","amount":1.5}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.RawTxWitnessInput{
 					{
 						Txid:          "123",
@@ -1415,10 +1415,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransactionwithwallet optional1 with blank fields in input",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransactionwithwallet", "001122", `[{"txid":"123","vout":1,"scriptPubKey":"00","redeemScript":"01"}]`)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.RawTxWitnessInput{
 					{
 						Txid:         "123",
@@ -1446,10 +1446,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "signrawtransactionwithwallet optional2",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("signrawtransactionwithwallet", "001122", `[]`, "ALL")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				txInputs := []hnsjson.RawTxWitnessInput{}
 				return hnsjson.NewSignRawTransactionWithWalletCmd("001122", &txInputs, hnsjson.String("ALL"))
 			},
@@ -1462,10 +1462,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "walletlock",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("walletlock")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewWalletLockCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"walletlock","params":[],"id":1}`,
@@ -1473,10 +1473,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "walletpassphrase",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("walletpassphrase", "pass", 60)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewWalletPassphraseCmd("pass", 60)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"walletpassphrase","params":["pass",60],"id":1}`,
@@ -1487,10 +1487,10 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "walletpassphrasechange",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd("walletpassphrasechange", "old", "new")
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewWalletPassphraseChangeCmd("old", "new")
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"walletpassphrasechange","params":["old","new"],"id":1}`,
@@ -1501,7 +1501,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with descriptor + options",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp.
@@ -1511,7 +1511,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					`{"rescan": true}`,
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{Descriptor: hnsjson.String("123"), Timestamp: hnsjson.TimestampOrNow{Value: 0}},
 				}
@@ -1531,7 +1531,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with descriptor + no options",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp.
@@ -1547,7 +1547,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{
 						Descriptor: hnsjson.String("123"),
@@ -1576,7 +1576,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with descriptor + string timestamp",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp.
@@ -1588,7 +1588,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{Descriptor: hnsjson.String("123"), Timestamp: hnsjson.TimestampOrNow{Value: "now"}},
 				}
@@ -1603,7 +1603,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with scriptPubKey script",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp and scriptPubKey
@@ -1617,7 +1617,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{
 						ScriptPubKey: &hnsjson.ScriptPubKey{Value: "script"},
@@ -1642,7 +1642,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with scriptPubKey address",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp and scriptPubKey
@@ -1656,7 +1656,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{
 						ScriptPubKey:  &hnsjson.ScriptPubKey{Value: hnsjson.ScriptPubKeyAddress{Address: "addr"}},
@@ -1681,7 +1681,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with ranged (int) descriptor",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp.
@@ -1694,7 +1694,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{
 						Descriptor: hnsjson.String("123"),
@@ -1717,7 +1717,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "importmulti with ranged (slice) descriptor",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"importmulti",
 					// Cannot use a native string, due to special types like timestamp.
@@ -1730,7 +1730,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					},
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				requests := []hnsjson.ImportMultiRequest{
 					{
 						Descriptor: hnsjson.String("123"),
@@ -1753,7 +1753,7 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "walletcreatefundedpsbt",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"walletcreatefundedpsbt",
 					[]hnsjson.PsbtInput{
@@ -1772,7 +1772,7 @@ func TestWalletSvrCmds(t *testing.T) {
 					hnsjson.Bool(true),
 				)
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewWalletCreateFundedPsbtCmd(
 					[]hnsjson.PsbtInput{
 						{
@@ -1810,11 +1810,11 @@ func TestWalletSvrCmds(t *testing.T) {
 		},
 		{
 			name: "walletprocesspsbt",
-			newCmd: func() (interface{}, error) {
+			newCmd: func() (any, error) {
 				return hnsjson.NewCmd(
 					"walletprocesspsbt", "1234", hnsjson.Bool(true), hnsjson.String("ALL"), hnsjson.Bool(true))
 			},
-			staticCmd: func() interface{} {
+			staticCmd: func() any {
 				return hnsjson.NewWalletProcessPsbtCmd(
 					"1234", hnsjson.Bool(true), hnsjson.String("ALL"), hnsjson.Bool(true))
 			},

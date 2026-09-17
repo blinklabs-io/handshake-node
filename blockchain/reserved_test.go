@@ -169,10 +169,7 @@ func testReservedDB(nameHash chainhash.Hash, offset uint32,
 		headerSize = 28
 		tableSize  = 36
 	)
-	dataLen := headerSize + tableSize
-	if int(offset)+len(record) > dataLen {
-		dataLen = int(offset) + len(record)
-	}
+	dataLen := max(int(offset)+len(record), headerSize+tableSize)
 	data := make([]byte, dataLen)
 	binary.LittleEndian.PutUint32(data[0:4], 1)
 	copy(data[headerSize:headerSize+chainhash.HashSize], nameHash[:])

@@ -380,7 +380,7 @@ func TestHandshakeOverPipe(t *testing.T) {
 	const messages = 1100
 	go func() {
 		buf := make([]byte, 64)
-		for i := 0; i < messages; i++ {
+		for range messages {
 			n, err := server.conn.Read(buf)
 			if err != nil {
 				return
@@ -392,7 +392,7 @@ func TestHandshakeOverPipe(t *testing.T) {
 	}()
 
 	echo := make([]byte, 64)
-	for i := 0; i < messages; i++ {
+	for i := range messages {
 		msg := []byte(fmt.Sprintf("brontide message %04d", i))
 		if _, err := clientConn.Write(msg); err != nil {
 			t.Fatalf("client write #%d: %v", i, err)

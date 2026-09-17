@@ -33,7 +33,7 @@ func TstHandshakeBlocks(t *testing.T) []*hnsutil.Block {
 	genesis := chaincfg.MainNetParams.GenesisBlock
 	previousHash := genesis.Header.PrevBlock
 
-	for i := 0; i < handshakeTestBlockCount; i++ {
+	for i := range handshakeTestBlockCount {
 		msgBlock := genesis.Copy()
 		msgBlock.Header.PrevBlock = previousHash
 		msgBlock.Header.Timestamp = genesis.Header.Timestamp.Add(

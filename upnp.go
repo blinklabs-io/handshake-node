@@ -165,7 +165,7 @@ func Discover() (nat NAT, err error) {
 			"MX: 2\r\n\r\n")
 	message := buf.Bytes()
 	answerBytes := make([]byte, 1024)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err = socket.WriteToUDP(message, ssdp)
 		if err != nil {
 			return
@@ -189,11 +189,11 @@ func Discover() (nat NAT, err error) {
 			continue
 		}
 		loc := answer[locIndex+len(locString):]
-		endIndex := strings.Index(loc, "\r\n")
-		if endIndex < 0 {
+		before, _, ok := strings.Cut(loc, "\r\n")
+		if !ok {
 			continue
 		}
-		locURL := loc[0:endIndex]
+		locURL := before
 		var serviceURL string
 		serviceURL, err = getServiceURL(locURL)
 		if err != nil {

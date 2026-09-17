@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -68,10 +69,8 @@ func NewTLSCertPair(organization string, validUntil time.Time, extraHosts []stri
 		ipAddresses = append(ipAddresses, ipAddr)
 	}
 	addHost := func(host string) {
-		for _, dnsName := range dnsNames {
-			if host == dnsName {
-				return
-			}
+		if slices.Contains(dnsNames, host) {
+			return
 		}
 		dnsNames = append(dnsNames, host)
 	}

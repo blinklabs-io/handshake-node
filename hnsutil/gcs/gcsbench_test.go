@@ -161,7 +161,6 @@ var matchAnyBenchmarks = []struct {
 // BenchmarkGCSFilterZipMatchAny benchmarks the sort-and-zip MatchAny impl.
 func BenchmarkGCSFilterZipMatchAny(b *testing.B) {
 	for _, test := range matchAnyBenchmarks {
-		test := test
 
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -187,7 +186,6 @@ func BenchmarkGCSFilterZipMatchAny(b *testing.B) {
 // BenchmarkGCSFilterHashMatchAny benchmarks the hash-join MatchAny impl.
 func BenchmarkGCSFilterHashMatchAny(b *testing.B) {
 	for _, test := range matchAnyBenchmarks {
-		test := test
 
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -213,7 +211,6 @@ func BenchmarkGCSFilterHashMatchAny(b *testing.B) {
 // BenchmarkGCSFilterMatchAny benchmarks the hybrid MatchAny impl.
 func BenchmarkGCSFilterMatchAny(b *testing.B) {
 	for _, test := range matchAnyBenchmarks {
-		test := test
 
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()

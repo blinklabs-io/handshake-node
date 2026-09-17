@@ -186,7 +186,7 @@ func newHSDVectorBlock(t *testing.T, txCount int) *hnsutil.Block {
 
 	msgBlock := &wire.MsgBlock{}
 	txs := make([]*hnsutil.Tx, 0, txCount)
-	for i := 0; i < txCount; i++ {
+	for i := range txCount {
 		path := filepath.Join(
 			"..",
 			"..",

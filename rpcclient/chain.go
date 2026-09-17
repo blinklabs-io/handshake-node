@@ -1591,7 +1591,7 @@ func (r FutureGetBlockStatsResult) Receive() (*hnsjson.GetBlockStatsResult, erro
 // the returned instance.
 //
 // See GetBlockStats or the blocking version and more details.
-func (c *Client) GetBlockStatsAsync(hashOrHeight interface{}, stats *[]string) FutureGetBlockStatsResult {
+func (c *Client) GetBlockStatsAsync(hashOrHeight any, stats *[]string) FutureGetBlockStatsResult {
 	if hash, ok := hashOrHeight.(*chainhash.Hash); ok {
 		hashOrHeight = hash.String()
 	}
@@ -1602,7 +1602,7 @@ func (c *Client) GetBlockStatsAsync(hashOrHeight interface{}, stats *[]string) F
 
 // GetBlockStats returns block statistics. First argument specifies height or hash of the target block.
 // Second argument allows to select certain stats to return.
-func (c *Client) GetBlockStats(hashOrHeight interface{}, stats *[]string) (*hnsjson.GetBlockStatsResult, error) {
+func (c *Client) GetBlockStats(hashOrHeight any, stats *[]string) (*hnsjson.GetBlockStatsResult, error) {
 	return c.GetBlockStatsAsync(hashOrHeight, stats).Receive()
 }
 
