@@ -1,4 +1,11 @@
 PKG := github.com/blinklabs-io/handshake-node
+VERSION_PKG := $(PKG)/internal/version
+
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null)
+COMMIT_HASH ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+VERSION_LDFLAGS := -X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).CommitHash=$(COMMIT_HASH)'
+GO_LDFLAGS := -ldflags="$(VERSION_LDFLAGS)"
+RELEASE_LDFLAGS := -ldflags="-s -w -buildid= $(VERSION_LDFLAGS)"
 
 LINT_PKG := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 GOIMPORTS_PKG := golang.org/x/tools/cmd/goimports
@@ -21,7 +28,7 @@ LINT_COMMIT := v2.1.6
 GOIMPORTS_COMMIT := a24facf9e5586c95743d2f4ad15d148c7a8cf00b
 VULNCHECK_COMMIT := v1.6.0
 
-GOBUILD := go build -v
+GOBUILD := go build -v $(GO_LDFLAGS)
 GOINSTALL := env GOBIN=$(GO_BIN) go install -v
 DEV_TAGS := rpctest
 GOTEST_DEV = go test -p 1 -v -tags=$(DEV_TAGS)
@@ -84,8 +91,8 @@ build:
 #? install: Install all binaries, place them in $GOPATH/bin
 install:
 	@$(call print, "Installing all binaries")
-	$(GOINSTALL) $(PKG)
-	$(GOINSTALL) $(PKG)/cmd/hnsctl
+	$(GOINSTALL) $(GO_LDFLAGS) $(PKG)
+	$(GOINSTALL) $(GO_LDFLAGS) $(PKG)/cmd/hnsctl
 	$(GOINSTALL) $(PKG)/cmd/gencerts
 	$(GOINSTALL) $(PKG)/cmd/findcheckpoint
 	$(GOINSTALL) $(PKG)/cmd/addblock
@@ -98,7 +105,7 @@ release-install:
 	mkdir -p "$(GO_BIN)"
 	# Build both commands in one Go invocation so an in-tree output directory cannot make
 	# the second binary appear to come from a dirty worktree.
-	env CGO_ENABLED=0 $(GOBUILD) -trimpath -ldflags="-s -w -buildid=" -o "$(GO_BIN)/" $(PKG) $(PKG)/cmd/hnsctl
+	env CGO_ENABLED=0 go build -v -trimpath $(RELEASE_LDFLAGS) -o "$(GO_BIN)/" $(PKG) $(PKG)/cmd/hnsctl
 
 # =======
 # TESTING

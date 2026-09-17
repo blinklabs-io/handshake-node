@@ -10,14 +10,16 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	buildversion "github.com/blinklabs-io/handshake-node/internal/version"
 )
 
 // MaxUserAgentLen is the maximum allowed length for the user agent field in a
 // version message (MsgVersion).
 const MaxUserAgentLen = 256
 
-// DefaultUserAgent for wire in the stack.
-const DefaultUserAgent = "/handshake-node:0.5.0/"
+// DefaultUserAgent is the user agent used by wire clients.
+var DefaultUserAgent = "/handshake-node:" + buildversion.Semantic() + "/"
 
 // MsgVersion implements the Message interface and represents a bitcoin version
 // message.  It is used for a peer to advertise itself as soon as an outbound

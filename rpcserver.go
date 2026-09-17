@@ -3662,7 +3662,7 @@ func handleGetHeaders(s *rpcServer, cmd any, closeChan <-chan struct{}) (any, er
 func handleGetInfo(s *rpcServer, cmd any, closeChan <-chan struct{}) (any, error) {
 	best := s.cfg.Chain.BestSnapshot()
 	ret := &hnsjson.InfoChainResult{
-		Version:         int32(1000000*appMajor + 10000*appMinor + 100*appPatch),
+		Version:         rpcVersion(),
 		ProtocolVersion: int32(wire.HnsProtocolVersion),
 		Blocks:          best.Height,
 		TimeOffset:      int64(s.cfg.TimeSource.Offset().Seconds()),
@@ -3967,7 +3967,7 @@ func handleGetNetworkInfo(s *rpcServer, cmd any, closeChan <-chan struct{}) (any
 
 	services := s.cfg.ConnMgr.Services()
 	result := &hnsjson.GetNetworkInfoResult{
-		Version:           int32(1000000*appMajor + 10000*appMinor + 100*appPatch),
+		Version:           rpcVersion(),
 		SubVersion:        localUserAgent(),
 		ProtocolVersion:   int32(wire.HnsProtocolVersion),
 		LocalServices:     fmt.Sprintf("%08x", uint32(services)),

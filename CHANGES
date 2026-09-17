@@ -3,6 +3,40 @@ User visible changes for handshake-node
   A Handshake full node implementation written in Go
 ============================================================================
 
+Changes in 0.5.0
+  - Consensus and validation hardening:
+    - Port upstream transaction, script, block, and network validation fixes
+      while retaining Handshake consensus behavior. (#160)
+    - Harden legacy block loading and expand corruption and recovery coverage.
+      (#123, #161)
+  - Storage and indexing:
+    - Bound LevelDB batch memory, compact the name-root cache, and avoid
+      retaining stripped block buffers. (#117, #124, #134)
+    - Verify persistent index rebuild recovery. (#118)
+  - Network transport and synchronization:
+    - Correct inbound Handshake negotiation ordering, make bounded sync sets
+      idempotent, and return block-processing errors once. (#122, #133, #155)
+    - Publish peers only after initialization and reserve connection capacity
+      for outbound peers. (#162, #163)
+  - RPC and operator behavior:
+    - Report fee estimates in HNS and match hsd's softfork deployment schema.
+      (#131, #135)
+    - Apply an 8 GiB container soft heap limit. (#156)
+  - Release and maintenance:
+    - Derive binary, RPC, P2P, and container versions from the build tag and
+      revision instead of hard-coded release constants.
+    - Gate releases on unit, race, vulnerability, lint, hsd interoperability,
+      and platform binary validation, and publish multi-architecture image
+      manifests. (#138, #139, #158, #165)
+    - Remove unused Bitcoin compatibility paths, fixtures, tools, and packages,
+      and simplify the remaining Handshake codebase. (#119-#121, #126-#130,
+      #132, #136, #137, #187)
+    - Update Go, OpenSSL, cryptographic, networking, test, and release-action
+      dependencies. (#144, #147, #148, #150, #152-#154, #159, #166-#173,
+      #179, #181, #183, #185, #188)
+  - Contributors (alphabetical order):
+    - Chris Gianelloni
+
 Changes in 0.3.0-rc1 (release candidate)
   - Consensus and validation hardening:
     - Enable checkpoint fast-add only after the configured checkpoint header
