@@ -41,7 +41,7 @@ The current release is 0.5.0 for Handshake mainnet. It includes:
 
 ## Requirements
 
-[Go](https://go.dev/doc/install) 1.26.6 or newer. The module toolchain
+[Go](https://go.dev/doc/install) 1.26.10 or newer. The module toolchain
 directive automatically selects a patched Go toolchain when supported.
 
 ## Build

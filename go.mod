@@ -40,4 +40,4 @@ replace (
 	github.com/blinklabs-io/handshake-node/hnsutil => ./hnsutil
 )
 
-go 1.26.6
+go 1.26.10
