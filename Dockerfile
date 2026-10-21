@@ -1,4 +1,4 @@
-FROM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
+FROM ghcr.io/blinklabs-io/go:1.27.3-1 AS build
 
 ARG VERSION
 ARG COMMIT_HASH
@@ -9,7 +9,7 @@ WORKDIR /code
 COPY . .
 RUN GOBIN=/out make release-install
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM debian:bookworm-slim
 
 ARG VERSION
 ARG COMMIT_HASH
@@ -20,13 +20,12 @@ LABEL org.opencontainers.image.title="handshake-node" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT_HASH}"
 
-# The alpine:3.24.1 image predates openssl 3.5.8-r0, which fixes
-# CVE-2026-14456. Take the patched libcrypto3/libssl3 from the v3.24
-# package repository.
-RUN apk add --no-cache "libcrypto3>=3.5.8-r0" "libssl3>=3.5.8-r0"
-
-RUN addgroup -S -g 101 handshake && \
-    adduser -S -u 100 -G handshake -h /home/handshake handshake && \
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --system --gid 101 handshake && \
+    useradd --system --uid 100 --gid handshake \
+      --create-home --home-dir /home/handshake handshake && \
     mkdir -p /data && \
     ln -s /data /home/handshake/.handshake-node && \
     chown handshake:handshake /data
