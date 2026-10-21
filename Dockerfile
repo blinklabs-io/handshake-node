@@ -1,4 +1,4 @@
-FROM ghcr.io/blinklabs-io/go:1.27.3-1 AS build
+FROM ghcr.io/blinklabs-io/go:1.27.3-1@sha256:3e5e8c2d5b52421d1d54d49a607463deca214b27fb1b0378b1aa883d1e6cfe1e AS build
 
 ARG VERSION
 ARG COMMIT_HASH
@@ -9,7 +9,7 @@ WORKDIR /code
 COPY . .
 RUN GOBIN=/out make release-install
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
 
 ARG VERSION
 ARG COMMIT_HASH
