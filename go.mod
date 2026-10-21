@@ -32,7 +32,7 @@ require (
 	github.com/kkdai/bstream v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 )
 
 replace (
