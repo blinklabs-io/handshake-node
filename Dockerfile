@@ -1,4 +1,4 @@
-FROM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
+FROM ghcr.io/blinklabs-io/go:1.27.3-1@sha256:3e5e8c2d5b52421d1d54d49a607463deca214b27fb1b0378b1aa883d1e6cfe1e AS build
 
 ARG VERSION
 ARG COMMIT_HASH
@@ -20,9 +20,7 @@ LABEL org.opencontainers.image.title="handshake-node" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT_HASH}"
 
-# The alpine:3.24.1 image predates openssl 3.5.8-r0, which fixes
-# CVE-2026-14456. Take the patched libcrypto3/libssl3 from the v3.24
-# package repository.
+# The base image predates openssl 3.5.8-r0, which fixes CVE-2026-14456.
 RUN apk add --no-cache "libcrypto3>=3.5.8-r0" "libssl3>=3.5.8-r0"
 
 RUN addgroup -S -g 101 handshake && \
