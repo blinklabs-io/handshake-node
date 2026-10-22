@@ -9,7 +9,7 @@ WORKDIR /code
 COPY . .
 RUN GOBIN=/out make release-install
 
-FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 ARG VERSION
 ARG COMMIT_HASH
@@ -20,12 +20,11 @@ LABEL org.opencontainers.image.title="handshake-node" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT_HASH}"
 
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd --system --gid 101 handshake && \
-    useradd --system --uid 100 --gid handshake \
-      --create-home --home-dir /home/handshake handshake && \
+# The base image predates openssl 3.5.8-r0, which fixes CVE-2026-14456.
+RUN apk add --no-cache "libcrypto3>=3.5.8-r0" "libssl3>=3.5.8-r0"
+
+RUN addgroup -S -g 101 handshake && \
+    adduser -S -u 100 -G handshake -h /home/handshake handshake && \
     mkdir -p /data && \
     ln -s /data /home/handshake/.handshake-node && \
     chown handshake:handshake /data

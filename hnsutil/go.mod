@@ -19,7 +19,7 @@ require (
 	github.com/deatil/go-cryptobin v1.1.1013 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/miekg/dns v1.1.73 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 )
 
