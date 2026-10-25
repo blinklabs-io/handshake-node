@@ -9,7 +9,7 @@ require (
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/cloudflare/circl v1.6.5
 	github.com/davecgh/go-spew v1.1.1
-	github.com/deatil/go-cryptobin v1.1.1013
+	github.com/deatil/go-cryptobin v1.1.1022
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/decred/dcrd/lru v1.1.3
 	github.com/gorilla/websocket v1.5.3
@@ -19,7 +19,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	go.uber.org/automaxprocs v1.6.0
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	pgregory.net/rapid v1.3.0
 )

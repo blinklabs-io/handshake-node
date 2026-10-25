@@ -4,18 +4,13 @@
 # Use of this source code is governed by an ISC
 # license that can be found in the LICENSE file.
 
-SUBMODULES=$(find . -mindepth 2 -name "go.mod" | cut -d'/' -f2)
+set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Run 'go mod tidy' for root.
-go mod tidy
-
-# Run 'go mod tidy' for each module.
-for submodule in $SUBMODULES
-do
-  pushd $submodule
-
-  go mod tidy
-
-  popd
+for module in . hnsutil chaincfg/chainhash; do
+  (
+    cd "$module"
+    go mod tidy
+  )
 done
