@@ -11,16 +11,14 @@ updates:
       interval: weekly
 
   - package-ecosystem: gomod
-    directory: /
+    directories:
+      - /
+      - /hnsutil
+      - /chaincfg/chainhash
     schedule:
       interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /hnsutil
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /chaincfg/chainhash
-    schedule:
-      interval: weekly
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        group-by: dependency-name
