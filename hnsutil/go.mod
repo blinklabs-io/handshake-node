@@ -15,7 +15,7 @@ require (
 
 require (
 	github.com/btcsuite/btcd/chainhash/v2 v2.0.0 // indirect
-	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
+	github.com/btcsuite/btclog v1.0.0 // indirect
 	github.com/deatil/go-cryptobin v1.1.1022 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/miekg/dns v1.1.73 // indirect
