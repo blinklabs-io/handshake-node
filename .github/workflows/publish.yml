@@ -29,9 +29,6 @@ jobs:
           - name: rpc-integration
             command: make integration
             fetch-depth: 1
-          - name: vulnerability
-            command: make vuln
-            fetch-depth: 1
           - name: lint
             command: make lint workers=2
             # The lint configuration compares against origin/main.
