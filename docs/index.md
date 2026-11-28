@@ -33,6 +33,7 @@ Documentation is a work-in-progress for the current 0.5.0 mainnet release.
 * [cdnsd integration](cdnsd.md)
 * [Developer resources](developer_resources.md)
 * [JSON RPC API](json_rpc_api.md)
+* [UTxO RPC](utxo_rpc.md)
 * [Code contribution guidelines](code_contribution_guidelines.md)
 * [Contact](contact.md)
 

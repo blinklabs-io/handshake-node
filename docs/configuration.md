@@ -137,9 +137,9 @@ rpclisten=
 
 ## Operations endpoints
 
-The Prometheus metrics endpoint and Stratum server are disabled by default.
-Bind them to loopback or an internal management network unless there is a
-specific reason to expose them.
+The Prometheus metrics endpoint, Stratum server, and UTxO RPC server are
+disabled by default. Bind them to loopback or an internal management network
+unless there is a specific reason to expose them.
 
 ```text
 [Application Options]
@@ -165,6 +165,16 @@ least one `--miningaddr`. Binding it to a non-loopback interface requires
 `--stratumallowpublic`, and public Stratum binds also require
 `--stratumuser` and `--stratumpass`.
 
+```text
+[Application Options]
+
+utxorpclisten=127.0.0.1:12041
+```
+
+`--utxorpclisten` enables the [UTxO RPC](utxo_rpc.md) server. It is not
+authenticated. Binding it to a non-loopback interface requires
+`--utxorpcallowpublic`, and a public bind may not be combined with `--notls`.
+
 ## Default ports
 
 While handshake-node is highly configurable when it comes to the network configuration,
@@ -184,6 +194,7 @@ configurations.
 |Default RPC port|TCP 12037|
 |Default Prometheus metrics port|TCP 12039|
 |Default Stratum port|TCP 12040|
+|Default UTxO RPC port|TCP 12041|
 
 ## Using bootstrap.dat
 

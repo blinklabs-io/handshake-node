@@ -22,6 +22,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/netsync"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/utxorpc"
 
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
@@ -71,6 +72,7 @@ var (
 	strmLog = backendLog.Logger("STRM")
 	syncLog = backendLog.Logger("SYNC")
 	txmpLog = backendLog.Logger("TXMP")
+	uxrpLog = backendLog.Logger("UXRP")
 )
 
 // Initialize package-global logger variables.
@@ -87,6 +89,7 @@ func init() {
 	txscript.UseLogger(scrpLog)
 	netsync.UseLogger(syncLog)
 	mempool.UseLogger(txmpLog)
+	utxorpc.UseLogger(uxrpLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -107,6 +110,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"STRM": strmLog,
 	"SYNC": syncLog,
 	"TXMP": txmpLog,
+	"UXRP": uxrpLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and

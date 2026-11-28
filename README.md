@@ -109,6 +109,7 @@ go test -p 1 -v -tags=rpctest ./integration/...
 - [Configuration](docs/configuration.md)
 - [Controlling the node with hnsctl](docs/controlling.md)
 - [JSON-RPC API](docs/json_rpc_api.md)
+- [UTxO RPC](docs/utxo_rpc.md)
 - [Mining](docs/mining.md)
 - [Wallet integration](docs/wallet.md)
 - [cdnsd integration](docs/cdnsd.md)

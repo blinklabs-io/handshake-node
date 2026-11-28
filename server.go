@@ -41,6 +41,7 @@ import (
 	"github.com/blinklabs-io/handshake-node/netsync"
 	"github.com/blinklabs-io/handshake-node/peer"
 	"github.com/blinklabs-io/handshake-node/txscript"
+	"github.com/blinklabs-io/handshake-node/utxorpc"
 	"github.com/blinklabs-io/handshake-node/wire"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/decred/dcrd/lru"
@@ -267,6 +268,7 @@ type server struct {
 	metrics              *nodeMetrics
 	metricsServer        *metricsServer
 	stratumServer        *stratum.Server
+	utxorpcServer        *utxorpc.Server
 	brontideIdentity     *btcec.PrivateKey
 	brontideStaticKey    [brontide.PublicKeySize]byte
 	modifyRebroadcastInv chan any
@@ -1505,6 +1507,12 @@ func (s *server) AnnounceNewTransactions(txns []*mempool.TxDesc) {
 	if s.rpcServer != nil {
 		s.rpcServer.NotifyNewTransactions(txns)
 	}
+
+	if s.utxorpcServer != nil {
+		for _, txD := range txns {
+			s.utxorpcServer.NotifyMempoolTx(txD.Tx)
+		}
+	}
 }
 
 // Transaction has one confirmation on the main chain. Now we can mark it as no
@@ -2726,6 +2734,10 @@ func (s *server) Start() {
 		s.stratumServer.Start()
 	}
 
+	if s.utxorpcServer != nil {
+		s.utxorpcServer.Start()
+	}
+
 	// Start the CPU miner if generation is enabled.
 	if cfg.Generate {
 		s.cpuMiner.Start()
@@ -2743,13 +2755,7 @@ func (s *server) Stop() error {
 
 	srvrLog.Warnf("Server shutting down")
 
-	if s.stratumServer != nil {
-		s.stratumServer.Stop()
-	}
-
-	if s.metricsServer != nil {
-		s.metricsServer.Stop()
-	}
+	s.stopOptionalServers()
 
 	// Stop the CPU miner if needed
 	s.cpuMiner.Stop()
@@ -3420,9 +3426,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 		listeners, err := setupPlainListeners(cfg.StratumListeners,
 			"stratum")
 		if err != nil {
-			if s.metricsServer != nil {
-				s.metricsServer.Stop()
-			}
+			s.stopOptionalServers()
 			return nil, err
 		}
 		authorize := func(user, pass string) bool {
@@ -3444,14 +3448,65 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string,
 			for _, listener := range listeners {
 				_ = listener.Close()
 			}
-			if s.metricsServer != nil {
-				s.metricsServer.Stop()
-			}
+			s.stopOptionalServers()
 			return nil, err
 		}
 	}
 
+	if len(cfg.UtxoRPCListeners) > 0 {
+		listeners, err := setupPlainListeners(cfg.UtxoRPCListeners,
+			"utxorpc")
+		if err != nil {
+			s.stopOptionalServers()
+			return nil, err
+		}
+
+		utxorpcCfg := &utxorpc.Config{
+			Listeners:   listeners,
+			Chain:       s.chain,
+			ChainParams: chainParams,
+			TxMemPool:   s.txMemPool,
+			Submitter:   &utxorpcSubmitter{server: &s},
+		}
+		if s.txIndex != nil {
+			utxorpcCfg.TxFetcher = &utxorpcTxFetcher{
+				txIndex: s.txIndex,
+				db:      db,
+			}
+		}
+		if !cfg.DisableTLS {
+			utxorpcCfg.TLSConfig, err = utxorpcTLSConfig()
+		}
+		if err == nil {
+			s.utxorpcServer, err = utxorpc.New(utxorpcCfg)
+		}
+		if err != nil {
+			for _, listener := range listeners {
+				_ = listener.Close()
+			}
+			s.stopOptionalServers()
+			return nil, err
+		}
+
+		s.chain.Subscribe(s.handleUtxoRPCBlockchainNotification)
+	}
+
 	return &s, nil
+}
+
+// stopOptionalServers shuts down whichever of the optional listeners
+// have already been constructed. It is used to unwind cleanly when a
+// later one fails to start.
+func (s *server) stopOptionalServers() {
+	if s.utxorpcServer != nil {
+		s.utxorpcServer.Stop()
+	}
+	if s.stratumServer != nil {
+		s.stratumServer.Stop()
+	}
+	if s.metricsServer != nil {
+		s.metricsServer.Stop()
+	}
 }
 
 // initListeners initializes the configured net listeners and adds any bound

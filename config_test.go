@@ -528,3 +528,98 @@ func TestParseCheckpointHashOrder(t *testing.T) {
 		t.Fatalf("checkpoint hash: got %q, want %q", got.Hash.String(), wantHash)
 	}
 }
+
+func TestLoadConfigUtxoRPCListeners(t *testing.T) {
+	const helperEnv = "HANDSHAKE_NODE_TEST_UTXORPC"
+
+	type helperCase struct {
+		args      []string
+		wantError string
+		verify    func(t *testing.T, cfg *config)
+	}
+
+	cases := map[string]helperCase{
+		"disabled-by-default": {
+			args: []string{"handshake-node"},
+			verify: func(t *testing.T, cfg *config) {
+				if len(cfg.UtxoRPCListeners) != 0 {
+					t.Fatalf("UtxoRPCListeners = %v, want empty",
+						cfg.UtxoRPCListeners)
+				}
+			},
+		},
+		"default-port": {
+			args: []string{
+				"handshake-node",
+				"--utxorpclisten=127.0.0.1",
+			},
+			verify: func(t *testing.T, cfg *config) {
+				want := "127.0.0.1:" + defaultUtxoRPCPort
+				if len(cfg.UtxoRPCListeners) != 1 ||
+					cfg.UtxoRPCListeners[0] != want {
+
+					t.Fatalf("UtxoRPCListeners = %v, want [%s]",
+						cfg.UtxoRPCListeners, want)
+				}
+			},
+		},
+		"public-needs-acknowledgement": {
+			args: []string{
+				"handshake-node",
+				"--utxorpclisten=0.0.0.0:12041",
+			},
+			wantError: "set --utxorpcallowpublic",
+		},
+		"public-rejects-notls": {
+			args: []string{
+				"handshake-node",
+				"--utxorpclisten=0.0.0.0:12041",
+				"--utxorpcallowpublic",
+				"--notls",
+				"--norpc",
+			},
+			wantError: "--notls option may not be used",
+		},
+	}
+
+	if name := os.Getenv(helperEnv); name != "" {
+		helper, ok := cases[name]
+		if !ok {
+			t.Fatalf("unknown helper mode %q", name)
+		}
+		setConfigTestDefaultPaths(os.Getenv("HOME"))
+		os.Args = helper.args
+
+		cfg, _, err := loadConfig()
+		if helper.wantError != "" {
+			if err == nil {
+				t.Fatalf("loadConfig accepted %q", name)
+			}
+			if !strings.Contains(err.Error(), helper.wantError) {
+				t.Fatalf("loadConfig error = %q, want %q",
+					err, helper.wantError)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		helper.verify(t, cfg)
+		return
+	}
+
+	for name := range cases {
+		t.Run(name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			cmd := exec.Command(os.Args[0],
+				"-test.run=^TestLoadConfigUtxoRPCListeners$")
+			cmd.Env = configTestEnvironment(
+				tempDir,
+				helperEnv+"="+name,
+			)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("utxorpc case %s: %v\n%s", name, err, output)
+			}
+		})
+	}
+}
