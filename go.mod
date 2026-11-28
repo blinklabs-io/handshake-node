@@ -1,6 +1,9 @@
 module github.com/blinklabs-io/handshake-node
 
 require (
+	connectrpc.com/connect v1.20.0
+	connectrpc.com/grpchealth v1.5.0
+	connectrpc.com/grpcreflect v1.3.0
 	github.com/blinklabs-io/handshake-node/chaincfg/chainhash v0.0.0-00010101000000-000000000000
 	github.com/blinklabs-io/handshake-node/hnsutil v0.0.0-00010101000000-000000000000
 	github.com/btcsuite/btcd/btcec/v2 v2.5.1
@@ -18,6 +21,7 @@ require (
 	github.com/miekg/dns v1.1.73
 	github.com/stretchr/testify v1.12.1
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
+	github.com/utxorpc/go-codegen v0.19.2
 	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
@@ -33,6 +37,7 @@ require (
 	github.com/stretchr/objx v0.5.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.62.0 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 )
 
 replace (

@@ -82,6 +82,7 @@ var (
 const (
 	defaultMetricsPort       = "12039"
 	defaultStratumPort       = "12040"
+	defaultUtxoRPCPort       = "12041"
 	defaultStratumDifficulty = 1.0
 )
 
@@ -163,7 +164,7 @@ type config struct {
 	NoWinService         bool          `long:"nowinservice" description:"Do not start as a background service on Windows -- NOTE: This flag only works on the command line, not in the config file"`
 	DisableRPC           bool          `long:"norpc" description:"Disable built-in RPC server -- NOTE: The RPC server is disabled by default if no rpcuser/rpcpass or rpclimituser/rpclimitpass is specified"`
 	DisableStallHandler  bool          `long:"nostalldetect" description:"Disables the stall handler system for each peer, useful in regtest integration tests frameworks"`
-	DisableTLS           bool          `long:"notls" description:"Disable TLS for the RPC server -- NOTE: This is only allowed if the RPC server is bound to localhost"`
+	DisableTLS           bool          `long:"notls" description:"Disable TLS for the RPC and UTxO RPC servers -- NOTE: This is only allowed if those servers are bound to localhost"`
 	OnionProxy           string        `long:"onion" description:"Connect to tor hidden services via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
 	OnionProxyPass       string        `long:"onionpass" default-mask:"-" description:"Password for onion proxy server"`
 	OnionProxyUser       string        `long:"onionuser" description:"Username for onion proxy server"`
@@ -199,6 +200,8 @@ type config struct {
 	TorIsolation         bool          `long:"torisolation" description:"Enable Tor stream isolation by randomizing user credentials for each connection."`
 	TrickleInterval      time.Duration `long:"trickleinterval" description:"Minimum time between attempts to send new inventory to a connected peer"`
 	UtxoCacheMaxSizeMiB  uint          `long:"utxocachemaxsize" description:"The maximum size in MiB of the UTXO cache"`
+	UtxoRPCListeners     []string      `long:"utxorpclisten" description:"Enable the UTxO RPC server on the specified interface/port (disabled by default; default port 12041 when no port is specified)"`
+	UtxoRPCAllowPublic   bool          `long:"utxorpcallowpublic" description:"Allow the UTxO RPC server to bind to non-loopback interfaces -- NOTE: the UTxO RPC server is unauthenticated"`
 	TxIndex              bool          `long:"txindex" description:"Maintain a full hash-based transaction index which makes all transactions available via the getrawtransaction RPC"`
 	UserAgentComments    []string      `long:"uacomment" description:"Comment to add to the user agent -- See BIP 14 for more information."`
 	Upnp                 bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
@@ -1227,6 +1230,34 @@ func loadConfig() (*config, []string, error) {
 			"metricslisten", "metricsallowpublic"); err != nil {
 
 			err := fmt.Errorf("%s: %w", funcName, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
+	}
+
+	cfg.UtxoRPCListeners = normalizeAddresses(cfg.UtxoRPCListeners,
+		defaultUtxoRPCPort)
+	if len(cfg.UtxoRPCListeners) > 0 && !cfg.UtxoRPCAllowPublic {
+		if err := validateLocalListeners(cfg.UtxoRPCListeners,
+			"utxorpclisten", "utxorpcallowpublic"); err != nil {
+
+			err := fmt.Errorf("%s: %w", funcName, err)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
+	}
+	// The UTxO RPC server is unauthenticated, so an off-host listener
+	// without TLS would publish the node's data in the clear.
+	if len(cfg.UtxoRPCListeners) > 0 && cfg.DisableTLS {
+		if err := validateLocalListeners(cfg.UtxoRPCListeners,
+			"utxorpclisten", "notls"); err != nil {
+
+			str := "%s: the --notls option may not be used when " +
+				"binding the UTxO RPC server to non localhost " +
+				"addresses"
+			err := fmt.Errorf(str, funcName)
 			fmt.Fprintln(os.Stderr, err)
 			fmt.Fprintln(os.Stderr, usageMessage)
 			return nil, nil, err
